@@ -3567,3 +3567,549 @@ TEST(XmlExporterProperty, EntityEscaping) {
             RC_ASSERT(dstIdx == escaped.size());
         });
 }
+
+// ===========================================================================
+// Task 1.5: Unit tests for ArenaAllocator
+// Requirements: 1.1, 1.2, 1.3
+// ===========================================================================
+
+#include "core/arena_allocator.h"
+
+// === Single allocation =====================================================
+
+TEST(ArenaAllocator, SingleAllocation) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    void* ptr = arena.allocate(64);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(arena.totalUsed(), 64u);
+    EXPECT_GE(arena.totalAllocated(), 4096u);
+}
+
+// === Multiple allocations within one block =================================
+
+TEST(ArenaAllocator, MultipleAllocationsInOneBlock) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    void* p1 = arena.allocate(100);
+    void* p2 = arena.allocate(200);
+    void* p3 = arena.allocate(300);
+    ASSERT_NE(p1, nullptr);
+    ASSERT_NE(p2, nullptr);
+    ASSERT_NE(p3, nullptr);
+    // All pointers should be distinct
+    EXPECT_NE(p1, p2);
+    EXPECT_NE(p2, p3);
+    EXPECT_NE(p1, p3);
+    // Should still be in one block
+    EXPECT_EQ(arena.totalAllocated(), 4096u);
+}
+
+// === Allocation spanning multiple blocks ===================================
+
+TEST(ArenaAllocator, AllocationSpanningMultipleBlocks) {
+    jsontitan::core::ArenaAllocator arena(256);
+    std::vector<void*> ptrs;
+    // Allocate enough to span multiple blocks
+    for (int i = 0; i < 10; ++i) {
+        void* p = arena.allocate(100);
+        ASSERT_NE(p, nullptr);
+        ptrs.push_back(p);
+    }
+    // Should have allocated more than one block
+    EXPECT_GT(arena.totalAllocated(), 256u);
+    // All pointers should be distinct
+    for (std::size_t i = 0; i < ptrs.size(); ++i) {
+        for (std::size_t j = i + 1; j < ptrs.size(); ++j) {
+            EXPECT_NE(ptrs[i], ptrs[j]);
+        }
+    }
+}
+
+// === Pointer stability across block allocations ============================
+
+TEST(ArenaAllocator, PointerStabilityAcrossBlocks) {
+    jsontitan::core::ArenaAllocator arena(128);
+    // Fill first block
+    void* first = arena.allocate(64);
+    ASSERT_NE(first, nullptr);
+    std::memset(first, 0xAB, 64);
+
+    // Force a new block
+    void* second = arena.allocate(128);
+    ASSERT_NE(second, nullptr);
+
+    // First pointer should still be valid and contain original data
+    auto* bytes = static_cast<unsigned char*>(first);
+    for (int i = 0; i < 64; ++i) {
+        EXPECT_EQ(bytes[i], 0xAB) << "Byte " << i << " corrupted after new block allocation";
+    }
+}
+
+// === Reset clears all ======================================================
+
+TEST(ArenaAllocator, ResetClearsAll) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    arena.allocate(100);
+    arena.allocate(200);
+    EXPECT_GT(arena.totalUsed(), 0u);
+    EXPECT_GT(arena.totalAllocated(), 0u);
+
+    arena.reset();
+    EXPECT_EQ(arena.totalUsed(), 0u);
+    EXPECT_EQ(arena.totalAllocated(), 0u);
+}
+
+// === Allocation after reset ================================================
+
+TEST(ArenaAllocator, AllocationAfterReset) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    arena.allocate(100);
+    arena.reset();
+
+    void* ptr = arena.allocate(50);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(arena.totalUsed(), 50u);
+}
+
+// === Zero-size allocation ==================================================
+
+TEST(ArenaAllocator, ZeroSizeAllocation) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    void* ptr = arena.allocate(0);
+    // Zero-size allocations should return a valid pointer
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GT(arena.totalUsed(), 0u);
+}
+
+// === Large allocation exceeding default block size =========================
+
+TEST(ArenaAllocator, LargeAllocationExceedingBlockSize) {
+    jsontitan::core::ArenaAllocator arena(256);
+    // Allocate more than the block size
+    void* ptr = arena.allocate(1024);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(arena.totalAllocated(), 1024u);
+}
+
+// === copyString ============================================================
+
+TEST(ArenaAllocator, CopyStringBasic) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    std::string_view original = "hello world";
+    auto copied = arena.copyString(original);
+    EXPECT_EQ(copied, original);
+    // The copy should be in different memory
+    EXPECT_NE(copied.data(), original.data());
+}
+
+TEST(ArenaAllocator, CopyStringEmpty) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    auto copied = arena.copyString("");
+    EXPECT_TRUE(copied.empty());
+}
+
+TEST(ArenaAllocator, CopyStringPreservesContent) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    std::string original = "test string with special chars: {}[],:\"\\";
+    auto copied = arena.copyString(original);
+    EXPECT_EQ(copied, original);
+}
+
+TEST(ArenaAllocator, CopyStringMultiple) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    auto s1 = arena.copyString("first");
+    auto s2 = arena.copyString("second");
+    auto s3 = arena.copyString("third");
+    EXPECT_EQ(s1, "first");
+    EXPECT_EQ(s2, "second");
+    EXPECT_EQ(s3, "third");
+    // All should be in different memory locations
+    EXPECT_NE(s1.data(), s2.data());
+    EXPECT_NE(s2.data(), s3.data());
+}
+
+// === construct<T> ==========================================================
+
+TEST(ArenaAllocator, ConstructSimpleType) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    struct TestStruct {
+        int x;
+        double y;
+    };
+    auto* obj = arena.construct<TestStruct>(42, 3.14);
+    ASSERT_NE(obj, nullptr);
+    EXPECT_EQ(obj->x, 42);
+    EXPECT_DOUBLE_EQ(obj->y, 3.14);
+}
+
+TEST(ArenaAllocator, ConstructMultipleObjects) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    struct Point {
+        int x, y;
+    };
+    auto* p1 = arena.construct<Point>(1, 2);
+    auto* p2 = arena.construct<Point>(3, 4);
+    auto* p3 = arena.construct<Point>(5, 6);
+    ASSERT_NE(p1, nullptr);
+    ASSERT_NE(p2, nullptr);
+    ASSERT_NE(p3, nullptr);
+    EXPECT_EQ(p1->x, 1);
+    EXPECT_EQ(p2->x, 3);
+    EXPECT_EQ(p3->x, 5);
+    // All should be at different addresses
+    EXPECT_NE(p1, p2);
+    EXPECT_NE(p2, p3);
+}
+
+// === Alignment =============================================================
+
+TEST(ArenaAllocator, AlignmentRespected) {
+    jsontitan::core::ArenaAllocator arena(4096);
+    // Allocate 1 byte to offset the bump pointer
+    arena.allocate(1, 1);
+    // Now allocate with 16-byte alignment
+    void* aligned = arena.allocate(32, 16);
+    ASSERT_NE(aligned, nullptr);
+    auto addr = reinterpret_cast<std::uintptr_t>(aligned);
+    EXPECT_EQ(addr % 16, 0u) << "Pointer not aligned to 16 bytes";
+}
+
+// === totalAllocated and totalUsed ==========================================
+
+TEST(ArenaAllocator, TotalAllocatedAndUsed) {
+    jsontitan::core::ArenaAllocator arena(1024);
+    EXPECT_EQ(arena.totalAllocated(), 0u);
+    EXPECT_EQ(arena.totalUsed(), 0u);
+
+    arena.allocate(100);
+    EXPECT_GE(arena.totalAllocated(), 1024u);
+    EXPECT_GE(arena.totalUsed(), 100u);
+    EXPECT_LE(arena.totalUsed(), arena.totalAllocated());
+}
+
+// === Move semantics ========================================================
+
+TEST(ArenaAllocator, MoveConstructor) {
+    jsontitan::core::ArenaAllocator arena1(4096);
+    auto* ptr = static_cast<int*>(arena1.allocate(sizeof(int), alignof(int)));
+    *ptr = 42;
+
+    jsontitan::core::ArenaAllocator arena2(std::move(arena1));
+    // arena2 should have the data
+    EXPECT_GT(arena2.totalUsed(), 0u);
+    // The pointer should still be valid through arena2's ownership
+    EXPECT_EQ(*ptr, 42);
+}
+
+TEST(ArenaAllocator, MoveAssignment) {
+    jsontitan::core::ArenaAllocator arena1(4096);
+    arena1.allocate(100);
+
+    jsontitan::core::ArenaAllocator arena2(4096);
+    arena2 = std::move(arena1);
+    EXPECT_GE(arena2.totalUsed(), 100u);
+}
+
+// ===========================================================================
+// Task 1.6: Property test -- Arena allocation preserves data integrity
+// Property 1: For any sequence of node allocations (including sequences
+// spanning multiple arena blocks), every allocated node retains its original
+// type, key, value, and child pointers, and all previously returned pointers
+// remain valid.
+// Validates: Requirements 1.1, 1.2, 1.5
+// ===========================================================================
+
+#include "core/arena_json_node.h"
+
+TEST(ArenaAllocatorProperty, AllocationPreservesDataIntegrity) {
+    rc::check("Property 1: Arena allocation preserves data integrity",
+        [](void) {
+            // Use a small block size to force multiple blocks
+            auto blockSize = *rc::gen::inRange(64, 512);
+            jsontitan::core::ArenaAllocator arena(
+                static_cast<std::size_t>(blockSize));
+
+            auto numNodes = *rc::gen::inRange(1, 100);
+
+            struct NodeRecord {
+                jsontitan::core::ArenaJsonNode* node;
+                jsontitan::core::NodeType expectedType;
+                std::string_view expectedKey;
+                std::string_view expectedValue;
+            };
+
+            std::vector<NodeRecord> records;
+            records.reserve(static_cast<std::size_t>(numNodes));
+
+            // Allocate a sequence of nodes with random types
+            for (int i = 0; i < numNodes; ++i) {
+                auto typeIdx = *rc::gen::inRange(0, 6);
+                auto nodeType = static_cast<jsontitan::core::NodeType>(typeIdx);
+
+                // Generate random key and value strings
+                auto keyLen = *rc::gen::inRange(0, 20);
+                std::string keyStr(static_cast<std::size_t>(keyLen), 'a');
+                for (auto& c : keyStr) {
+                    c = static_cast<char>(
+                        *rc::gen::inRange(static_cast<int>('a'),
+                                          static_cast<int>('z') + 1));
+                }
+                auto valLen = *rc::gen::inRange(0, 20);
+                std::string valStr(static_cast<std::size_t>(valLen), '0');
+                for (auto& c : valStr) {
+                    c = static_cast<char>(
+                        *rc::gen::inRange(static_cast<int>('0'),
+                                          static_cast<int>('9') + 1));
+                }
+
+                auto keyCopy = arena.copyString(keyStr);
+                auto valCopy = arena.copyString(valStr);
+
+                auto* node = arena.construct<jsontitan::core::ArenaJsonNode>();
+                RC_ASSERT(node != nullptr);
+
+                node->type = nodeType;
+                node->key = jsontitan::core::StringRef{
+                    keyCopy.data(), keyCopy.size(), true};
+                node->value = jsontitan::core::StringRef{
+                    valCopy.data(), valCopy.size(), true};
+                node->children = nullptr;
+                node->childCount = 0;
+
+                records.push_back(NodeRecord{
+                    .node = node,
+                    .expectedType = nodeType,
+                    .expectedKey = keyCopy,
+                    .expectedValue = valCopy,
+                });
+            }
+
+            // Verify all nodes still have correct data
+            for (const auto& rec : records) {
+                RC_ASSERT(rec.node->type == rec.expectedType);
+                RC_ASSERT(rec.node->key.view() == rec.expectedKey);
+                RC_ASSERT(rec.node->value.view() == rec.expectedValue);
+                RC_ASSERT(rec.node->children == nullptr);
+                RC_ASSERT(rec.node->childCount == 0);
+            }
+        });
+}
+
+TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
+    rc::check("Property 1b: Arena allocation preserves child pointers",
+        [](void) {
+            jsontitan::core::ArenaAllocator arena(256);
+
+            auto numChildren = *rc::gen::inRange(1, 20);
+
+            // Allocate child nodes
+            std::vector<jsontitan::core::ArenaJsonNode*> childNodes;
+            for (int i = 0; i < numChildren; ++i) {
+                auto* child = arena.construct<jsontitan::core::ArenaJsonNode>();
+                RC_ASSERT(child != nullptr);
+                child->type = jsontitan::core::NodeType::String;
+                auto val = arena.copyString("child" + std::to_string(i));
+                child->value = jsontitan::core::StringRef{
+                    val.data(), val.size(), true};
+                child->children = nullptr;
+                child->childCount = 0;
+                childNodes.push_back(child);
+            }
+
+            // Allocate child pointer array in the arena
+            auto** childArray = static_cast<jsontitan::core::ArenaJsonNode**>(
+                arena.allocate(
+                    static_cast<std::size_t>(numChildren) *
+                        sizeof(jsontitan::core::ArenaJsonNode*),
+                    alignof(jsontitan::core::ArenaJsonNode*)));
+            RC_ASSERT(childArray != nullptr);
+
+            for (int i = 0; i < numChildren; ++i) {
+                childArray[i] = childNodes[static_cast<std::size_t>(i)];
+            }
+
+            // Allocate parent node
+            auto* parent = arena.construct<jsontitan::core::ArenaJsonNode>();
+            RC_ASSERT(parent != nullptr);
+            parent->type = jsontitan::core::NodeType::Object;
+            parent->children = childArray;
+            parent->childCount = static_cast<std::size_t>(numChildren);
+
+            // Do more allocations to potentially trigger new blocks
+            for (int i = 0; i < 50; ++i) {
+                arena.allocate(64);
+            }
+
+            // Verify parent still points to correct children
+            RC_ASSERT(parent->childCount ==
+                      static_cast<std::size_t>(numChildren));
+            for (int i = 0; i < numChildren; ++i) {
+                auto idx = static_cast<std::size_t>(i);
+                RC_ASSERT(parent->children[idx] == childNodes[idx]);
+                RC_ASSERT(parent->children[idx]->type ==
+                          jsontitan::core::NodeType::String);
+                std::string expected = "child" + std::to_string(i);
+                RC_ASSERT(parent->children[idx]->value.view() == expected);
+            }
+        });
+}
+
+// ===========================================================================
+// Task 1.7: Unit tests for SourceBuffer and StringRef
+// Requirements: 2.1, 2.3, 2.4
+// ===========================================================================
+
+#include "core/source_buffer.h"
+
+// === StringRef tests =======================================================
+
+TEST(StringRef, DefaultConstructed) {
+    jsontitan::core::StringRef ref{};
+    EXPECT_EQ(ref.data, nullptr);
+    EXPECT_EQ(ref.length, 0u);
+    EXPECT_FALSE(ref.ownsData);
+    EXPECT_TRUE(ref.toString().empty());
+    EXPECT_TRUE(ref.view().empty());
+}
+
+TEST(StringRef, ToStringFromPointer) {
+    const char* text = "hello";
+    jsontitan::core::StringRef ref{text, 5, false};
+    EXPECT_EQ(ref.toString(), "hello");
+}
+
+TEST(StringRef, ViewFromPointer) {
+    const char* text = "world";
+    jsontitan::core::StringRef ref{text, 5, false};
+    EXPECT_EQ(ref.view(), "world");
+    // View should point to the same memory (zero-copy)
+    EXPECT_EQ(ref.view().data(), text);
+}
+
+TEST(StringRef, ToStringFromOwnedData) {
+    std::string owned = "owned string";
+    jsontitan::core::StringRef ref{owned.data(), owned.size(), true};
+    EXPECT_EQ(ref.toString(), "owned string");
+}
+
+TEST(StringRef, ViewFromOwnedData) {
+    std::string owned = "owned view";
+    jsontitan::core::StringRef ref{owned.data(), owned.size(), true};
+    EXPECT_EQ(ref.view(), "owned view");
+}
+
+TEST(StringRef, EqualityComparison) {
+    const char* text1 = "same";
+    const char* text2 = "same";
+    jsontitan::core::StringRef ref1{text1, 4, false};
+    jsontitan::core::StringRef ref2{text2, 4, false};
+    EXPECT_EQ(ref1, ref2);
+}
+
+TEST(StringRef, InequalityComparison) {
+    const char* text1 = "abc";
+    const char* text2 = "xyz";
+    jsontitan::core::StringRef ref1{text1, 3, false};
+    jsontitan::core::StringRef ref2{text2, 3, false};
+    EXPECT_NE(ref1, ref2);
+}
+
+TEST(StringRef, EqualityAcrossOwnership) {
+    // A zero-copy ref and an owned ref with the same content should be equal
+    const char* zeroCopy = "test";
+    std::string owned = "test";
+    jsontitan::core::StringRef ref1{zeroCopy, 4, false};
+    jsontitan::core::StringRef ref2{owned.data(), owned.size(), true};
+    EXPECT_EQ(ref1, ref2);
+}
+
+TEST(StringRef, EmptyStringEquality) {
+    jsontitan::core::StringRef ref1{};
+    jsontitan::core::StringRef ref2{};
+    EXPECT_EQ(ref1, ref2);
+}
+
+// === SourceBuffer tests ====================================================
+
+TEST(SourceBuffer, ConstructFromString) {
+    jsontitan::core::SourceBuffer buf(std::string("hello world"));
+    EXPECT_EQ(buf.size(), 11u);
+    EXPECT_EQ(std::string_view(buf.data(), buf.size()), "hello world");
+}
+
+TEST(SourceBuffer, ConstructFromByteVector) {
+    std::string text = "byte data";
+    std::vector<std::byte> bytes(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        bytes[i] = static_cast<std::byte>(text[i]);
+    }
+    jsontitan::core::SourceBuffer buf(std::move(bytes));
+    EXPECT_EQ(buf.size(), 9u);
+    EXPECT_EQ(std::string_view(buf.data(), buf.size()), "byte data");
+}
+
+TEST(SourceBuffer, DataReturnsValidPointer) {
+    jsontitan::core::SourceBuffer buf(std::string("test"));
+    EXPECT_NE(buf.data(), nullptr);
+}
+
+TEST(SourceBuffer, SpanReturnsCorrectSize) {
+    jsontitan::core::SourceBuffer buf(std::string("span test"));
+    auto s = buf.span();
+    EXPECT_EQ(s.size(), 9u);
+}
+
+TEST(SourceBuffer, RefCreatesZeroCopyStringRef) {
+    jsontitan::core::SourceBuffer buf(std::string("hello world"));
+    auto ref = buf.ref(0, 5);
+    EXPECT_EQ(ref.view(), "hello");
+    EXPECT_FALSE(ref.ownsData);
+    // The ref should point directly into the buffer
+    EXPECT_EQ(ref.data, buf.data());
+}
+
+TEST(SourceBuffer, RefWithOffset) {
+    jsontitan::core::SourceBuffer buf(std::string("hello world"));
+    auto ref = buf.ref(6, 5);
+    EXPECT_EQ(ref.view(), "world");
+    EXPECT_FALSE(ref.ownsData);
+    EXPECT_EQ(ref.data, buf.data() + 6);
+}
+
+TEST(SourceBuffer, RefZeroLength) {
+    jsontitan::core::SourceBuffer buf(std::string("test"));
+    auto ref = buf.ref(0, 0);
+    EXPECT_EQ(ref.length, 0u);
+    EXPECT_TRUE(ref.view().empty());
+}
+
+TEST(SourceBuffer, EmptyBuffer) {
+    jsontitan::core::SourceBuffer buf(std::string(""));
+    EXPECT_EQ(buf.size(), 0u);
+    EXPECT_EQ(buf.span().size(), 0u);
+}
+
+TEST(SourceBuffer, MoveConstructor) {
+    jsontitan::core::SourceBuffer buf1(std::string("movable"));
+    jsontitan::core::SourceBuffer buf2(std::move(buf1));
+    EXPECT_EQ(buf2.size(), 7u);
+    EXPECT_EQ(std::string_view(buf2.data(), buf2.size()), "movable");
+}
+
+TEST(SourceBuffer, RefContentMatchesBuffer) {
+    std::string json = R"({"key": "value"})";
+    jsontitan::core::SourceBuffer buf(json);
+    // Extract "key" (bytes 2..4 in the JSON string)
+    auto ref = buf.ref(2, 3);
+    EXPECT_EQ(ref.view(), "key");
+    EXPECT_EQ(ref.toString(), "key");
+}
+
+// === SourceBuffer immutability (compile-time check) ========================
+
+TEST(SourceBuffer, DataReturnsConstPointer) {
+    jsontitan::core::SourceBuffer buf(std::string("immutable"));
+    // data() returns const char* -- this is a compile-time guarantee.
+    static_assert(
+        std::is_same_v<decltype(buf.data()), const char*>,
+        "SourceBuffer::data() must return const char*");
+}
