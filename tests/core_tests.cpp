@@ -2,6 +2,7 @@
 #include <rapidcheck.h>
 
 #include "core/json_node.h"
+#include "core/union_engine.h"
 
 using namespace jsontitan::core;
 
@@ -2204,4 +2205,363 @@ TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
             RC_ASSERT(!result.error->description.empty());
         }
     );
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.2: Property 9 — Union Structure and Disambiguation
+// Validates: Requirements 5.1, 5.5
+// ---------------------------------------------------------------------------
+
+TEST(UnionProperty, UnionStructureAndDisambiguation) {
+    rc::check("Feature: json-titan-core, Property 9: Union Structure and Disambiguation",
+        [](void) {
+            // Generate a random number of file entries (1–10)
+            auto numEntries = *rc::gen::inRange(1, 11);
+
+            // Generate a small pool of filenames to draw from (ensures duplicates)
+            auto poolSize = *rc::gen::inRange(1, std::max(2, numEntries));
+            std::vector<std::string> namePool;
+            namePool.reserve(static_cast<std::size_t>(poolSize));
+            for (int i = 0; i < poolSize; ++i) {
+                std::vector<char> alphabet = {'a', 'b', 'c', 'd', 'e', 'f'};
+                auto len = *rc::gen::inRange(1, 6);
+                std::string name;
+                for (int j = 0; j < len; ++j) {
+                    auto ch = *rc::gen::elementOf(alphabet);
+                    name += ch;
+                }
+                name += ".json";
+                namePool.push_back(std::move(name));
+            }
+
+            // Build FileEntry vector, picking filenames from the pool
+            std::vector<FileEntry> entries;
+            entries.reserve(static_cast<std::size_t>(numEntries));
+            for (int i = 0; i < numEntries; ++i) {
+                auto nameIdx = *rc::gen::inRange(
+                    std::size_t{0}, namePool.size());
+                // Each file gets a simple object tree as its root
+                auto root = JsonNode::makeObject("", {
+                    JsonNode::makeString("data", "value" + std::to_string(i))
+                });
+                entries.push_back(FileEntry{namePool[nameIdx], root});
+            }
+
+            // Call unionTrees
+            auto result = unionTrees(std::span<const FileEntry>(entries));
+
+            // 1. Root node type is Object
+            RC_ASSERT(result != nullptr);
+            RC_ASSERT(result->type == NodeType::Object);
+
+            // 2. Root has exactly entries.size() children
+            RC_ASSERT(result->children.size() == entries.size());
+
+            // 3. All child keys are unique
+            std::set<std::string> keys;
+            for (const auto& child : result->children) {
+                auto [_, inserted] = keys.insert(child->key);
+                RC_ASSERT(inserted);  // key must be unique
+            }
+
+            // 4. First occurrence of each filename uses the original name;
+            //    duplicates are disambiguated with " (2)", " (3)", etc.
+            std::unordered_map<std::string, int> expectedCount;
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                const auto& filename = entries[i].filename;
+                expectedCount[filename]++;
+                int occurrence = expectedCount[filename];
+
+                std::string expectedKey;
+                if (occurrence == 1) {
+                    expectedKey = filename;
+                } else {
+                    expectedKey = filename + " (" + std::to_string(occurrence) + ")";
+                }
+                RC_ASSERT(result->children[i]->key == expectedKey);
+            }
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.3: Property 10 — Union Removal
+// Validates: Requirement 5.4
+// ---------------------------------------------------------------------------
+
+TEST(UnionProperty, UnionRemoval) {
+    rc::check("Feature: json-titan-core, Property 10: Union Removal",
+        [](void) {
+            // Generate a random number of file entries (2–10, need at least 2
+            // so that after removal there is still at least 1 child)
+            auto numEntries = *rc::gen::inRange(2, 11);
+
+            // Generate a small pool of filenames to draw from (ensures duplicates)
+            auto poolSize = *rc::gen::inRange(1, std::max(2, numEntries));
+            std::vector<std::string> namePool;
+            namePool.reserve(static_cast<std::size_t>(poolSize));
+            for (int i = 0; i < poolSize; ++i) {
+                std::vector<char> alphabet = {'a', 'b', 'c', 'd', 'e', 'f'};
+                auto len = *rc::gen::inRange(1, 6);
+                std::string name;
+                for (int j = 0; j < len; ++j) {
+                    auto ch = *rc::gen::elementOf(alphabet);
+                    name += ch;
+                }
+                name += ".json";
+                namePool.push_back(std::move(name));
+            }
+
+            // Build FileEntry vector, picking filenames from the pool
+            std::vector<FileEntry> entries;
+            entries.reserve(static_cast<std::size_t>(numEntries));
+            for (int i = 0; i < numEntries; ++i) {
+                auto nameIdx = *rc::gen::inRange(
+                    std::size_t{0}, namePool.size());
+                auto root = JsonNode::makeObject("", {
+                    JsonNode::makeString("data", "value" + std::to_string(i))
+                });
+                entries.push_back(FileEntry{namePool[nameIdx], root});
+            }
+
+            // Create the union tree
+            auto unionResult = unionTrees(std::span<const FileEntry>(entries));
+            RC_ASSERT(unionResult != nullptr);
+            RC_ASSERT(!unionResult->children.empty());
+
+            // Pick a random child key to remove
+            auto childIdx = *rc::gen::inRange(
+                std::size_t{0}, unionResult->children.size());
+            std::string keyToRemove = unionResult->children[childIdx]->key;
+
+            // Call removeFromUnion
+            auto removed = removeFromUnion(*unionResult, keyToRemove);
+
+            // 1. Result is still an Object type
+            RC_ASSERT(removed != nullptr);
+            RC_ASSERT(removed->type == NodeType::Object);
+
+            // 2. Result has exactly (original children count - 1) children
+            RC_ASSERT(removed->children.size() ==
+                       unionResult->children.size() - 1);
+
+            // 3. The result does not contain a child with the removed key
+            for (const auto& child : removed->children) {
+                RC_ASSERT(child->key != keyToRemove);
+            }
+
+            // 4. All other children are present and unchanged
+            //    (same key, same children/structure)
+            std::size_t remIdx = 0;
+            for (std::size_t origIdx = 0;
+                 origIdx < unionResult->children.size(); ++origIdx) {
+                if (unionResult->children[origIdx]->key == keyToRemove) {
+                    continue;  // skip the removed child
+                }
+                RC_ASSERT(remIdx < removed->children.size());
+                RC_ASSERT(nodesEqual(removed->children[remIdx],
+                                     unionResult->children[origIdx]));
+                ++remIdx;
+            }
+            RC_ASSERT(remIdx == removed->children.size());
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.4: Unit tests for UnionEngine
+// Requirements: 5.1, 5.4, 5.5
+// ---------------------------------------------------------------------------
+
+// === unionTrees tests ======================================================
+
+TEST(UnionEngineTest, SingleFileUnion) {
+    auto fileRoot = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice")
+    });
+    std::vector<FileEntry> entries = {{"file.json", fileRoot}};
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    ASSERT_EQ(result->children.size(), 1u);
+    EXPECT_EQ(result->children[0]->key, "file.json");
+}
+
+TEST(UnionEngineTest, EmptyFileList) {
+    std::vector<FileEntry> entries;
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    EXPECT_EQ(result->children.size(), 0u);
+}
+
+TEST(UnionEngineTest, FilesWithIdenticalStructure) {
+    auto root1 = JsonNode::makeObject("", {
+        JsonNode::makeString("key", "val1")
+    });
+    auto root2 = JsonNode::makeObject("", {
+        JsonNode::makeString("key", "val2")
+    });
+    auto root3 = JsonNode::makeObject("", {
+        JsonNode::makeString("key", "val3")
+    });
+    std::vector<FileEntry> entries = {
+        {"a.json", root1},
+        {"b.json", root2},
+        {"c.json", root3}
+    };
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->children.size(), 3u);
+    EXPECT_EQ(result->children[0]->key, "a.json");
+    EXPECT_EQ(result->children[1]->key, "b.json");
+    EXPECT_EQ(result->children[2]->key, "c.json");
+}
+
+TEST(UnionEngineTest, DuplicateFilenames) {
+    auto root1 = JsonNode::makeObject("", {
+        JsonNode::makeString("x", "1")
+    });
+    auto root2 = JsonNode::makeObject("", {
+        JsonNode::makeString("x", "2")
+    });
+    std::vector<FileEntry> entries = {
+        {"data.json", root1},
+        {"data.json", root2}
+    };
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->children.size(), 2u);
+    EXPECT_EQ(result->children[0]->key, "data.json");
+    EXPECT_EQ(result->children[1]->key, "data.json (2)");
+}
+
+TEST(UnionEngineTest, ThreeDuplicateFilenames) {
+    auto root1 = JsonNode::makeObject("", {});
+    auto root2 = JsonNode::makeObject("", {});
+    auto root3 = JsonNode::makeObject("", {});
+    std::vector<FileEntry> entries = {
+        {"data.json", root1},
+        {"data.json", root2},
+        {"data.json", root3}
+    };
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->children.size(), 3u);
+    EXPECT_EQ(result->children[0]->key, "data.json");
+    EXPECT_EQ(result->children[1]->key, "data.json (2)");
+    EXPECT_EQ(result->children[2]->key, "data.json (3)");
+}
+
+TEST(UnionEngineTest, MixedDuplicateAndUnique) {
+    auto r1 = JsonNode::makeObject("", {});
+    auto r2 = JsonNode::makeObject("", {});
+    auto r3 = JsonNode::makeObject("", {});
+    auto r4 = JsonNode::makeObject("", {});
+    std::vector<FileEntry> entries = {
+        {"alpha.json", r1},
+        {"beta.json", r2},
+        {"alpha.json", r3},
+        {"gamma.json", r4}
+    };
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->children.size(), 4u);
+    EXPECT_EQ(result->children[0]->key, "alpha.json");
+    EXPECT_EQ(result->children[1]->key, "beta.json");
+    EXPECT_EQ(result->children[2]->key, "alpha.json (2)");
+    EXPECT_EQ(result->children[3]->key, "gamma.json");
+}
+
+// === removeFromUnion tests =================================================
+
+TEST(UnionEngineTest, RemoveFirstEntry) {
+    auto root1 = JsonNode::makeObject("", {JsonNode::makeString("a", "1")});
+    auto root2 = JsonNode::makeObject("", {JsonNode::makeString("b", "2")});
+    auto root3 = JsonNode::makeObject("", {JsonNode::makeString("c", "3")});
+    std::vector<FileEntry> entries = {
+        {"first.json", root1},
+        {"second.json", root2},
+        {"third.json", root3}
+    };
+    auto unionRoot = unionTrees(std::span<const FileEntry>(entries));
+    auto result = removeFromUnion(*unionRoot, "first.json");
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    ASSERT_EQ(result->children.size(), 2u);
+    EXPECT_EQ(result->children[0]->key, "second.json");
+    EXPECT_EQ(result->children[1]->key, "third.json");
+}
+
+TEST(UnionEngineTest, RemoveLastEntry) {
+    auto root1 = JsonNode::makeObject("", {JsonNode::makeString("a", "1")});
+    auto root2 = JsonNode::makeObject("", {JsonNode::makeString("b", "2")});
+    auto root3 = JsonNode::makeObject("", {JsonNode::makeString("c", "3")});
+    std::vector<FileEntry> entries = {
+        {"first.json", root1},
+        {"second.json", root2},
+        {"third.json", root3}
+    };
+    auto unionRoot = unionTrees(std::span<const FileEntry>(entries));
+    auto result = removeFromUnion(*unionRoot, "third.json");
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    ASSERT_EQ(result->children.size(), 2u);
+    EXPECT_EQ(result->children[0]->key, "first.json");
+    EXPECT_EQ(result->children[1]->key, "second.json");
+}
+
+TEST(UnionEngineTest, RemoveMiddleEntry) {
+    auto root1 = JsonNode::makeObject("", {JsonNode::makeString("a", "1")});
+    auto root2 = JsonNode::makeObject("", {JsonNode::makeString("b", "2")});
+    auto root3 = JsonNode::makeObject("", {JsonNode::makeString("c", "3")});
+    std::vector<FileEntry> entries = {
+        {"first.json", root1},
+        {"second.json", root2},
+        {"third.json", root3}
+    };
+    auto unionRoot = unionTrees(std::span<const FileEntry>(entries));
+    auto result = removeFromUnion(*unionRoot, "second.json");
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    ASSERT_EQ(result->children.size(), 2u);
+    EXPECT_EQ(result->children[0]->key, "first.json");
+    EXPECT_EQ(result->children[1]->key, "third.json");
+}
+
+TEST(UnionEngineTest, RemoveNonExistentKey) {
+    auto root1 = JsonNode::makeObject("", {});
+    auto root2 = JsonNode::makeObject("", {});
+    std::vector<FileEntry> entries = {
+        {"a.json", root1},
+        {"b.json", root2}
+    };
+    auto unionRoot = unionTrees(std::span<const FileEntry>(entries));
+    auto result = removeFromUnion(*unionRoot, "nonexistent.json");
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    ASSERT_EQ(result->children.size(), 2u);
+    EXPECT_EQ(result->children[0]->key, "a.json");
+    EXPECT_EQ(result->children[1]->key, "b.json");
+}
+
+TEST(UnionEngineTest, RemoveFromSingleChild) {
+    auto root1 = JsonNode::makeObject("", {JsonNode::makeString("x", "val")});
+    std::vector<FileEntry> entries = {{"only.json", root1}};
+    auto unionRoot = unionTrees(std::span<const FileEntry>(entries));
+    auto result = removeFromUnion(*unionRoot, "only.json");
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->type, NodeType::Object);
+    EXPECT_EQ(result->children.size(), 0u);
 }
