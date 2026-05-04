@@ -31,7 +31,7 @@ target_link_libraries(core_tests
 include(GoogleTest)
 gtest_discover_tests(core_tests)
 
-# ── Shell Tests (Qt Test) ────────────────────────────────────────
+# ── Shell Tests (Qt Test + RapidCheck) ───────────────────────────
 add_executable(shell_tests shell_tests.cpp)
 
 target_link_libraries(shell_tests
@@ -41,6 +41,7 @@ target_link_libraries(shell_tests
         Qt6::Gui
         Qt6::Widgets
         Qt6::Test
+        rapidcheck
 )
 
 add_test(NAME shell_tests COMMAND shell_tests)

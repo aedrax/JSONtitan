@@ -1,7 +1,160 @@
 #include <QApplication>
+#include <QAbstractItemModelTester>
 #include <QtTest/QtTest>
+#include <rapidcheck.h>
 
+#include "core/json_node.h"
 #include "shell/main_window.h"
+#include "shell/tree_model.h"
+
+using namespace jsontitan::core;
+
+// ---------------------------------------------------------------------------
+// Helper: Generate random JsonNode values for property testing
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::shared_ptr<const JsonNode> generateRandomNode(uint32_t seed, int maxDepth = 3) {
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<int> typeDist(0, 5);
+    std::uniform_int_distribution<int> childCountDist(0, 5);
+    std::uniform_int_distribution<int> keyLenDist(1, 10);
+    std::uniform_int_distribution<int> charDist(97, 122); // a-z
+
+    auto randomKey = [&]() -> std::string {
+        int len = keyLenDist(rng);
+        std::string key;
+        for (int i = 0; i < len; ++i)
+            key += static_cast<char>(charDist(rng));
+        return key;
+    };
+
+    auto randomValue = [&]() -> std::string {
+        int len = keyLenDist(rng);
+        std::string val;
+        for (int i = 0; i < len; ++i)
+            val += static_cast<char>(charDist(rng));
+        return val;
+    };
+
+    std::function<std::shared_ptr<const JsonNode>(int)> generate =
+        [&](int depth) -> std::shared_ptr<const JsonNode> {
+        int typeChoice = (depth >= maxDepth) ? typeDist(rng) % 4 + 2 : typeDist(rng);
+
+        switch (typeChoice) {
+        case 0: { // Object
+            int childCount = childCountDist(rng);
+            std::vector<std::shared_ptr<const JsonNode>> children;
+            for (int i = 0; i < childCount; ++i)
+                children.push_back(generate(depth + 1));
+            return JsonNode::makeObject(randomKey(), std::move(children));
+        }
+        case 1: { // Array
+            int childCount = childCountDist(rng);
+            std::vector<std::shared_ptr<const JsonNode>> children;
+            for (int i = 0; i < childCount; ++i)
+                children.push_back(generate(depth + 1));
+            return JsonNode::makeArray(randomKey(), std::move(children));
+        }
+        case 2: // String
+            return JsonNode::makeString(randomKey(), randomValue());
+        case 3: // Number
+            return JsonNode::makeNumber(randomKey(), std::to_string(std::uniform_int_distribution<int>(-1000, 1000)(rng)));
+        case 4: // Boolean
+            return JsonNode::makeBool(randomKey(), rng() % 2 == 0);
+        case 5: // Null
+        default:
+            return JsonNode::makeNull(randomKey());
+        }
+    };
+
+    return generate(0);
+}
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// Task 11.2: Property test for node display formatting
+// Property 4: Node Display Formatting
+// Validates: Requirement 3.3
+// ---------------------------------------------------------------------------
+
+class TreeModelPropertyTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void property4_nodeDisplayFormatting() {
+        // Property 4: Node Display Formatting
+        // For any JsonNode, the display formatting function SHALL produce output
+        // containing the node's key (or array index), a type indicator, and for
+        // scalar types a preview of the value.
+        rc::check("Feature: json-titan-core, Property 4: Node Display Formatting",
+            [](void) {
+                auto seed = *rc::gen::arbitrary<uint32_t>();
+                auto node = generateRandomNode(seed, 2);
+                RC_ASSERT(node != nullptr);
+
+                // Test with key (non-array context)
+                {
+                    QString display = TreeModel::formatNodeDisplay(*node, -1);
+                    RC_ASSERT(!display.isEmpty());
+
+                    // Verify key is present if node has a key
+                    if (!node->key.empty()) {
+                        QString key = QString::fromStdString(node->key);
+                        RC_ASSERT(display.contains(key));
+                    }
+
+                    // Verify type indicator is present
+                    switch (node->type) {
+                    case NodeType::Object:
+                        RC_ASSERT(display.contains("{Object}"));
+                        break;
+                    case NodeType::Array:
+                        RC_ASSERT(display.contains("[Array]"));
+                        break;
+                    case NodeType::String:
+                        // String values are shown in quotes
+                        RC_ASSERT(display.contains("\""));
+                        // Value preview should be present (possibly truncated)
+                        if (!node->value.empty()) {
+                            QString val = QString::fromStdString(node->value);
+                            // Either the full value or a truncated version should appear
+                            RC_ASSERT(display.contains(val.left(std::min(val.length(), qsizetype(50)))));
+                        }
+                        break;
+                    case NodeType::Number:
+                        // Number value should appear directly
+                        RC_ASSERT(display.contains(QString::fromStdString(node->value)));
+                        break;
+                    case NodeType::Boolean:
+                        // Boolean value should appear
+                        RC_ASSERT(display.contains(QString::fromStdString(node->value)));
+                        break;
+                    case NodeType::Null:
+                        RC_ASSERT(display.contains("null"));
+                        break;
+                    }
+                }
+
+                // Test with array index context
+                {
+                    int arrayIdx = *rc::gen::inRange(0, 100);
+                    QString display = TreeModel::formatNodeDisplay(*node, arrayIdx);
+                    RC_ASSERT(!display.isEmpty());
+
+                    // Verify array index is present
+                    QString indexStr = QStringLiteral("[%1]").arg(arrayIdx);
+                    RC_ASSERT(display.contains(indexStr));
+                }
+            });
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Existing shell setup test
+// ---------------------------------------------------------------------------
 
 class ShellSetupTest : public QObject {
     Q_OBJECT
@@ -13,11 +166,350 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 11.3: Unit tests for TreeModel using QAbstractItemModelTester
+// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+// ---------------------------------------------------------------------------
+
+class TreeModelUnitTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testEmptyModel() {
+        TreeModel model;
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+        QCOMPARE(model.rowCount(QModelIndex()), 0);
+        QCOMPARE(model.columnCount(QModelIndex()), 1);
+        QVERIFY(!model.hasChildren(QModelIndex()));
+    }
+
+    void testSetRootNodeTriggersReset() {
+        TreeModel model;
+
+        QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30")
+        });
+
+        model.setRootNode(root);
+        QCOMPARE(resetSpy.count(), 1);
+    }
+
+    void testSetRootNodeWithNull() {
+        TreeModel model;
+
+        // Set a valid root first
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("key", "value")
+        });
+        model.setRootNode(root);
+
+        // Now set null — should reset to empty
+        QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+        model.setRootNode(nullptr);
+        QCOMPARE(resetSpy.count(), 1);
+        QCOMPARE(model.rowCount(QModelIndex()), 0);
+        QVERIFY(!model.hasChildren(QModelIndex()));
+    }
+
+    void testLazyLoadingChildrenNotLoadedUntilFetchMore() {
+        TreeModel model;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("a", "1"),
+            JsonNode::makeString("b", "2"),
+            JsonNode::makeString("c", "3")
+        });
+
+        model.setRootNode(root);
+
+        // hasChildren should be true (root has children)
+        QVERIFY(model.hasChildren(QModelIndex()));
+
+        // But rowCount should be 0 initially (lazy loading — not fetched yet)
+        QCOMPARE(model.rowCount(QModelIndex()), 0);
+
+        // canFetchMore should be true
+        QVERIFY(model.canFetchMore(QModelIndex()));
+
+        // Fetch children
+        model.fetchMore(QModelIndex());
+
+        // Now rowCount should reflect the children
+        QCOMPARE(model.rowCount(QModelIndex()), 3);
+
+        // canFetchMore should be false now
+        QVERIFY(!model.canFetchMore(QModelIndex()));
+    }
+
+    void testLazyLoadingNestedChildren() {
+        TreeModel model;
+
+        auto inner = JsonNode::makeObject("inner", {
+            JsonNode::makeString("x", "hello"),
+            JsonNode::makeNumber("y", "42")
+        });
+
+        auto root = JsonNode::makeObject("", {inner});
+        model.setRootNode(root);
+
+        // Fetch root children
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 1);
+
+        // Get the inner node index
+        QModelIndex innerIdx = model.index(0, 0, QModelIndex());
+        QVERIFY(innerIdx.isValid());
+
+        // Inner node has children but they're not fetched yet
+        QVERIFY(model.hasChildren(innerIdx));
+        QCOMPARE(model.rowCount(innerIdx), 0);
+        QVERIFY(model.canFetchMore(innerIdx));
+
+        // Fetch inner children
+        model.fetchMore(innerIdx);
+        QCOMPARE(model.rowCount(innerIdx), 2);
+        QVERIFY(!model.canFetchMore(innerIdx));
+    }
+
+    void testDataDisplayRole() {
+        TreeModel model;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30"),
+            JsonNode::makeBool("active", true),
+            JsonNode::makeNull("deleted"),
+            JsonNode::makeObject("address", {
+                JsonNode::makeString("city", "NYC")
+            }),
+            JsonNode::makeArray("tags", {
+                JsonNode::makeString("", "dev"),
+                JsonNode::makeString("", "cpp")
+            })
+        });
+
+        model.setRootNode(root);
+        model.fetchMore(QModelIndex());
+
+        // String node
+        QModelIndex nameIdx = model.index(0, 0, QModelIndex());
+        QString nameDisplay = model.data(nameIdx, Qt::DisplayRole).toString();
+        QVERIFY(nameDisplay.contains("name"));
+        QVERIFY(nameDisplay.contains("Alice"));
+        QVERIFY(nameDisplay.contains("\""));
+
+        // Number node
+        QModelIndex ageIdx = model.index(1, 0, QModelIndex());
+        QString ageDisplay = model.data(ageIdx, Qt::DisplayRole).toString();
+        QVERIFY(ageDisplay.contains("age"));
+        QVERIFY(ageDisplay.contains("30"));
+
+        // Boolean node
+        QModelIndex activeIdx = model.index(2, 0, QModelIndex());
+        QString activeDisplay = model.data(activeIdx, Qt::DisplayRole).toString();
+        QVERIFY(activeDisplay.contains("active"));
+        QVERIFY(activeDisplay.contains("true"));
+
+        // Null node
+        QModelIndex deletedIdx = model.index(3, 0, QModelIndex());
+        QString deletedDisplay = model.data(deletedIdx, Qt::DisplayRole).toString();
+        QVERIFY(deletedDisplay.contains("deleted"));
+        QVERIFY(deletedDisplay.contains("null"));
+
+        // Object node
+        QModelIndex addrIdx = model.index(4, 0, QModelIndex());
+        QString addrDisplay = model.data(addrIdx, Qt::DisplayRole).toString();
+        QVERIFY(addrDisplay.contains("address"));
+        QVERIFY(addrDisplay.contains("{Object}"));
+
+        // Array node
+        QModelIndex tagsIdx = model.index(5, 0, QModelIndex());
+        QString tagsDisplay = model.data(tagsIdx, Qt::DisplayRole).toString();
+        QVERIFY(tagsDisplay.contains("tags"));
+        QVERIFY(tagsDisplay.contains("[Array]"));
+    }
+
+    void testArrayIndexDisplay() {
+        TreeModel model;
+
+        auto root = JsonNode::makeArray("", {
+            JsonNode::makeString("", "first"),
+            JsonNode::makeString("", "second"),
+            JsonNode::makeString("", "third")
+        });
+
+        model.setRootNode(root);
+        model.fetchMore(QModelIndex());
+
+        // Children of an array should show [0], [1], [2] indices
+        QModelIndex idx0 = model.index(0, 0, QModelIndex());
+        QString display0 = model.data(idx0, Qt::DisplayRole).toString();
+        QVERIFY(display0.contains("[0]"));
+
+        QModelIndex idx1 = model.index(1, 0, QModelIndex());
+        QString display1 = model.data(idx1, Qt::DisplayRole).toString();
+        QVERIFY(display1.contains("[1]"));
+
+        QModelIndex idx2 = model.index(2, 0, QModelIndex());
+        QString display2 = model.data(idx2, Qt::DisplayRole).toString();
+        QVERIFY(display2.contains("[2]"));
+    }
+
+    void testParentIndex() {
+        TreeModel model;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeObject("child", {
+                JsonNode::makeString("grandchild", "value")
+            })
+        });
+
+        model.setRootNode(root);
+        model.fetchMore(QModelIndex());
+
+        QModelIndex childIdx = model.index(0, 0, QModelIndex());
+        QVERIFY(childIdx.isValid());
+
+        // Parent of root child should be invalid (root)
+        QModelIndex parentOfChild = model.parent(childIdx);
+        QVERIFY(!parentOfChild.isValid());
+
+        // Fetch grandchild
+        model.fetchMore(childIdx);
+        QModelIndex grandchildIdx = model.index(0, 0, childIdx);
+        QVERIFY(grandchildIdx.isValid());
+
+        // Parent of grandchild should be child
+        QModelIndex parentOfGrandchild = model.parent(grandchildIdx);
+        QCOMPARE(parentOfGrandchild, childIdx);
+    }
+
+    void testInvalidIndexReturnsEmptyData() {
+        TreeModel model;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("key", "value")
+        });
+        model.setRootNode(root);
+
+        // Invalid index
+        QVariant data = model.data(QModelIndex(), Qt::DisplayRole);
+        QVERIFY(!data.isValid());
+
+        // Wrong role
+        model.fetchMore(QModelIndex());
+        QModelIndex idx = model.index(0, 0, QModelIndex());
+        QVariant editData = model.data(idx, Qt::EditRole);
+        QVERIFY(!editData.isValid());
+    }
+
+    void testBatchFetching() {
+        TreeModel model;
+
+        // Create a node with more children than FETCH_BATCH_SIZE (100)
+        std::vector<std::shared_ptr<const JsonNode>> children;
+        for (int i = 0; i < 250; ++i) {
+            children.push_back(JsonNode::makeNumber("", std::to_string(i)));
+        }
+        auto root = JsonNode::makeArray("", std::move(children));
+
+        model.setRootNode(root);
+
+        // First fetch should get batch of 100
+        QVERIFY(model.canFetchMore(QModelIndex()));
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 100);
+        QVERIFY(model.canFetchMore(QModelIndex()));
+
+        // Second fetch should get another 100
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 200);
+        QVERIFY(model.canFetchMore(QModelIndex()));
+
+        // Third fetch should get remaining 50
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 250);
+        QVERIFY(!model.canFetchMore(QModelIndex()));
+    }
+
+    void testModelTesterWithPopulatedModel() {
+        TreeModel model;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "test"),
+            JsonNode::makeArray("items", {
+                JsonNode::makeNumber("", "1"),
+                JsonNode::makeNumber("", "2")
+            }),
+            JsonNode::makeObject("nested", {
+                JsonNode::makeBool("flag", false)
+            })
+        });
+
+        model.setRootNode(root);
+
+        // Fetch all levels
+        model.fetchMore(QModelIndex());
+
+        QModelIndex itemsIdx = model.index(1, 0, QModelIndex());
+        model.fetchMore(itemsIdx);
+
+        QModelIndex nestedIdx = model.index(2, 0, QModelIndex());
+        model.fetchMore(nestedIdx);
+
+        // QAbstractItemModelTester validates model consistency
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+        // If we get here without assertion failures, the model is consistent
+        QVERIFY(true);
+    }
+
+    void testSetRootNodeClearsOldData() {
+        TreeModel model;
+
+        auto root1 = JsonNode::makeObject("", {
+            JsonNode::makeString("a", "1"),
+            JsonNode::makeString("b", "2")
+        });
+        model.setRootNode(root1);
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 2);
+
+        // Replace with a different root
+        auto root2 = JsonNode::makeObject("", {
+            JsonNode::makeString("x", "10")
+        });
+        model.setRootNode(root2);
+
+        // After reset, rowCount should be 0 (lazy loading)
+        QCOMPARE(model.rowCount(QModelIndex()), 0);
+        QVERIFY(model.hasChildren(QModelIndex()));
+        QVERIFY(model.canFetchMore(QModelIndex()));
+
+        model.fetchMore(QModelIndex());
+        QCOMPARE(model.rowCount(QModelIndex()), 1);
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
-    ShellSetupTest test;
-    return QTest::qExec(&test, argc, argv);
+
+    int status = 0;
+
+    TreeModelPropertyTest propertyTest;
+    status |= QTest::qExec(&propertyTest, argc, argv);
+
+    TreeModelUnitTest unitTest;
+    status |= QTest::qExec(&unitTest, argc, argv);
+
+    ShellSetupTest setupTest;
+    status |= QTest::qExec(&setupTest, argc, argv);
+
+    return status;
 }
 
 #include "shell_tests.moc"
