@@ -288,6 +288,7 @@ TEST(CoreSetup, RapidCheckIntegration) {
 // ---------------------------------------------------------------------------
 
 #include "core/parser.h"
+#include "core/pretty_printer.h"
 
 // Helper: parse a complete JSON string in one chunk via parseChunk + finalizeParse
 static auto parseAll(const std::string& json) -> ParseResult {
@@ -1202,4 +1203,421 @@ TEST(Parser, ErrorOnObjectMissingColon) {
 TEST(Parser, ErrorOnObjectNonStringKey) {
     auto r = parseAll(R"({42: "value"})");
     EXPECT_TRUE(r.error.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.2: Property 1 — Parse-Print Round Trip
+// Validates: Requirements 1.2, 2.1, 2.2, 2.3, 2.4
+// ---------------------------------------------------------------------------
+
+// Helper: generate a random JsonNode tree for round-trip testing
+static std::shared_ptr<const JsonNode> generateRandomNode(int maxDepth, std::mt19937& rng) {
+    // Choose node type
+    // At depth 0: only scalars
+    // At depth > 0: any type including containers
+    int typeChoice;
+    if (maxDepth <= 0) {
+        std::uniform_int_distribution<int> scalarDist(0, 3);
+        typeChoice = scalarDist(rng) + 2; // 2=String, 3=Number, 4=Boolean, 5=Null
+    } else {
+        std::uniform_int_distribution<int> typeDist(0, 5);
+        typeChoice = typeDist(rng);
+    }
+
+    switch (typeChoice) {
+        case 0: { // Object
+            std::uniform_int_distribution<int> sizeDist(0, 4);
+            int n = sizeDist(rng);
+            std::vector<std::shared_ptr<const JsonNode>> children;
+            // Use a set to ensure unique keys
+            std::vector<std::string> usedKeys;
+            for (int i = 0; i < n; ++i) {
+                // Generate a unique key
+                std::string key = "k" + std::to_string(i);
+                // Occasionally add special characters to keys
+                std::uniform_int_distribution<int> specialDist(0, 4);
+                int special = specialDist(rng);
+                if (special == 0) {
+                    key += "\"esc";
+                } else if (special == 1) {
+                    key += "\\back";
+                } else if (special == 2) {
+                    key += "\ttab";
+                } else if (special == 3) {
+                    // Unicode key
+                    key += "\xC3\xA9"; // é in UTF-8
+                }
+                auto child = generateRandomNode(maxDepth - 1, rng);
+                // Reconstruct child with the generated key
+                switch (child->type) {
+                    case NodeType::Object:
+                        children.push_back(JsonNode::makeObject(key, child->children));
+                        break;
+                    case NodeType::Array:
+                        children.push_back(JsonNode::makeArray(key, child->children));
+                        break;
+                    case NodeType::String:
+                        children.push_back(JsonNode::makeString(key, child->value));
+                        break;
+                    case NodeType::Number:
+                        children.push_back(JsonNode::makeNumber(key, child->value));
+                        break;
+                    case NodeType::Boolean:
+                        children.push_back(JsonNode::makeBool(key, child->value == "true"));
+                        break;
+                    case NodeType::Null:
+                        children.push_back(JsonNode::makeNull(key));
+                        break;
+                }
+            }
+            return JsonNode::makeObject("", children);
+        }
+        case 1: { // Array
+            std::uniform_int_distribution<int> sizeDist(0, 4);
+            int n = sizeDist(rng);
+            std::vector<std::shared_ptr<const JsonNode>> children;
+            for (int i = 0; i < n; ++i) {
+                children.push_back(generateRandomNode(maxDepth - 1, rng));
+            }
+            return JsonNode::makeArray("", children);
+        }
+        case 2: { // String
+            std::uniform_int_distribution<int> variantDist(0, 5);
+            int variant = variantDist(rng);
+            std::string val;
+            switch (variant) {
+                case 0: { // ASCII printable
+                    std::uniform_int_distribution<int> lenDist(0, 10);
+                    int len = lenDist(rng);
+                    std::uniform_int_distribution<int> charDist(32, 126);
+                    for (int i = 0; i < len; ++i) {
+                        val += static_cast<char>(charDist(rng));
+                    }
+                    break;
+                }
+                case 1: // String with escapes
+                    val = "line1\nline2\ttab\"quote\\backslash";
+                    break;
+                case 2: // Unicode emoji
+                    val = "Hello \xF0\x9F\x8C\x8D world"; // 🌍
+                    break;
+                case 3: // CJK characters
+                    val = "\xE4\xB8\x96\xE7\x95\x8C"; // 世界
+                    break;
+                case 4: // Empty string
+                    val = "";
+                    break;
+                case 5: // Mixed Unicode
+                    val = "\xC3\xA9\xC3\xBC\xC3\xB6"; // éüö
+                    break;
+            }
+            return JsonNode::makeString("", val);
+        }
+        case 3: { // Number
+            std::uniform_int_distribution<int> numVariant(0, 4);
+            std::string numStr;
+            switch (numVariant(rng)) {
+                case 0: { // Integer
+                    std::uniform_int_distribution<int> intDist(-999, 999);
+                    numStr = std::to_string(intDist(rng));
+                    break;
+                }
+                case 1: // Decimal
+                    numStr = "3.14159265358979";
+                    break;
+                case 2: // Scientific notation
+                    numStr = "1.5e10";
+                    break;
+                case 3: // High precision
+                    numStr = "1.7976931348623157e+308";
+                    break;
+                case 4: // Zero
+                    numStr = "0";
+                    break;
+            }
+            return JsonNode::makeNumber("", numStr);
+        }
+        case 4: { // Boolean
+            std::uniform_int_distribution<int> boolDist(0, 1);
+            return JsonNode::makeBool("", boolDist(rng) == 1);
+        }
+        case 5: // Null
+        default:
+            return JsonNode::makeNull("");
+    }
+}
+
+// Helper: compare two JsonNode trees ignoring the root key
+static bool nodesEqualIgnoringRootKey(const std::shared_ptr<const JsonNode>& a,
+                                       const std::shared_ptr<const JsonNode>& b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    if (a->type != b->type) return false;
+    // Don't compare keys at the root level — the caller handles this
+    if (a->value != b->value) return false;
+    if (a->children.size() != b->children.size()) return false;
+    for (std::size_t i = 0; i < a->children.size(); ++i) {
+        if (!nodesEqual(a->children[i], b->children[i])) return false;
+    }
+    return true;
+}
+
+TEST(PrettyPrinterProperty, ParsePrintRoundTrip) {
+    rc::check("Property 1: Parse-Print Round Trip",
+        [](void) {
+            // Generate a random seed for our tree generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random depth (0-4)
+            std::uniform_int_distribution<int> depthDist(0, 4);
+            int depth = depthDist(rng);
+
+            // Generate a random JsonNode tree
+            auto originalNode = generateRandomNode(depth, rng);
+            RC_ASSERT(originalNode != nullptr);
+
+            // Pretty-print the tree
+            auto printed = prettyPrint(*originalNode);
+            RC_ASSERT(!printed.empty());
+
+            // Re-parse the pretty-printed output
+            auto reparsed = parseAll(printed);
+            RC_ASSERT(reparsed.root != nullptr);
+            RC_ASSERT(!reparsed.error.has_value());
+
+            // The re-parsed tree should be structurally and value-equivalent
+            // to the original, except the root key will be empty after re-parsing
+            // (the parser doesn't assign keys to the root node).
+            // Our generated nodes already have empty root keys, so we can use
+            // nodesEqualIgnoringRootKey for safety.
+            RC_ASSERT(nodesEqualIgnoringRootKey(originalNode, reparsed.root));
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.3: Unit tests for PrettyPrinter
+// Requirements: 2.1, 2.3, 2.4
+// ---------------------------------------------------------------------------
+
+TEST(PrettyPrinter, EmptyObject) {
+    auto node = JsonNode::makeObject("", {});
+    EXPECT_EQ(prettyPrint(*node), "{}");
+}
+
+TEST(PrettyPrinter, EmptyArray) {
+    auto node = JsonNode::makeArray("", {});
+    EXPECT_EQ(prettyPrint(*node), "[]");
+}
+
+TEST(PrettyPrinter, SingleStringValue) {
+    auto node = JsonNode::makeString("", "value");
+    EXPECT_EQ(prettyPrint(*node), "\"value\"");
+}
+
+TEST(PrettyPrinter, SingleNumberValue) {
+    auto node = JsonNode::makeNumber("", "42");
+    EXPECT_EQ(prettyPrint(*node), "42");
+}
+
+TEST(PrettyPrinter, SingleBoolTrue) {
+    auto node = JsonNode::makeBool("", true);
+    EXPECT_EQ(prettyPrint(*node), "true");
+}
+
+TEST(PrettyPrinter, SingleBoolFalse) {
+    auto node = JsonNode::makeBool("", false);
+    EXPECT_EQ(prettyPrint(*node), "false");
+}
+
+TEST(PrettyPrinter, SingleNull) {
+    auto node = JsonNode::makeNull("");
+    EXPECT_EQ(prettyPrint(*node), "null");
+}
+
+TEST(PrettyPrinter, ObjectWithOneChild) {
+    auto child = JsonNode::makeString("key", "value");
+    auto node = JsonNode::makeObject("", {child});
+    std::string expected =
+        "{\n"
+        "  \"key\": \"value\"\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*node), expected);
+}
+
+TEST(PrettyPrinter, ObjectWithMultipleChildren) {
+    auto c1 = JsonNode::makeString("name", "Alice");
+    auto c2 = JsonNode::makeNumber("age", "30");
+    auto c3 = JsonNode::makeBool("active", true);
+    auto node = JsonNode::makeObject("", {c1, c2, c3});
+    std::string expected =
+        "{\n"
+        "  \"name\": \"Alice\",\n"
+        "  \"age\": 30,\n"
+        "  \"active\": true\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*node), expected);
+}
+
+TEST(PrettyPrinter, NestedObjects) {
+    auto inner = JsonNode::makeString("b", "val");
+    auto mid = JsonNode::makeObject("a", {inner});
+    auto root = JsonNode::makeObject("", {mid});
+    std::string expected =
+        "{\n"
+        "  \"a\": {\n"
+        "    \"b\": \"val\"\n"
+        "  }\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*root), expected);
+}
+
+TEST(PrettyPrinter, ArrayWithElements) {
+    auto e1 = JsonNode::makeNumber("", "1");
+    auto e2 = JsonNode::makeNumber("", "2");
+    auto e3 = JsonNode::makeNumber("", "3");
+    auto node = JsonNode::makeArray("", {e1, e2, e3});
+    std::string expected =
+        "[\n"
+        "  1,\n"
+        "  2,\n"
+        "  3\n"
+        "]";
+    EXPECT_EQ(prettyPrint(*node), expected);
+}
+
+TEST(PrettyPrinter, NestedArrays) {
+    auto inner1 = JsonNode::makeNumber("", "1");
+    auto inner2 = JsonNode::makeNumber("", "2");
+    auto innerArr = JsonNode::makeArray("", {inner1, inner2});
+    auto outer = JsonNode::makeArray("", {innerArr});
+    std::string expected =
+        "[\n"
+        "  [\n"
+        "    1,\n"
+        "    2\n"
+        "  ]\n"
+        "]";
+    EXPECT_EQ(prettyPrint(*outer), expected);
+}
+
+TEST(PrettyPrinter, MixedObjectAndArray) {
+    auto e1 = JsonNode::makeNumber("", "1");
+    auto e2 = JsonNode::makeNumber("", "2");
+    auto arr = JsonNode::makeArray("items", {e1, e2});
+    auto root = JsonNode::makeObject("", {arr});
+    std::string expected =
+        "{\n"
+        "  \"items\": [\n"
+        "    1,\n"
+        "    2\n"
+        "  ]\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*root), expected);
+}
+
+TEST(PrettyPrinter, CustomIndentWidth) {
+    auto child = JsonNode::makeString("key", "value");
+    auto node = JsonNode::makeObject("", {child});
+    PrettyPrintOptions opts{.indentWidth = 4};
+    std::string expected =
+        "{\n"
+        "    \"key\": \"value\"\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*node, opts), expected);
+}
+
+TEST(PrettyPrinter, SortKeysOption) {
+    auto c1 = JsonNode::makeString("c", "3");
+    auto c2 = JsonNode::makeString("a", "1");
+    auto c3 = JsonNode::makeString("b", "2");
+    auto node = JsonNode::makeObject("", {c1, c2, c3});
+    PrettyPrintOptions opts{.sortKeys = true};
+    std::string expected =
+        "{\n"
+        "  \"a\": \"1\",\n"
+        "  \"b\": \"2\",\n"
+        "  \"c\": \"3\"\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*node, opts), expected);
+}
+
+TEST(PrettyPrinter, SortKeysDisabledPreservesOrder) {
+    auto c1 = JsonNode::makeString("c", "3");
+    auto c2 = JsonNode::makeString("a", "1");
+    auto c3 = JsonNode::makeString("b", "2");
+    auto node = JsonNode::makeObject("", {c1, c2, c3});
+    // Default options — sortKeys is false
+    std::string expected =
+        "{\n"
+        "  \"c\": \"3\",\n"
+        "  \"a\": \"1\",\n"
+        "  \"b\": \"2\"\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*node), expected);
+}
+
+TEST(PrettyPrinter, StringWithEscapeCharacters) {
+    auto node = JsonNode::makeString("", "say \"hello\"\nand\\go\there");
+    std::string result = prettyPrint(*node);
+    EXPECT_EQ(result, "\"say \\\"hello\\\"\\nand\\\\go\\there\"");
+}
+
+TEST(PrettyPrinter, StringWithUnicode) {
+    auto node = JsonNode::makeString("", "Hello 🌍 世界");
+    std::string result = prettyPrint(*node);
+    EXPECT_EQ(result, "\"Hello 🌍 世界\"");
+}
+
+TEST(PrettyPrinter, StringWithControlCharacters) {
+    std::string val(1, static_cast<char>(0x01));
+    auto node = JsonNode::makeString("", val);
+    std::string result = prettyPrint(*node);
+    EXPECT_EQ(result, "\"\\u0001\"");
+}
+
+TEST(PrettyPrinter, HighPrecisionNumber) {
+    auto node = JsonNode::makeNumber("", "1.7976931348623157e+308");
+    EXPECT_EQ(prettyPrint(*node), "1.7976931348623157e+308");
+}
+
+TEST(PrettyPrinter, ScientificNotationNumber) {
+    auto node = JsonNode::makeNumber("", "6.022e23");
+    EXPECT_EQ(prettyPrint(*node), "6.022e23");
+}
+
+TEST(PrettyPrinter, NegativeNumber) {
+    auto node = JsonNode::makeNumber("", "-42.5");
+    EXPECT_EQ(prettyPrint(*node), "-42.5");
+}
+
+TEST(PrettyPrinter, ZeroNumber) {
+    auto node = JsonNode::makeNumber("", "0");
+    EXPECT_EQ(prettyPrint(*node), "0");
+}
+
+TEST(PrettyPrinter, DeeplyNestedStructure) {
+    // 4 levels: root object -> child object -> child array -> child object -> leaf string
+    auto leaf = JsonNode::makeString("d", "deep");
+    auto level3 = JsonNode::makeObject("", {leaf});
+    auto level2 = JsonNode::makeArray("c", {level3});
+    auto level1 = JsonNode::makeObject("b", {level2});
+    auto root = JsonNode::makeObject("", {level1});
+    std::string expected =
+        "{\n"
+        "  \"b\": {\n"
+        "    \"c\": [\n"
+        "      {\n"
+        "        \"d\": \"deep\"\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "}";
+    EXPECT_EQ(prettyPrint(*root), expected);
+}
+
+TEST(PrettyPrinter, EmptyStringValue) {
+    auto node = JsonNode::makeString("", "");
+    EXPECT_EQ(prettyPrint(*node), "\"\"");
 }
