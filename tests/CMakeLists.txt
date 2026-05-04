@@ -45,3 +45,17 @@ target_link_libraries(shell_tests
 )
 
 add_test(NAME shell_tests COMMAND shell_tests)
+
+# ── FileLoader Tests (Qt Test) ───────────────────────────────────
+add_executable(file_loader_tests file_loader_tests.cpp)
+
+target_link_libraries(file_loader_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+)
+
+add_test(NAME file_loader_tests COMMAND file_loader_tests)

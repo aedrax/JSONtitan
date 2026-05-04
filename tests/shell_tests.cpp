@@ -882,4 +882,5 @@ int main(int argc, char* argv[]) {
     return status;
 }
 
+
 #include "shell_tests.moc"
