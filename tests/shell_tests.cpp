@@ -1,10 +1,15 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
+#include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QtTest/QtTest>
 #include <rapidcheck.h>
 
+#include "core/csv_exporter.h"
 #include "core/json_node.h"
 #include "core/search_engine.h"
+#include "core/xml_exporter.h"
+#include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
 #include "shell/tree_model.h"
@@ -861,6 +866,166 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 14.2: Unit tests for ExportHandler
+// Requirements: 6.6, 7.5
+// ---------------------------------------------------------------------------
+
+class ExportHandlerTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testCsvExportWritesCorrectContent() {
+        // Build an array of objects suitable for CSV export
+        auto root = JsonNode::makeArray("", {
+            JsonNode::makeObject("", {
+                JsonNode::makeString("name", "Alice"),
+                JsonNode::makeNumber("age", "30")
+            }),
+            JsonNode::makeObject("", {
+                JsonNode::makeString("name", "Bob"),
+                JsonNode::makeNumber("age", "25")
+            })
+        });
+
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        QString filePath = tempDir.path() + "/output.csv";
+
+        QString error = ExportHandler::exportCsvToFile(*root, filePath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        // Read back and verify content (binary mode to preserve \r\n)
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QString content = QString::fromUtf8(file.readAll());
+        file.close();
+
+        // Verify header row contains both keys
+        QVERIFY(content.contains("name"));
+        QVERIFY(content.contains("age"));
+
+        // Verify data rows contain the values
+        QVERIFY(content.contains("Alice"));
+        QVERIFY(content.contains("Bob"));
+        QVERIFY(content.contains("30"));
+        QVERIFY(content.contains("25"));
+
+        // Verify the content matches what the core exporter produces
+        auto coreResult = jsontitan::core::exportCsv(*root);
+        QVERIFY(std::holds_alternative<std::string>(coreResult));
+        QString expectedContent = QString::fromStdString(std::get<std::string>(coreResult));
+        QCOMPARE(content, expectedContent);
+    }
+
+    void testXmlExportWritesCorrectContent() {
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("greeting", "hello"),
+            JsonNode::makeNumber("count", "42")
+        });
+
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        QString filePath = tempDir.path() + "/output.xml";
+
+        QString error = ExportHandler::exportXmlToFile(*root, filePath, "data");
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        // Read back and verify content
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QString content = QString::fromUtf8(file.readAll());
+        file.close();
+
+        // Verify XML declaration
+        QVERIFY(content.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+
+        // Verify root element name
+        QVERIFY(content.contains("<data>"));
+        QVERIFY(content.contains("</data>"));
+
+        // Verify child elements
+        QVERIFY(content.contains("<greeting>hello</greeting>"));
+        QVERIFY(content.contains("<count>42</count>"));
+
+        // Verify the content matches what the core exporter produces
+        std::string expectedXml = jsontitan::core::exportXml(*root, "data");
+        QCOMPARE(content, QString::fromStdString(expectedXml));
+    }
+
+    void testCsvExportReturnsErrorForNonTabularData() {
+        // A plain object is not an array of objects — CsvExporter should return CsvError
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("key", "value")
+        });
+
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        QString filePath = tempDir.path() + "/output.csv";
+
+        QString error = ExportHandler::exportCsvToFile(*root, filePath);
+
+        // Should return a non-empty error message from the core CsvError
+        QVERIFY(!error.isEmpty());
+
+        // File should not have been created
+        QVERIFY(!QFile::exists(filePath));
+    }
+
+    void testCsvExportReturnsErrorOnFileWriteFailure() {
+        // Build valid CSV data
+        auto root = JsonNode::makeArray("", {
+            JsonNode::makeObject("", {
+                JsonNode::makeString("name", "Alice")
+            })
+        });
+
+        // Use an invalid path that cannot be written to
+        QString invalidPath = "/nonexistent_directory_xyz/impossible/output.csv";
+
+        QString error = ExportHandler::exportCsvToFile(*root, invalidPath);
+
+        // Should return a non-empty error about file write failure
+        QVERIFY(!error.isEmpty());
+        QVERIFY(error.contains("Failed to open file"));
+    }
+
+    void testXmlExportReturnsErrorOnFileWriteFailure() {
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("key", "value")
+        });
+
+        // Use an invalid path that cannot be written to
+        QString invalidPath = "/nonexistent_directory_xyz/impossible/output.xml";
+
+        QString error = ExportHandler::exportXmlToFile(*root, invalidPath, "root");
+
+        // Should return a non-empty error about file write failure
+        QVERIFY(!error.isEmpty());
+        QVERIFY(error.contains("Failed to open file"));
+    }
+
+    void testXmlExportUsesDefaultRootElementName() {
+        auto root = JsonNode::makeString("", "hello");
+
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        QString filePath = tempDir.path() + "/output.xml";
+
+        // Call without specifying rootElementName — should default to "root"
+        QString error = ExportHandler::exportXmlToFile(*root, filePath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QString content = QString::fromUtf8(file.readAll());
+        file.close();
+
+        QVERIFY(content.contains("<root>"));
+        QVERIFY(content.contains("</root>"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -875,6 +1040,9 @@ int main(int argc, char* argv[]) {
 
     FilterProxyModelTest filterProxyTest;
     status |= QTest::qExec(&filterProxyTest, argc, argv);
+
+    ExportHandlerTest exportHandlerTest;
+    status |= QTest::qExec(&exportHandlerTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
