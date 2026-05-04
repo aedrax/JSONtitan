@@ -2565,3 +2565,569 @@ TEST(UnionEngineTest, RemoveFromSingleChild) {
     EXPECT_EQ(result->type, NodeType::Object);
     EXPECT_EQ(result->children.size(), 0u);
 }
+
+// ===========================================================================
+// Task 8: CsvExporter Tests
+// Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
+// ===========================================================================
+
+#include "core/csv_exporter.h"
+
+// ---------------------------------------------------------------------------
+// Helper: Parse CSV output into rows of cells for verification
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Simple CSV parser for test verification (handles RFC 4180 quoting)
+auto parseCsvRow(const std::string& row) -> std::vector<std::string> {
+    std::vector<std::string> cells;
+    std::string current;
+    bool inQuotes = false;
+    std::size_t i = 0;
+
+    while (i < row.size()) {
+        char c = row[i];
+        if (inQuotes) {
+            if (c == '"') {
+                if (i + 1 < row.size() && row[i + 1] == '"') {
+                    // Escaped quote
+                    current += '"';
+                    i += 2;
+                } else {
+                    // End of quoted field
+                    inQuotes = false;
+                    i++;
+                }
+            } else {
+                current += c;
+                i++;
+            }
+        } else {
+            if (c == '"') {
+                inQuotes = true;
+                i++;
+            } else if (c == ',') {
+                cells.push_back(current);
+                current.clear();
+                i++;
+            } else {
+                current += c;
+                i++;
+            }
+        }
+    }
+    cells.push_back(current);
+    return cells;
+}
+
+// Split CSV output into rows (handling \r\n line endings and quoted fields with embedded newlines).
+// Each row ends with \r\n in the output, so we split on \r\n boundaries outside of quotes
+// and drop the trailing empty entry.
+auto parseCsvLines(const std::string& csv) -> std::vector<std::string> {
+    std::vector<std::string> lines;
+    std::string current;
+    bool inQuotes = false;
+
+    for (std::size_t i = 0; i < csv.size(); ++i) {
+        char c = csv[i];
+        if (c == '"') {
+            inQuotes = !inQuotes;
+            current += c;
+        } else if (c == '\r' && !inQuotes) {
+            if (i + 1 < csv.size() && csv[i + 1] == '\n') {
+                lines.push_back(current);
+                current.clear();
+                i++; // skip \n
+            } else {
+                current += c;
+            }
+        } else if (c == '\n' && !inQuotes) {
+            lines.push_back(current);
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    // If there's remaining content (no trailing \r\n), add it
+    if (!current.empty()) {
+        lines.push_back(current);
+    }
+    return lines;
+}
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// Task 8.5: Unit tests for CsvExporter
+// Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
+// ---------------------------------------------------------------------------
+
+TEST(CsvExporter, SingleRowArray) {
+    // Array with one object: [{"name": "Alice", "age": "30"}]
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+        JsonNode::makeNumber("age", "30")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_EQ(lines.size(), 2u); // header + 1 data row
+
+    auto headers = parseCsvRow(lines[0]);
+    ASSERT_EQ(headers.size(), 2u);
+    EXPECT_EQ(headers[0], "name");
+    EXPECT_EQ(headers[1], "age");
+
+    auto row = parseCsvRow(lines[1]);
+    ASSERT_EQ(row.size(), 2u);
+    EXPECT_EQ(row[0], "Alice");
+    EXPECT_EQ(row[1], "30");
+}
+
+TEST(CsvExporter, EmptyArrayOfObjects) {
+    // Empty array: []
+    auto arr = JsonNode::makeArray("", {});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    // Should produce just a header row (empty since no objects to derive keys from)
+    auto lines = parseCsvLines(csv);
+    // Empty array produces a single empty header line (no data rows)
+    ASSERT_EQ(lines.size(), 1u);
+    EXPECT_TRUE(lines[0].empty());
+}
+
+TEST(CsvExporter, ObjectsWithNoCommonKeys) {
+    // [{a: 1}, {b: 2}] — union of keys is {a, b}
+    auto obj1 = JsonNode::makeObject("", {JsonNode::makeNumber("a", "1")});
+    auto obj2 = JsonNode::makeObject("", {JsonNode::makeNumber("b", "2")});
+    auto arr = JsonNode::makeArray("", {obj1, obj2});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_EQ(lines.size(), 3u); // header + 2 data rows
+
+    auto headers = parseCsvRow(lines[0]);
+    ASSERT_EQ(headers.size(), 2u);
+    EXPECT_EQ(headers[0], "a");
+    EXPECT_EQ(headers[1], "b");
+
+    // First row: a=1, b=empty
+    auto row1 = parseCsvRow(lines[1]);
+    ASSERT_EQ(row1.size(), 2u);
+    EXPECT_EQ(row1[0], "1");
+    EXPECT_EQ(row1[1], "");
+
+    // Second row: a=empty, b=2
+    auto row2 = parseCsvRow(lines[2]);
+    ASSERT_EQ(row2.size(), 2u);
+    EXPECT_EQ(row2[0], "");
+    EXPECT_EQ(row2[1], "2");
+}
+
+TEST(CsvExporter, NestedValuesInCells) {
+    // [{data: {x: 1}}, {data: [1,2,3]}]
+    auto nested_obj = JsonNode::makeObject("data", {JsonNode::makeNumber("x", "1")});
+    auto nested_arr = JsonNode::makeArray("data", {
+        JsonNode::makeNumber("", "1"),
+        JsonNode::makeNumber("", "2"),
+        JsonNode::makeNumber("", "3")
+    });
+    auto obj1 = JsonNode::makeObject("", {nested_obj});
+    auto obj2 = JsonNode::makeObject("", {nested_arr});
+    auto arr = JsonNode::makeArray("", {obj1, obj2});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_EQ(lines.size(), 3u);
+
+    // Nested values should be serialized as JSON strings
+    auto row1 = parseCsvRow(lines[1]);
+    ASSERT_EQ(row1.size(), 1u);
+    // Should contain JSON representation of {x: 1}
+    EXPECT_NE(row1[0].find("\"x\""), std::string::npos);
+    EXPECT_NE(row1[0].find("1"), std::string::npos);
+
+    auto row2 = parseCsvRow(lines[2]);
+    ASSERT_EQ(row2.size(), 1u);
+    // Should contain JSON representation of [1,2,3]
+    EXPECT_NE(row2[0].find("["), std::string::npos);
+    EXPECT_NE(row2[0].find("1"), std::string::npos);
+}
+
+TEST(CsvExporter, RFC4180EscapingComma) {
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeString("msg", "hello, world")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_GE(lines.size(), 2u);
+
+    auto row = parseCsvRow(lines[1]);
+    ASSERT_EQ(row.size(), 1u);
+    EXPECT_EQ(row[0], "hello, world");
+
+    // The raw CSV should contain the quoted value
+    EXPECT_NE(csv.find("\"hello, world\""), std::string::npos);
+}
+
+TEST(CsvExporter, RFC4180EscapingDoubleQuote) {
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeString("msg", "say \"hello\"")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_GE(lines.size(), 2u);
+
+    auto row = parseCsvRow(lines[1]);
+    ASSERT_EQ(row.size(), 1u);
+    EXPECT_EQ(row[0], "say \"hello\"");
+
+    // Raw CSV should have doubled quotes: "say ""hello"""
+    EXPECT_NE(csv.find("\"say \"\"hello\"\"\""), std::string::npos);
+}
+
+TEST(CsvExporter, RFC4180EscapingNewline) {
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeString("msg", "line1\nline2")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_GE(lines.size(), 2u);
+
+    auto row = parseCsvRow(lines[1]);
+    ASSERT_EQ(row.size(), 1u);
+    EXPECT_EQ(row[0], "line1\nline2");
+}
+
+TEST(CsvExporter, ErrorOnScalarNode) {
+    auto node = JsonNode::makeString("", "hello");
+    auto result = exportCsv(*node);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnPlainObject) {
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("key", "value")
+    });
+    auto result = exportCsv(*node);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnArrayOfScalars) {
+    auto arr = JsonNode::makeArray("", {
+        JsonNode::makeNumber("", "1"),
+        JsonNode::makeNumber("", "2"),
+        JsonNode::makeNumber("", "3")
+    });
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnMixedArray) {
+    auto arr = JsonNode::makeArray("", {
+        JsonNode::makeObject("", {JsonNode::makeString("a", "1")}),
+        JsonNode::makeNumber("", "42")
+    });
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnNumberNode) {
+    auto node = JsonNode::makeNumber("", "42");
+    auto result = exportCsv(*node);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnBoolNode) {
+    auto node = JsonNode::makeBool("", true);
+    auto result = exportCsv(*node);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, ErrorOnNullNode) {
+    auto node = JsonNode::makeNull("");
+    auto result = exportCsv(*node);
+    ASSERT_TRUE(std::holds_alternative<CsvError>(result));
+    EXPECT_FALSE(std::get<CsvError>(result).description.empty());
+}
+
+TEST(CsvExporter, MultipleRowsWithOverlappingKeys) {
+    // [{a:1, b:2}, {b:3, c:4}] — headers should be a, b, c
+    auto obj1 = JsonNode::makeObject("", {
+        JsonNode::makeNumber("a", "1"),
+        JsonNode::makeNumber("b", "2")
+    });
+    auto obj2 = JsonNode::makeObject("", {
+        JsonNode::makeNumber("b", "3"),
+        JsonNode::makeNumber("c", "4")
+    });
+    auto arr = JsonNode::makeArray("", {obj1, obj2});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_EQ(lines.size(), 3u);
+
+    auto headers = parseCsvRow(lines[0]);
+    ASSERT_EQ(headers.size(), 3u);
+    EXPECT_EQ(headers[0], "a");
+    EXPECT_EQ(headers[1], "b");
+    EXPECT_EQ(headers[2], "c");
+
+    auto row1 = parseCsvRow(lines[1]);
+    EXPECT_EQ(row1[0], "1");
+    EXPECT_EQ(row1[1], "2");
+    EXPECT_EQ(row1[2], "");
+
+    auto row2 = parseCsvRow(lines[2]);
+    EXPECT_EQ(row2[0], "");
+    EXPECT_EQ(row2[1], "3");
+    EXPECT_EQ(row2[2], "4");
+}
+
+TEST(CsvExporter, BooleanAndNullValues) {
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeBool("flag", true),
+        JsonNode::makeNull("empty")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_EQ(lines.size(), 2u);
+
+    auto row = parseCsvRow(lines[1]);
+    ASSERT_EQ(row.size(), 2u);
+    EXPECT_EQ(row[0], "true");
+    EXPECT_EQ(row[1], "null");
+}
+
+TEST(CsvExporter, HeaderWithSpecialCharacters) {
+    // Keys containing commas and quotes should be escaped in the header
+    auto obj = JsonNode::makeObject("", {
+        JsonNode::makeString("key,with,commas", "val1"),
+        JsonNode::makeString("key\"with\"quotes", "val2")
+    });
+    auto arr = JsonNode::makeArray("", {obj});
+
+    auto result = exportCsv(*arr);
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+    auto csv = std::get<std::string>(result);
+
+    auto lines = parseCsvLines(csv);
+    ASSERT_GE(lines.size(), 2u);
+
+    auto headers = parseCsvRow(lines[0]);
+    ASSERT_EQ(headers.size(), 2u);
+    EXPECT_EQ(headers[0], "key,with,commas");
+    EXPECT_EQ(headers[1], "key\"with\"quotes");
+}
+
+// ---------------------------------------------------------------------------
+// Task 8.2: Property 11 — CSV Header and Row Invariant
+// Validates: Requirements 6.1, 6.2
+// ---------------------------------------------------------------------------
+
+TEST(CsvExporterProperty, HeaderAndRowInvariant) {
+    rc::check("Property 11: CSV Header and Row Invariant",
+        [](void) {
+            // Generate a random array of objects
+            auto numObjects = *rc::gen::inRange(1, 8);
+            auto numKeysPerObj = *rc::gen::inRange(1, 6);
+
+            // Generate a pool of unique keys
+            std::set<std::string> allKeysSet;
+            std::vector<std::string> keyPool;
+            for (int k = 0; k < numKeysPerObj * 2; ++k) {
+                std::string key = "key" + std::to_string(k);
+                if (allKeysSet.insert(key).second) {
+                    keyPool.push_back(key);
+                }
+            }
+
+            std::vector<std::shared_ptr<const JsonNode>> objects;
+            std::vector<std::string> expectedHeaders; // first-seen order
+            std::set<std::string> seenHeaders;
+
+            for (int i = 0; i < numObjects; ++i) {
+                std::vector<std::shared_ptr<const JsonNode>> fields;
+                auto keysToUse = *rc::gen::inRange(1, static_cast<int>(keyPool.size()) + 1);
+
+                for (int k = 0; k < keysToUse && k < static_cast<int>(keyPool.size()); ++k) {
+                    auto& key = keyPool[static_cast<std::size_t>(k)];
+                    auto val = *rc::gen::arbitrary<std::string>();
+                    fields.push_back(JsonNode::makeString(key, val));
+
+                    if (seenHeaders.insert(key).second) {
+                        expectedHeaders.push_back(key);
+                    }
+                }
+                objects.push_back(JsonNode::makeObject("", std::move(fields)));
+            }
+
+            auto arr = JsonNode::makeArray("", std::move(objects));
+            auto result = exportCsv(*arr);
+
+            // Must succeed
+            RC_ASSERT(std::holds_alternative<std::string>(result));
+            auto csv = std::get<std::string>(result);
+
+            auto lines = parseCsvLines(csv);
+
+            // Header + numObjects data rows
+            RC_ASSERT(lines.size() == static_cast<std::size_t>(numObjects) + 1);
+
+            // Verify header contains exactly the union of all keys
+            auto headers = parseCsvRow(lines[0]);
+            RC_ASSERT(headers.size() == expectedHeaders.size());
+            for (std::size_t i = 0; i < headers.size(); ++i) {
+                RC_ASSERT(headers[i] == expectedHeaders[i]);
+            }
+
+            // Verify data row count equals array length
+            for (int i = 1; i <= numObjects; ++i) {
+                auto row = parseCsvRow(lines[static_cast<std::size_t>(i)]);
+                RC_ASSERT(row.size() == expectedHeaders.size());
+            }
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 8.3: Property 12 — CSV RFC 4180 Escaping
+// Validates: Requirement 6.4
+// ---------------------------------------------------------------------------
+
+TEST(CsvExporterProperty, RFC4180Escaping) {
+    rc::check("Property 12: CSV RFC 4180 Escaping",
+        [](void) {
+            // Generate a string that contains at least one special character
+            auto baseStr = *rc::gen::arbitrary<std::string>();
+
+            // Inject at least one special character
+            auto specialChars = std::vector<char>{',', '"', '\n'};
+            auto specialIdx = *rc::gen::inRange(0, 3);
+            auto insertPos = *rc::gen::inRange(std::size_t{0}, baseStr.size() + 1);
+            baseStr.insert(baseStr.begin() + static_cast<std::ptrdiff_t>(insertPos),
+                           specialChars[static_cast<std::size_t>(specialIdx)]);
+
+            // Create an array with one object containing this value
+            auto obj = JsonNode::makeObject("", {
+                JsonNode::makeString("field", baseStr)
+            });
+            auto arr = JsonNode::makeArray("", {obj});
+
+            auto result = exportCsv(*arr);
+            RC_ASSERT(std::holds_alternative<std::string>(result));
+            auto csv = std::get<std::string>(result);
+
+            auto lines = parseCsvLines(csv);
+            RC_ASSERT(lines.size() >= 2u);
+
+            // The data row should be parseable and recover the original value
+            auto row = parseCsvRow(lines[1]);
+            RC_ASSERT(row.size() == 1u);
+            RC_ASSERT(row[0] == baseStr);
+
+            // Verify the raw CSV cell is properly quoted:
+            // Find the data portion (after first \r\n)
+            auto dataStart = csv.find("\r\n");
+            RC_ASSERT(dataStart != std::string::npos);
+            auto dataLine = csv.substr(dataStart + 2);
+
+            // The cell must start with a double quote (since it contains special chars)
+            RC_ASSERT(!dataLine.empty());
+            RC_ASSERT(dataLine[0] == '"');
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 8.4: Property 13 — CSV Error for Non-Tabular Data
+// Validates: Requirement 6.5
+// ---------------------------------------------------------------------------
+
+TEST(CsvExporterProperty, ErrorForNonTabularData) {
+    rc::check("Property 13: CSV Error for Non-Tabular Data",
+        [](void) {
+            // Generate a non-tabular JsonNode (not an array of objects)
+            auto choice = *rc::gen::inRange(0, 5);
+            std::shared_ptr<const JsonNode> node;
+
+            switch (choice) {
+                case 0: // Scalar string
+                    node = JsonNode::makeString("", *rc::gen::arbitrary<std::string>());
+                    break;
+                case 1: // Scalar number
+                    node = JsonNode::makeNumber("", std::to_string(*rc::gen::arbitrary<int>()));
+                    break;
+                case 2: // Plain object
+                    node = JsonNode::makeObject("", {
+                        JsonNode::makeString("k", *rc::gen::arbitrary<std::string>())
+                    });
+                    break;
+                case 3: { // Array of scalars
+                    auto numElems = *rc::gen::inRange(1, 5);
+                    std::vector<std::shared_ptr<const JsonNode>> elems;
+                    for (int i = 0; i < numElems; ++i) {
+                        elems.push_back(JsonNode::makeNumber("", std::to_string(i)));
+                    }
+                    node = JsonNode::makeArray("", std::move(elems));
+                    break;
+                }
+                case 4: { // Mixed array (objects + non-objects)
+                    auto obj = JsonNode::makeObject("", {
+                        JsonNode::makeString("a", "val")
+                    });
+                    auto scalar = JsonNode::makeNumber("", "42");
+                    node = JsonNode::makeArray("", {obj, scalar});
+                    break;
+                }
+                default:
+                    node = JsonNode::makeNull("");
+                    break;
+            }
+
+            auto result = exportCsv(*node);
+            RC_ASSERT(std::holds_alternative<CsvError>(result));
+            RC_ASSERT(!std::get<CsvError>(result).description.empty());
+        });
+}
