@@ -1,0 +1,31 @@
+# Collect shell sources (excluding main.cpp) into an object library
+# so that shell_tests can reuse them without recompiling.
+set(SHELL_SOURCES
+    main_window.cpp
+    tree_model.cpp
+    filter_proxy_model.cpp
+    file_loader.cpp
+    export_handler.cpp
+)
+
+add_library(jsontitan_shell_lib OBJECT ${SHELL_SOURCES})
+
+target_include_directories(jsontitan_shell_lib
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+target_link_libraries(jsontitan_shell_lib
+    PUBLIC
+        jsontitan_core
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+)
+
+# Main executable
+add_executable(jsontitan_shell main.cpp)
+
+target_link_libraries(jsontitan_shell
+    PRIVATE
+        jsontitan_shell_lib
+)
