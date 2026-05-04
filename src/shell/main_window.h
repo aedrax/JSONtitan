@@ -1,15 +1,74 @@
 #pragma once
 
+#include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QMenuBar>
-#include <QLineEdit>
-#include <QTreeView>
-#include <QTextEdit>
-#include <QStatusBar>
 #include <QProgressBar>
+#include <QStatusBar>
+#include <QTextEdit>
+#include <QTreeView>
+
+#include <memory>
+
+#include "core/json_node.h"
+#include "shell/export_handler.h"
+#include "shell/file_loader.h"
+#include "shell/filter_proxy_model.h"
+#include "shell/tree_model.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+
+private slots:
+    void onOpenFile();
+    void onUnionFiles();
+    void onExportCsv();
+    void onExportXml();
+    void onSearchTextChanged(const QString& text);
+    void onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
+    void onParseError(QString errorMessage);
+    void onProgressUpdated(int percentage);
+    void onTreeSelectionChanged();
+    void onRemoveFromUnion();
+
+private:
+    void setupMenuBar();
+    void setupCentralWidget();
+    void setupStatusBar();
+    void showWelcomeMessage();
+    void updateStatusBar(const QString& fileName, int nodeCount);
+    int countNodes(const jsontitan::core::JsonNode& node) const;
+    std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
+
+    // UI elements
+    QLineEdit* m_searchBar = nullptr;
+    QLabel* m_searchErrorLabel = nullptr;
+    QTreeView* m_treeView = nullptr;
+    QTextEdit* m_detailPanel = nullptr;
+    QLabel* m_welcomeLabel = nullptr;
+    QProgressBar* m_progressBar = nullptr;
+    QLabel* m_statusLabel = nullptr;
+    QLabel* m_noResultsLabel = nullptr;
+
+    // Menu actions
+    QAction* m_openAction = nullptr;
+    QAction* m_unionAction = nullptr;
+    QAction* m_exportCsvAction = nullptr;
+    QAction* m_exportXmlAction = nullptr;
+    QAction* m_exitAction = nullptr;
+
+    // Models
+    TreeModel* m_treeModel = nullptr;
+    FilterProxyModel* m_filterProxy = nullptr;
+
+    // Background loader
+    FileLoader* m_fileLoader = nullptr;
+
+    // Current data
+    std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;
+    QString m_currentFileName;
+    bool m_isUnionMode = false;
 };

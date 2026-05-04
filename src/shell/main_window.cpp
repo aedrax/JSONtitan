@@ -1,6 +1,508 @@
 #include "shell/main_window.h"
 
+#include <QApplication>
+#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QMenu>
+#include <QMessageBox>
+#include <QSplitter>
+#include <QVBoxLayout>
+
+#include "core/parser.h"
+#include "core/pretty_printer.h"
+#include "core/search_engine.h"
+#include "core/union_engine.h"
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
-    // Stub — will be implemented in Task 16
+    setWindowTitle("JSONTitan");
+    resize(1200, 800);
+
+    m_treeModel = new TreeModel(this);
+    m_filterProxy = new FilterProxyModel(this);
+    m_filterProxy->setSourceModel(m_treeModel);
+    m_fileLoader = new FileLoader(this);
+
+    setupMenuBar();
+    setupCentralWidget();
+    setupStatusBar();
+    showWelcomeMessage();
+
+    // Connect file loader signals
+    connect(m_fileLoader, &FileLoader::progressUpdated,
+            this, &MainWindow::onProgressUpdated);
+    connect(m_fileLoader, &FileLoader::parseComplete,
+            this, &MainWindow::onParseComplete);
+    connect(m_fileLoader, &FileLoader::parseError,
+            this, &MainWindow::onParseError);
+}
+
+void MainWindow::setupMenuBar() {
+    auto* fileMenu = menuBar()->addMenu(tr("&File"));
+
+    m_openAction = fileMenu->addAction(tr("&Open..."));
+    m_openAction->setShortcut(QKeySequence::Open);
+    connect(m_openAction, &QAction::triggered, this, &MainWindow::onOpenFile);
+
+    m_unionAction = fileMenu->addAction(tr("&Union Files..."));
+    connect(m_unionAction, &QAction::triggered, this, &MainWindow::onUnionFiles);
+
+    fileMenu->addSeparator();
+
+    m_exportCsvAction = fileMenu->addAction(tr("Export &CSV..."));
+    connect(m_exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
+
+    m_exportXmlAction = fileMenu->addAction(tr("Export &XML..."));
+    connect(m_exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
+
+    fileMenu->addSeparator();
+
+    m_exitAction = fileMenu->addAction(tr("E&xit"));
+    m_exitAction->setShortcut(QKeySequence::Quit);
+    connect(m_exitAction, &QAction::triggered, qApp, &QApplication::quit);
+
+    menuBar()->addMenu(tr("&Edit"));
+    menuBar()->addMenu(tr("&Help"));
+}
+
+void MainWindow::setupCentralWidget() {
+    auto* centralWidget = new QWidget(this);
+    auto* mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(4, 4, 4, 4);
+    mainLayout->setSpacing(4);
+
+    // Search bar
+    m_searchBar = new QLineEdit(centralWidget);
+    m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
+    connect(m_searchBar, &QLineEdit::textChanged,
+            this, &MainWindow::onSearchTextChanged);
+    mainLayout->addWidget(m_searchBar);
+
+    // Search error label (hidden by default)
+    m_searchErrorLabel = new QLabel(centralWidget);
+    m_searchErrorLabel->setStyleSheet("QLabel { color: red; }");
+    m_searchErrorLabel->hide();
+    mainLayout->addWidget(m_searchErrorLabel);
+
+    // Splitter for tree view and detail panel
+    auto* splitter = new QSplitter(Qt::Horizontal, centralWidget);
+
+    // Tree view area with overlay labels
+    auto* treeContainer = new QWidget(splitter);
+    auto* treeLayout = new QVBoxLayout(treeContainer);
+    treeLayout->setContentsMargins(0, 0, 0, 0);
+    treeLayout->setSpacing(0);
+
+    m_treeView = new QTreeView(treeContainer);
+    m_treeView->setModel(m_filterProxy);
+    m_treeView->setHeaderHidden(true);
+    m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_treeView, &QTreeView::customContextMenuRequested,
+            this, [this](const QPoint& pos) {
+        auto* menu = new QMenu(m_treeView);
+        auto* exportCsvAction = menu->addAction(tr("Export as CSV..."));
+        connect(exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
+        auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
+        connect(exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
+        if (m_isUnionMode) {
+            menu->addSeparator();
+            auto* removeAction = menu->addAction(tr("Remove from Union"));
+            connect(removeAction, &QAction::triggered, this, &MainWindow::onRemoveFromUnion);
+        }
+        menu->popup(m_treeView->viewport()->mapToGlobal(pos));
+    });
+    treeLayout->addWidget(m_treeView);
+
+    // "No results found" label (hidden by default)
+    m_noResultsLabel = new QLabel(tr("No results found"), treeContainer);
+    m_noResultsLabel->setAlignment(Qt::AlignCenter);
+    m_noResultsLabel->setStyleSheet("QLabel { color: gray; font-size: 14px; }");
+    m_noResultsLabel->hide();
+    treeLayout->addWidget(m_noResultsLabel);
+
+    // Welcome label (shown when no file is loaded)
+    m_welcomeLabel = new QLabel(treeContainer);
+    m_welcomeLabel->setAlignment(Qt::AlignCenter);
+    m_welcomeLabel->setWordWrap(true);
+    m_welcomeLabel->setStyleSheet("QLabel { color: gray; font-size: 16px; padding: 40px; }");
+    m_welcomeLabel->setText(tr("Welcome to JSONTitan\n\n"
+                               "Open a JSON file using File > Open\n"
+                               "or combine multiple files with File > Union Files"));
+    treeLayout->addWidget(m_welcomeLabel);
+
+    splitter->addWidget(treeContainer);
+
+    // Detail panel
+    m_detailPanel = new QTextEdit(splitter);
+    m_detailPanel->setReadOnly(true);
+    m_detailPanel->setPlaceholderText(tr("Select a node to view its full value"));
+
+    splitter->addWidget(m_detailPanel);
+    splitter->setStretchFactor(0, 2);
+    splitter->setStretchFactor(1, 1);
+
+    mainLayout->addWidget(splitter, 1);
+
+    setCentralWidget(centralWidget);
+
+    // Connect tree selection changes
+    connect(m_treeView->selectionModel(), &QItemSelectionModel::currentChanged,
+            this, &MainWindow::onTreeSelectionChanged);
+}
+
+void MainWindow::setupStatusBar() {
+    m_statusLabel = new QLabel(this);
+    statusBar()->addWidget(m_statusLabel, 1);
+
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setMaximumWidth(200);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->hide();
+    statusBar()->addPermanentWidget(m_progressBar);
+}
+
+void MainWindow::showWelcomeMessage() {
+    m_welcomeLabel->show();
+    m_treeView->hide();
+    m_noResultsLabel->hide();
+    m_statusLabel->setText(tr("Ready"));
+}
+
+void MainWindow::updateStatusBar(const QString& fileName, int nodeCount) {
+    m_statusLabel->setText(tr("%1 — %2 nodes").arg(fileName).arg(nodeCount));
+}
+
+int MainWindow::countNodes(const jsontitan::core::JsonNode& node) const {
+    int count = 1;
+    for (const auto& child : node.children) {
+        count += countNodes(*child);
+    }
+    return count;
+}
+
+std::shared_ptr<const jsontitan::core::JsonNode> MainWindow::getSelectedNode() const {
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    if (!proxyIndex.isValid()) {
+        return m_currentRoot;
+    }
+
+    // Map proxy index back to source model to get the JsonNode
+    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    if (!sourceIndex.isValid()) {
+        return m_currentRoot;
+    }
+
+    // Get the raw JsonNode pointer from the TreeModel
+    const jsontitan::core::JsonNode* nodePtr = m_treeModel->jsonNodeForIndex(sourceIndex);
+    if (!nodePtr) {
+        return m_currentRoot;
+    }
+
+    // Find the shared_ptr that owns this node by walking the tree
+    std::function<std::shared_ptr<const jsontitan::core::JsonNode>(
+        const std::shared_ptr<const jsontitan::core::JsonNode>&,
+        const jsontitan::core::JsonNode*)> findNode;
+
+    findNode = [&findNode](const std::shared_ptr<const jsontitan::core::JsonNode>& current,
+                           const jsontitan::core::JsonNode* target)
+        -> std::shared_ptr<const jsontitan::core::JsonNode> {
+        if (current.get() == target) {
+            return current;
+        }
+        for (const auto& child : current->children) {
+            auto result = findNode(child, target);
+            if (result) {
+                return result;
+            }
+        }
+        return nullptr;
+    };
+
+    if (m_currentRoot) {
+        return findNode(m_currentRoot, nodePtr);
+    }
+    return m_currentRoot;
+}
+
+// --- Task 16.2: File Open and background parsing ---
+
+void MainWindow::onOpenFile() {
+    QString filePath = QFileDialog::getOpenFileName(
+        this, tr("Open JSON File"), QString(),
+        tr("JSON Files (*.json);;All Files (*)"));
+
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    m_isUnionMode = false;
+    m_currentFileName = QFileInfo(filePath).fileName();
+    m_progressBar->setValue(0);
+    m_progressBar->show();
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+
+    m_fileLoader->startParse(filePath);
+}
+
+void MainWindow::onProgressUpdated(int percentage) {
+    m_progressBar->setValue(percentage);
+}
+
+void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root) {
+    m_progressBar->hide();
+    m_currentRoot = root;
+
+    m_treeModel->setRootNode(root);
+    m_filterProxy->clearFilter();
+
+    // Show tree, hide welcome
+    m_welcomeLabel->hide();
+    m_treeView->show();
+    m_noResultsLabel->hide();
+
+    // Update status bar
+    int nodeCount = root ? countNodes(*root) : 0;
+    updateStatusBar(m_currentFileName, nodeCount);
+
+    // Clear detail panel and search
+    m_detailPanel->clear();
+    m_searchBar->clear();
+    m_searchErrorLabel->hide();
+}
+
+void MainWindow::onParseError(QString errorMessage) {
+    m_progressBar->hide();
+    m_statusLabel->setText(tr("Parse failed"));
+
+    QMessageBox::critical(this, tr("Parse Error"),
+                          tr("Failed to parse %1:\n\n%2")
+                              .arg(m_currentFileName, errorMessage));
+}
+
+// --- Task 16.3: Search bar wiring ---
+
+void MainWindow::onSearchTextChanged(const QString& text) {
+    m_searchErrorLabel->hide();
+    m_noResultsLabel->hide();
+
+    if (text.isEmpty()) {
+        m_filterProxy->clearFilter();
+        m_treeView->show();
+        return;
+    }
+
+    if (!m_currentRoot) {
+        return;
+    }
+
+    // Determine search mode: if text starts and ends with /, treat as regex
+    jsontitan::core::SearchQuery query;
+    if (text.startsWith('/') && text.endsWith('/') && text.length() > 2) {
+        query.pattern = text.mid(1, text.length() - 2).toStdString();
+        query.mode = jsontitan::core::SearchMode::Regex;
+    } else {
+        query.pattern = text.toStdString();
+        query.mode = jsontitan::core::SearchMode::Substring;
+    }
+    query.caseSensitive = false;
+
+    auto result = jsontitan::core::filter(*m_currentRoot, query);
+
+    if (result.error) {
+        m_searchErrorLabel->setText(
+            QString::fromStdString(result.error->description));
+        m_searchErrorLabel->show();
+        return;
+    }
+
+    if (result.matches.empty()) {
+        m_filterProxy->applyFilter(result);
+        m_noResultsLabel->show();
+        m_treeView->hide();
+    } else {
+        m_noResultsLabel->hide();
+        m_treeView->show();
+        m_filterProxy->applyFilter(result);
+    }
+}
+
+// --- Task 16.4: Multi-file union ---
+
+void MainWindow::onUnionFiles() {
+    QStringList filePaths = QFileDialog::getOpenFileNames(
+        this, tr("Select JSON Files to Union"), QString(),
+        tr("JSON Files (*.json);;All Files (*)"));
+
+    if (filePaths.isEmpty()) {
+        return;
+    }
+
+    // Parse each file synchronously for union (they should be small enough)
+    // For large files, a more sophisticated approach would be needed.
+    std::vector<jsontitan::core::FileEntry> entries;
+
+    for (const auto& path : filePaths) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            QMessageBox::critical(this, tr("File Error"),
+                                  tr("Cannot open file: %1").arg(path));
+            return;
+        }
+
+        QByteArray data = file.readAll();
+        file.close();
+
+        // Parse using the core parser
+        auto state = jsontitan::core::makeParserState();
+        auto chunk = std::span<const std::byte>(
+            reinterpret_cast<const std::byte*>(data.constData()),
+            static_cast<std::size_t>(data.size()));
+
+        auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
+        if (chunkResult.error) {
+            QMessageBox::critical(this, tr("Parse Error"),
+                                  tr("Failed to parse %1:\n\n%2")
+                                      .arg(QFileInfo(path).fileName(),
+                                           QString::fromStdString(chunkResult.error->description)));
+            return;
+        }
+
+        auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
+        if (parseResult.error) {
+            QMessageBox::critical(this, tr("Parse Error"),
+                                  tr("Failed to parse %1:\n\n%2")
+                                      .arg(QFileInfo(path).fileName(),
+                                           QString::fromStdString(parseResult.error->description)));
+            return;
+        }
+
+        jsontitan::core::FileEntry entry;
+        entry.filename = QFileInfo(path).fileName().toStdString();
+        entry.root = parseResult.root;
+        entries.push_back(std::move(entry));
+    }
+
+    // Union the trees
+    auto unionRoot = jsontitan::core::unionTrees(entries);
+
+    m_isUnionMode = true;
+    m_currentRoot = unionRoot;
+    m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
+
+    m_treeModel->setRootNode(unionRoot);
+    m_filterProxy->clearFilter();
+
+    m_welcomeLabel->hide();
+    m_treeView->show();
+    m_noResultsLabel->hide();
+
+    int nodeCount = unionRoot ? countNodes(*unionRoot) : 0;
+    updateStatusBar(m_currentFileName, nodeCount);
+
+    m_detailPanel->clear();
+    m_searchBar->clear();
+    m_searchErrorLabel->hide();
+}
+
+void MainWindow::onRemoveFromUnion() {
+    if (!m_isUnionMode || !m_currentRoot) {
+        return;
+    }
+
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    if (!proxyIndex.isValid()) {
+        return;
+    }
+
+    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    if (!sourceIndex.isValid()) {
+        return;
+    }
+
+    // Only allow removal of top-level children (direct children of union root)
+    if (sourceIndex.parent().isValid()) {
+        QMessageBox::information(this, tr("Remove from Union"),
+                                 tr("Please select a top-level file node to remove."));
+        return;
+    }
+
+    // Get the key of the selected node
+    auto* nodePtr = static_cast<const jsontitan::core::JsonNode*>(sourceIndex.internalPointer());
+    if (!nodePtr) {
+        return;
+    }
+
+    std::string filenameKey = nodePtr->key;
+
+    auto newRoot = jsontitan::core::removeFromUnion(*m_currentRoot, filenameKey);
+    m_currentRoot = newRoot;
+    m_treeModel->setRootNode(newRoot);
+    m_filterProxy->clearFilter();
+
+    int nodeCount = newRoot ? countNodes(*newRoot) : 0;
+    updateStatusBar(m_currentFileName, nodeCount);
+
+    m_detailPanel->clear();
+}
+
+// --- Task 16.5: Export actions and detail panel ---
+
+void MainWindow::onExportCsv() {
+    auto node = getSelectedNode();
+    if (!node) {
+        QMessageBox::information(this, tr("Export CSV"),
+                                 tr("No data to export. Please open a file first."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Export CSV"), QString(),
+        tr("CSV Files (*.csv);;All Files (*)"));
+
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QString error = ExportHandler::exportCsvToFile(*node, filePath);
+    if (!error.isEmpty()) {
+        QMessageBox::critical(this, tr("Export Error"), error);
+    } else {
+        m_statusLabel->setText(tr("Exported CSV to %1").arg(QFileInfo(filePath).fileName()));
+    }
+}
+
+void MainWindow::onExportXml() {
+    auto node = getSelectedNode();
+    if (!node) {
+        QMessageBox::information(this, tr("Export XML"),
+                                 tr("No data to export. Please open a file first."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Export XML"), QString(),
+        tr("XML Files (*.xml);;All Files (*)"));
+
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QString error = ExportHandler::exportXmlToFile(*node, filePath);
+    if (!error.isEmpty()) {
+        QMessageBox::critical(this, tr("Export Error"), error);
+    } else {
+        m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
+    }
+}
+
+void MainWindow::onTreeSelectionChanged() {
+    auto node = getSelectedNode();
+    if (!node) {
+        m_detailPanel->clear();
+        return;
+    }
+
+    // Pretty-print the selected node's value
+    std::string formatted = jsontitan::core::prettyPrint(*node);
+    m_detailPanel->setPlainText(QString::fromStdString(formatted));
 }

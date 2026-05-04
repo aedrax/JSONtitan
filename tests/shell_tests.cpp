@@ -1026,6 +1026,140 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 16.7: UI smoke tests for MainWindow
+// Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6
+// ---------------------------------------------------------------------------
+
+class MainWindowSmokeTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testAllExpectedWidgetsPresent() {
+        MainWindow window;
+
+        // Menu bar should exist
+        QMenuBar* menuBar = window.menuBar();
+        QVERIFY(menuBar != nullptr);
+
+        // Search bar (QLineEdit)
+        auto* searchBar = window.findChild<QLineEdit*>();
+        QVERIFY(searchBar != nullptr);
+
+        // Tree view
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView != nullptr);
+
+        // Detail panel (QTextEdit, read-only)
+        auto* detailPanel = window.findChild<QTextEdit*>();
+        QVERIFY(detailPanel != nullptr);
+        QVERIFY(detailPanel->isReadOnly());
+
+        // Status bar
+        QStatusBar* statusBar = window.statusBar();
+        QVERIFY(statusBar != nullptr);
+
+        // Progress bar (in status bar)
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(progressBar != nullptr);
+    }
+
+    void testFileMenuContainsExpectedActions() {
+        MainWindow window;
+
+        QMenuBar* menuBar = window.menuBar();
+        QVERIFY(menuBar != nullptr);
+
+        // Find the File menu
+        QMenu* fileMenu = nullptr;
+        for (auto* action : menuBar->actions()) {
+            if (action->text().contains("File")) {
+                fileMenu = action->menu();
+                break;
+            }
+        }
+        QVERIFY(fileMenu != nullptr);
+
+        // Collect action texts
+        QStringList actionTexts;
+        for (auto* action : fileMenu->actions()) {
+            if (!action->isSeparator()) {
+                actionTexts << action->text();
+            }
+        }
+
+        // Verify expected actions are present
+        bool hasOpen = false, hasUnion = false, hasCsv = false, hasXml = false, hasExit = false;
+        for (const auto& text : actionTexts) {
+            if (text.contains("Open")) hasOpen = true;
+            if (text.contains("Union")) hasUnion = true;
+            if (text.contains("CSV")) hasCsv = true;
+            if (text.contains("XML")) hasXml = true;
+            if (text.contains("xit")) hasExit = true;
+        }
+
+        QVERIFY2(hasOpen, "File menu missing Open action");
+        QVERIFY2(hasUnion, "File menu missing Union Files action");
+        QVERIFY2(hasCsv, "File menu missing Export CSV action");
+        QVERIFY2(hasXml, "File menu missing Export XML action");
+        QVERIFY2(hasExit, "File menu missing Exit action");
+    }
+
+    void testWelcomeMessageDisplayedWhenNoFileLoaded() {
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        // Find the welcome label
+        QList<QLabel*> labels = window.findChildren<QLabel*>();
+        bool foundWelcome = false;
+        for (auto* label : labels) {
+            if (label->text().contains("Welcome") && label->isVisible()) {
+                foundWelcome = true;
+                break;
+            }
+        }
+        QVERIFY2(foundWelcome, "Welcome message not displayed when no file is loaded");
+
+        // Tree view should be hidden when no file is loaded
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView != nullptr);
+        QVERIFY(!treeView->isVisible());
+    }
+
+    void testMenuBarHasEditAndHelpMenus() {
+        MainWindow window;
+
+        QMenuBar* menuBar = window.menuBar();
+        QVERIFY(menuBar != nullptr);
+
+        bool hasEdit = false, hasHelp = false;
+        for (auto* action : menuBar->actions()) {
+            if (action->text().contains("Edit")) hasEdit = true;
+            if (action->text().contains("Help")) hasHelp = true;
+        }
+
+        QVERIFY2(hasEdit, "Menu bar missing Edit menu");
+        QVERIFY2(hasHelp, "Menu bar missing Help menu");
+    }
+
+    void testSearchBarHasPlaceholderText() {
+        MainWindow window;
+
+        auto* searchBar = window.findChild<QLineEdit*>();
+        QVERIFY(searchBar != nullptr);
+        QVERIFY(!searchBar->placeholderText().isEmpty());
+    }
+
+    void testProgressBarInitiallyHidden() {
+        MainWindow window;
+
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(progressBar != nullptr);
+        QVERIFY(!progressBar->isVisible());
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -1043,6 +1177,9 @@ int main(int argc, char* argv[]) {
 
     ExportHandlerTest exportHandlerTest;
     status |= QTest::qExec(&exportHandlerTest, argc, argv);
+
+    MainWindowSmokeTest mainWindowTest;
+    status |= QTest::qExec(&mainWindowTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);

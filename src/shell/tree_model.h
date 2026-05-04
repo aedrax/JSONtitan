@@ -30,6 +30,12 @@ public:
     // Utility: format a node for display (exposed for property testing)
     static QString formatNodeDisplay(const jsontitan::core::JsonNode& node, int arrayIndex = -1);
 
+    // Get the JsonNode pointer for a given model index (returns nullptr for invalid index)
+    const jsontitan::core::JsonNode* jsonNodeForIndex(const QModelIndex& index) const;
+
+    // Get the root JsonNode
+    std::shared_ptr<const jsontitan::core::JsonNode> rootNode() const { return m_rootJsonNode; }
+
 private:
     // Internal node wrapper that tracks which children have been fetched
     struct InternalNode {

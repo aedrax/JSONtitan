@@ -161,6 +161,16 @@ void TreeModel::fetchMore(const QModelIndex& parent) {
     endInsertRows();
 }
 
+const JsonNode* TreeModel::jsonNodeForIndex(const QModelIndex& index) const {
+    if (!index.isValid())
+        return m_rootInternal ? m_rootInternal->jsonNode : nullptr;
+
+    auto* node = static_cast<InternalNode*>(index.internalPointer());
+    if (!node)
+        return nullptr;
+    return node->jsonNode;
+}
+
 QString TreeModel::formatNodeDisplay(const JsonNode& node, int arrayIndex) {
     QString display;
 
