@@ -4,6 +4,8 @@
 #include <rapidcheck.h>
 
 #include "core/json_node.h"
+#include "core/search_engine.h"
+#include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
 #include "shell/tree_model.h"
 
@@ -494,6 +496,371 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 12.2: Unit tests for FilterProxyModel
+// Requirements: 4.2, 4.3, 4.7
+// ---------------------------------------------------------------------------
+
+class FilterProxyModelTest : public QObject {
+    Q_OBJECT
+
+private:
+    // Helper: fully fetch all children recursively in the source model
+    void fetchAll(TreeModel* model, const QModelIndex& parent = QModelIndex()) {
+        while (model->canFetchMore(parent)) {
+            model->fetchMore(parent);
+        }
+        for (int i = 0; i < model->rowCount(parent); ++i) {
+            QModelIndex child = model->index(i, 0, parent);
+            fetchAll(model, child);
+        }
+    }
+
+private slots:
+    void testNoFilterAcceptsAllRows() {
+        // When no filter is applied, all rows should be visible
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30"),
+            JsonNode::makeBool("active", true)
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        QVERIFY(!proxy.isFiltered());
+        QCOMPARE(proxy.rowCount(QModelIndex()), 3);
+    }
+
+    void testApplyFilterHidesNonMatchingRows() {
+        // Build a tree: root { name: "Alice", age: 30, city: "NYC" }
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30"),
+            JsonNode::makeString("city", "NYC")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Create a FilterResult that only matches the "name" node (index 0)
+        jsontitan::core::FilterResult result;
+        jsontitan::core::SearchMatch match;
+        match.ancestorIndices = {0}; // First child of root
+        match.node = root->children[0];
+        result.matches.push_back(match);
+
+        proxy.applyFilter(result);
+
+        QVERIFY(proxy.isFiltered());
+        // Only the matched row should be visible
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        // Verify the visible row is "name"
+        QModelIndex visibleIdx = proxy.index(0, 0, QModelIndex());
+        QString display = proxy.data(visibleIdx, Qt::DisplayRole).toString();
+        QVERIFY(display.contains("name"));
+        QVERIFY(display.contains("Alice"));
+    }
+
+    void testApplyFilterShowsMatchedRowsWithAncestors() {
+        // Build a nested tree:
+        // root {
+        //   person {
+        //     name: "Alice"
+        //     age: 30
+        //   }
+        //   settings {
+        //     theme: "dark"
+        //   }
+        // }
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeObject("person", {
+                JsonNode::makeString("name", "Alice"),
+                JsonNode::makeNumber("age", "30")
+            }),
+            JsonNode::makeObject("settings", {
+                JsonNode::makeString("theme", "dark")
+            })
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Match only "name" node at path [0, 0] (person -> name)
+        jsontitan::core::FilterResult result;
+        jsontitan::core::SearchMatch match;
+        match.ancestorIndices = {0, 0}; // person (index 0) -> name (index 0)
+        match.node = root->children[0]->children[0];
+        result.matches.push_back(match);
+
+        proxy.applyFilter(result);
+
+        // Root level: only "person" should be visible (ancestor of match), not "settings"
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        // Under "person": only "name" should be visible, not "age"
+        QModelIndex personIdx = proxy.index(0, 0, QModelIndex());
+        QCOMPARE(proxy.rowCount(personIdx), 1);
+
+        // Verify the visible child is "name"
+        QModelIndex nameIdx = proxy.index(0, 0, personIdx);
+        QString display = proxy.data(nameIdx, Qt::DisplayRole).toString();
+        QVERIFY(display.contains("name"));
+        QVERIFY(display.contains("Alice"));
+    }
+
+    void testMultipleMatchesShowAllMatchedPaths() {
+        // root { a: "hello", b: "world", c: "foo" }
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("a", "hello"),
+            JsonNode::makeString("b", "world"),
+            JsonNode::makeString("c", "foo")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Match "a" (index 0) and "c" (index 2)
+        jsontitan::core::FilterResult result;
+        {
+            jsontitan::core::SearchMatch m;
+            m.ancestorIndices = {0};
+            m.node = root->children[0];
+            result.matches.push_back(m);
+        }
+        {
+            jsontitan::core::SearchMatch m;
+            m.ancestorIndices = {2};
+            m.node = root->children[2];
+            result.matches.push_back(m);
+        }
+
+        proxy.applyFilter(result);
+
+        // "a" and "c" should be visible, "b" should be hidden
+        QCOMPARE(proxy.rowCount(QModelIndex()), 2);
+
+        QModelIndex idx0 = proxy.index(0, 0, QModelIndex());
+        QString display0 = proxy.data(idx0, Qt::DisplayRole).toString();
+        QVERIFY(display0.contains("a"));
+
+        QModelIndex idx1 = proxy.index(1, 0, QModelIndex());
+        QString display1 = proxy.data(idx1, Qt::DisplayRole).toString();
+        QVERIFY(display1.contains("c"));
+    }
+
+    void testClearFilterRestoresAllRows() {
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30"),
+            JsonNode::makeString("city", "NYC")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Apply a filter that shows only one row
+        jsontitan::core::FilterResult result;
+        jsontitan::core::SearchMatch match;
+        match.ancestorIndices = {0};
+        match.node = root->children[0];
+        result.matches.push_back(match);
+        proxy.applyFilter(result);
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        // Clear the filter
+        proxy.clearFilter();
+
+        QVERIFY(!proxy.isFiltered());
+        // All rows should be visible again
+        QCOMPARE(proxy.rowCount(QModelIndex()), 3);
+    }
+
+    void testEmptyFilterResultHidesAllRows() {
+        // When FilterResult has no matches, no rows should be visible
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Apply empty filter result (no matches)
+        jsontitan::core::FilterResult result;
+        // result.matches is empty
+        proxy.applyFilter(result);
+
+        QVERIFY(proxy.isFiltered());
+        QCOMPARE(proxy.rowCount(QModelIndex()), 0);
+    }
+
+    void testDeepNestedAncestorPreservation() {
+        // root {
+        //   level1 {
+        //     level2 {
+        //       level3 {
+        //         target: "found"
+        //       }
+        //       sibling: "hidden"
+        //     }
+        //     other: "hidden"
+        //   }
+        //   unrelated: "hidden"
+        // }
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeObject("level1", {
+                JsonNode::makeObject("level2", {
+                    JsonNode::makeObject("level3", {
+                        JsonNode::makeString("target", "found")
+                    }),
+                    JsonNode::makeString("sibling", "hidden")
+                }),
+                JsonNode::makeString("other", "hidden")
+            }),
+            JsonNode::makeString("unrelated", "hidden")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // Match "target" at path [0, 0, 0, 0]
+        // level1(0) -> level2(0) -> level3(0) -> target(0)
+        jsontitan::core::FilterResult result;
+        jsontitan::core::SearchMatch match;
+        match.ancestorIndices = {0, 0, 0, 0};
+        match.node = root->children[0]->children[0]->children[0]->children[0];
+        result.matches.push_back(match);
+
+        proxy.applyFilter(result);
+
+        // Root level: only "level1" visible, not "unrelated"
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        // Under level1: only "level2" visible, not "other"
+        QModelIndex level1Idx = proxy.index(0, 0, QModelIndex());
+        QCOMPARE(proxy.rowCount(level1Idx), 1);
+
+        // Under level2: only "level3" visible, not "sibling"
+        QModelIndex level2Idx = proxy.index(0, 0, level1Idx);
+        QCOMPARE(proxy.rowCount(level2Idx), 1);
+
+        // Under level3: "target" visible
+        QModelIndex level3Idx = proxy.index(0, 0, level2Idx);
+        QCOMPARE(proxy.rowCount(level3Idx), 1);
+
+        QModelIndex targetIdx = proxy.index(0, 0, level3Idx);
+        QString display = proxy.data(targetIdx, Qt::DisplayRole).toString();
+        QVERIFY(display.contains("target"));
+        QVERIFY(display.contains("found"));
+    }
+
+    void testFilterWithSearchEngineIntegration() {
+        // Integration test: use the actual SearchEngine to produce a FilterResult
+        // and verify the proxy model correctly filters based on it
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("greeting", "hello world"),
+            JsonNode::makeNumber("count", "42"),
+            JsonNode::makeString("message", "goodbye world"),
+            JsonNode::makeString("unrelated", "nothing here")
+        });
+
+        // Search for "world" — should match "greeting" and "message"
+        jsontitan::core::SearchQuery query;
+        query.pattern = "world";
+        query.mode = jsontitan::core::SearchMode::Substring;
+        query.caseSensitive = false;
+
+        auto result = jsontitan::core::filter(*root, query);
+
+        TreeModel sourceModel;
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+        proxy.applyFilter(result);
+
+        // Should show "greeting" and "message" but not "count" or "unrelated"
+        QCOMPARE(proxy.rowCount(QModelIndex()), 2);
+
+        QModelIndex idx0 = proxy.index(0, 0, QModelIndex());
+        QString display0 = proxy.data(idx0, Qt::DisplayRole).toString();
+
+        QModelIndex idx1 = proxy.index(1, 0, QModelIndex());
+        QString display1 = proxy.data(idx1, Qt::DisplayRole).toString();
+
+        // Both matched nodes should contain "world" in their values
+        bool hasGreeting = display0.contains("greeting") || display1.contains("greeting");
+        bool hasMessage = display0.contains("message") || display1.contains("message");
+        QVERIFY(hasGreeting);
+        QVERIFY(hasMessage);
+    }
+
+    void testReapplyFilterReplacesOldFilter() {
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("a", "alpha"),
+            JsonNode::makeString("b", "beta"),
+            JsonNode::makeString("c", "gamma")
+        });
+        sourceModel.setRootNode(root);
+        fetchAll(&sourceModel);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        // First filter: show only "a"
+        {
+            jsontitan::core::FilterResult result;
+            jsontitan::core::SearchMatch match;
+            match.ancestorIndices = {0};
+            match.node = root->children[0];
+            result.matches.push_back(match);
+            proxy.applyFilter(result);
+        }
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        // Second filter: show only "c"
+        {
+            jsontitan::core::FilterResult result;
+            jsontitan::core::SearchMatch match;
+            match.ancestorIndices = {2};
+            match.node = root->children[2];
+            result.matches.push_back(match);
+            proxy.applyFilter(result);
+        }
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+
+        QModelIndex idx = proxy.index(0, 0, QModelIndex());
+        QString display = proxy.data(idx, Qt::DisplayRole).toString();
+        QVERIFY(display.contains("c"));
+        QVERIFY(display.contains("gamma"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -505,6 +872,9 @@ int main(int argc, char* argv[]) {
 
     TreeModelUnitTest unitTest;
     status |= QTest::qExec(&unitTest, argc, argv);
+
+    FilterProxyModelTest filterProxyTest;
+    status |= QTest::qExec(&filterProxyTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
