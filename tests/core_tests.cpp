@@ -3131,3 +3131,439 @@ TEST(CsvExporterProperty, ErrorForNonTabularData) {
             RC_ASSERT(!std::get<CsvError>(result).description.empty());
         });
 }
+
+// ===========================================================================
+// Task 9: XmlExporter Tests
+// Requirements: 7.1, 7.2, 7.3, 7.4
+// ===========================================================================
+
+#include "core/xml_exporter.h"
+
+// ---------------------------------------------------------------------------
+// Task 9.5: Unit tests for XmlExporter
+// Requirements: 7.1, 7.2, 7.3, 7.4
+// ---------------------------------------------------------------------------
+
+TEST(XmlExporter, EmptyObject) {
+    auto node = JsonNode::makeObject("", {});
+    auto xml = exportXml(*node, "root");
+    EXPECT_NE(xml.find("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"), std::string::npos);
+    EXPECT_NE(xml.find("<root>"), std::string::npos);
+    EXPECT_NE(xml.find("</root>"), std::string::npos);
+}
+
+TEST(XmlExporter, SimpleObjectWithScalars) {
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+        JsonNode::makeNumber("age", "30"),
+        JsonNode::makeBool("active", true),
+        JsonNode::makeNull("data")
+    });
+    auto xml = exportXml(*node, "person");
+    EXPECT_NE(xml.find("<person>"), std::string::npos);
+    EXPECT_NE(xml.find("<name>Alice</name>"), std::string::npos);
+    EXPECT_NE(xml.find("<age>30</age>"), std::string::npos);
+    EXPECT_NE(xml.find("<active>true</active>"), std::string::npos);
+    EXPECT_NE(xml.find("<data/>"), std::string::npos);
+    EXPECT_NE(xml.find("</person>"), std::string::npos);
+}
+
+TEST(XmlExporter, DeeplyNestedArrays) {
+    auto inner = JsonNode::makeArray("", {
+        JsonNode::makeNumber("", "1"),
+        JsonNode::makeNumber("", "2")
+    });
+    auto outer = JsonNode::makeArray("", {inner});
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "test")
+    });
+    // Test array wrapping
+    auto xml = exportXml(*outer, "data");
+    EXPECT_NE(xml.find("<data>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_0>"), std::string::npos);
+    EXPECT_NE(xml.find("</data>"), std::string::npos);
+}
+
+TEST(XmlExporter, KeysStartingWithDigits) {
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("1stPlace", "gold"),
+        JsonNode::makeString("2ndPlace", "silver"),
+        JsonNode::makeString("3rdPlace", "bronze")
+    });
+    auto xml = exportXml(*node, "results");
+    // Keys starting with digits should be prepended with underscore
+    EXPECT_NE(xml.find("<_1stPlace>gold</_1stPlace>"), std::string::npos);
+    EXPECT_NE(xml.find("<_2ndPlace>silver</_2ndPlace>"), std::string::npos);
+    EXPECT_NE(xml.find("<_3rdPlace>bronze</_3rdPlace>"), std::string::npos);
+}
+
+TEST(XmlExporter, KeysWithSpecialCharacters) {
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("hello world", "spaces"),
+        JsonNode::makeString("key@value", "at-sign"),
+        JsonNode::makeString("a+b=c", "operators"),
+        JsonNode::makeString("path/to/file", "slashes")
+    });
+    auto xml = exportXml(*node, "data");
+    // Special characters should be replaced with underscores
+    EXPECT_NE(xml.find("<hello_world>spaces</hello_world>"), std::string::npos);
+    EXPECT_NE(xml.find("<key_value>at-sign</key_value>"), std::string::npos);
+    EXPECT_NE(xml.find("<a_b_c>operators</a_b_c>"), std::string::npos);
+    EXPECT_NE(xml.find("<path_to_file>slashes</path_to_file>"), std::string::npos);
+}
+
+TEST(XmlExporter, XmlReservedCharactersInValues) {
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("amp", "a & b"),
+        JsonNode::makeString("lt", "a < b"),
+        JsonNode::makeString("gt", "a > b"),
+        JsonNode::makeString("quot", "say \"hello\""),
+        JsonNode::makeString("apos", "it's fine")
+    });
+    auto xml = exportXml(*node, "data");
+    EXPECT_NE(xml.find("<amp>a &amp; b</amp>"), std::string::npos);
+    EXPECT_NE(xml.find("<lt>a &lt; b</lt>"), std::string::npos);
+    EXPECT_NE(xml.find("<gt>a &gt; b</gt>"), std::string::npos);
+    EXPECT_NE(xml.find("<quot>say &quot;hello&quot;</quot>"), std::string::npos);
+    EXPECT_NE(xml.find("<apos>it&apos;s fine</apos>"), std::string::npos);
+}
+
+TEST(XmlExporter, AllFiveReservedCharsInOneValue) {
+    auto node = JsonNode::makeString("", "<\"Tom & Jerry's\"> show");
+    auto xml = exportXml(*node, "msg");
+    EXPECT_NE(xml.find("&lt;&quot;Tom &amp; Jerry&apos;s&quot;&gt; show"), std::string::npos);
+}
+
+TEST(XmlExporter, ArrayWithIndexedElements) {
+    auto arr = JsonNode::makeArray("", {
+        JsonNode::makeString("", "first"),
+        JsonNode::makeString("", "second"),
+        JsonNode::makeString("", "third")
+    });
+    auto xml = exportXml(*arr, "items");
+    EXPECT_NE(xml.find("<items>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_0>first</item_0>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_1>second</item_1>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_2>third</item_2>"), std::string::npos);
+    EXPECT_NE(xml.find("</items>"), std::string::npos);
+}
+
+TEST(XmlExporter, NullNodeProducesSelfClosingTag) {
+    auto node = JsonNode::makeNull("");
+    auto xml = exportXml(*node, "empty");
+    EXPECT_NE(xml.find("<empty/>"), std::string::npos);
+}
+
+TEST(XmlExporter, NestedObjectsAndArrays) {
+    auto inner = JsonNode::makeObject("config", {
+        JsonNode::makeNumber("timeout", "30"),
+        JsonNode::makeBool("enabled", true)
+    });
+    auto arr = JsonNode::makeArray("tags", {
+        JsonNode::makeString("", "alpha"),
+        JsonNode::makeString("", "beta")
+    });
+    auto root = JsonNode::makeObject("", {inner, arr});
+    auto xml = exportXml(*root, "app");
+    EXPECT_NE(xml.find("<app>"), std::string::npos);
+    EXPECT_NE(xml.find("<config>"), std::string::npos);
+    EXPECT_NE(xml.find("<timeout>30</timeout>"), std::string::npos);
+    EXPECT_NE(xml.find("<enabled>true</enabled>"), std::string::npos);
+    EXPECT_NE(xml.find("</config>"), std::string::npos);
+    EXPECT_NE(xml.find("<tags>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_0>alpha</item_0>"), std::string::npos);
+    EXPECT_NE(xml.find("<item_1>beta</item_1>"), std::string::npos);
+    EXPECT_NE(xml.find("</tags>"), std::string::npos);
+    EXPECT_NE(xml.find("</app>"), std::string::npos);
+}
+
+TEST(XmlExporter, EmptyKeyProducesItemElement) {
+    // Object children with empty keys (shouldn't normally happen, but handle gracefully)
+    auto node = JsonNode::makeObject("", {
+        JsonNode::makeString("", "value")
+    });
+    auto xml = exportXml(*node, "root");
+    // Empty key should produce "item" as element name
+    EXPECT_NE(xml.find("<item>value</item>"), std::string::npos);
+}
+
+TEST(XmlExporter, SanitizeXmlNameEmptyString) {
+    auto result = sanitizeXmlName("");
+    EXPECT_EQ(result, "_");
+}
+
+TEST(XmlExporter, SanitizeXmlNameValidName) {
+    EXPECT_EQ(sanitizeXmlName("hello"), "hello");
+    EXPECT_EQ(sanitizeXmlName("_private"), "_private");
+    EXPECT_EQ(sanitizeXmlName("camelCase"), "camelCase");
+    EXPECT_EQ(sanitizeXmlName("with-hyphen"), "with-hyphen");
+    EXPECT_EQ(sanitizeXmlName("with.dot"), "with.dot");
+}
+
+TEST(XmlExporter, SanitizeXmlNameDigitPrefix) {
+    EXPECT_EQ(sanitizeXmlName("1abc"), "_1abc");
+    EXPECT_EQ(sanitizeXmlName("42"), "_42");
+    EXPECT_EQ(sanitizeXmlName("0x1F"), "_0x1F");
+}
+
+TEST(XmlExporter, SanitizeXmlNameInvalidChars) {
+    EXPECT_EQ(sanitizeXmlName("hello world"), "hello_world");
+    EXPECT_EQ(sanitizeXmlName("a@b"), "a_b");
+    EXPECT_EQ(sanitizeXmlName("x+y"), "x_y");
+    EXPECT_EQ(sanitizeXmlName("path/to"), "path_to");
+}
+
+TEST(XmlExporter, EscapeXmlTextEmpty) {
+    EXPECT_EQ(escapeXmlText(""), "");
+}
+
+TEST(XmlExporter, EscapeXmlTextNoSpecialChars) {
+    EXPECT_EQ(escapeXmlText("hello world"), "hello world");
+}
+
+TEST(XmlExporter, EscapeXmlTextAmpersand) {
+    EXPECT_EQ(escapeXmlText("a & b"), "a &amp; b");
+}
+
+TEST(XmlExporter, EscapeXmlTextLessThan) {
+    EXPECT_EQ(escapeXmlText("a < b"), "a &lt; b");
+}
+
+TEST(XmlExporter, EscapeXmlTextGreaterThan) {
+    EXPECT_EQ(escapeXmlText("a > b"), "a &gt; b");
+}
+
+TEST(XmlExporter, EscapeXmlTextDoubleQuote) {
+    EXPECT_EQ(escapeXmlText("say \"hi\""), "say &quot;hi&quot;");
+}
+
+TEST(XmlExporter, EscapeXmlTextApostrophe) {
+    EXPECT_EQ(escapeXmlText("it's"), "it&apos;s");
+}
+
+TEST(XmlExporter, EscapeXmlTextAllReserved) {
+    EXPECT_EQ(escapeXmlText("&<>\"'"), "&amp;&lt;&gt;&quot;&apos;");
+}
+
+// ---------------------------------------------------------------------------
+// Task 9.2: Property 14 — XML Well-Formedness
+// Validates: Requirements 7.1, 7.2
+// ---------------------------------------------------------------------------
+
+// Simple XML well-formedness checker: verifies that every opening tag has a
+// matching closing tag and that the document has proper nesting.
+// This is a lightweight check suitable for property testing without requiring
+// a full XML parser library dependency.
+namespace {
+
+// Check if a string is a valid XML element name (ASCII subset)
+bool isValidXmlElementName(const std::string& name) {
+    if (name.empty()) return false;
+    // First char must be letter or underscore
+    char first = name[0];
+    if (!std::isalpha(static_cast<unsigned char>(first)) && first != '_' && first != ':') {
+        return false;
+    }
+    // Subsequent chars can be letters, digits, hyphens, dots, underscores, colons
+    for (std::size_t i = 1; i < name.size(); ++i) {
+        char c = name[i];
+        if (!std::isalnum(static_cast<unsigned char>(c)) &&
+            c != '_' && c != '-' && c != '.' && c != ':') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Minimal XML well-formedness validator.
+// Checks: proper tag nesting, valid element names, proper self-closing tags.
+// Returns true if the XML is well-formed, false otherwise.
+bool isWellFormedXml(const std::string& xml) {
+    std::vector<std::string> tagStack;
+    std::size_t pos = 0;
+
+    // Skip XML declaration if present
+    if (xml.substr(0, 5) == "<?xml") {
+        pos = xml.find("?>", pos);
+        if (pos == std::string::npos) return false;
+        pos += 2;
+    }
+
+    while (pos < xml.size()) {
+        // Skip whitespace and text content
+        if (xml[pos] != '<') {
+            // Text content — check for unescaped < or & (simplified check)
+            pos++;
+            continue;
+        }
+
+        // Found a tag
+        std::size_t tagEnd = xml.find('>', pos);
+        if (tagEnd == std::string::npos) return false;
+
+        std::string tagContent = xml.substr(pos + 1, tagEnd - pos - 1);
+
+        if (tagContent.empty()) return false;
+
+        if (tagContent[0] == '/') {
+            // Closing tag
+            std::string tagName = tagContent.substr(1);
+            // Trim whitespace
+            while (!tagName.empty() && std::isspace(static_cast<unsigned char>(tagName.back())))
+                tagName.pop_back();
+            if (tagStack.empty() || tagStack.back() != tagName) return false;
+            tagStack.pop_back();
+        } else if (tagContent.back() == '/') {
+            // Self-closing tag
+            std::string tagName = tagContent.substr(0, tagContent.size() - 1);
+            // Trim whitespace
+            while (!tagName.empty() && std::isspace(static_cast<unsigned char>(tagName.back())))
+                tagName.pop_back();
+            if (!isValidXmlElementName(tagName)) return false;
+        } else if (tagContent[0] == '?') {
+            // Processing instruction — skip
+        } else {
+            // Opening tag (may have attributes, but our output doesn't use them)
+            std::string tagName = tagContent;
+            // Extract just the name (up to first space)
+            auto spacePos = tagName.find(' ');
+            if (spacePos != std::string::npos) {
+                tagName = tagName.substr(0, spacePos);
+            }
+            if (!isValidXmlElementName(tagName)) return false;
+            tagStack.push_back(tagName);
+        }
+
+        pos = tagEnd + 1;
+    }
+
+    return tagStack.empty();
+}
+
+} // anonymous namespace
+
+TEST(XmlExporterProperty, WellFormedness) {
+    rc::check("Property 14: XML Well-Formedness",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random JsonNode tree
+            std::uniform_int_distribution<int> depthDist(0, 3);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Parse it to get a JsonNode
+            auto parseResult = parseAll(json);
+            RC_PRE(parseResult.root != nullptr);
+
+            // Export to XML
+            auto xml = exportXml(*parseResult.root, "root");
+
+            // Verify well-formedness
+            RC_ASSERT(!xml.empty());
+            RC_ASSERT(xml.find("<?xml version=\"1.0\" encoding=\"UTF-8\"?>") != std::string::npos);
+            RC_ASSERT(isWellFormedXml(xml));
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 9.3: Property 15 — XML Element Name Sanitization
+// Validates: Requirement 7.3
+// ---------------------------------------------------------------------------
+
+TEST(XmlExporterProperty, ElementNameSanitization) {
+    rc::check("Property 15: XML Element Name Sanitization",
+        [](void) {
+            // Generate strings with potentially invalid XML name characters
+            auto rawName = *rc::gen::nonEmpty<std::string>();
+
+            // Sanitize the name
+            auto sanitized = sanitizeXmlName(rawName);
+
+            // Verify the result is a valid XML element name
+            RC_ASSERT(!sanitized.empty());
+
+            // First character must be letter, underscore, or colon
+            char first = sanitized[0];
+            RC_ASSERT(std::isalpha(static_cast<unsigned char>(first)) ||
+                      first == '_' || first == ':');
+
+            // All subsequent characters must be valid XML NameChars
+            for (std::size_t i = 1; i < sanitized.size(); ++i) {
+                char c = sanitized[i];
+                RC_ASSERT(std::isalnum(static_cast<unsigned char>(c)) ||
+                          c == '_' || c == '-' || c == '.' || c == ':');
+            }
+        });
+}
+
+// Additional property: names starting with digits get underscore prepended
+TEST(XmlExporterProperty, DigitPrefixHandling) {
+    rc::check("Property 15b: Digit prefix gets underscore prepended",
+        [](void) {
+            // Generate a string starting with a digit
+            auto digit = *rc::gen::inRange(0, 10);
+            auto rest = *rc::gen::arbitrary<std::string>();
+            std::string rawName = std::to_string(digit) + rest;
+
+            auto sanitized = sanitizeXmlName(rawName);
+
+            // Must start with underscore followed by the digit
+            RC_ASSERT(sanitized[0] == '_');
+            RC_ASSERT(sanitized[1] == rawName[0]);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 9.4: Property 16 — XML Entity Escaping
+// Validates: Requirement 7.4
+// ---------------------------------------------------------------------------
+
+TEST(XmlExporterProperty, EntityEscaping) {
+    rc::check("Property 16: XML Entity Escaping",
+        [](void) {
+            // Generate strings containing XML-reserved characters
+            auto baseStr = *rc::gen::arbitrary<std::string>();
+
+            // Inject at least one reserved character
+            auto reservedChars = std::string("&<>\"'");
+            auto reservedIdx = *rc::gen::inRange(std::size_t{0}, reservedChars.size());
+            auto insertPos = *rc::gen::inRange(std::size_t{0}, baseStr.size() + 1);
+            baseStr.insert(baseStr.begin() + static_cast<std::ptrdiff_t>(insertPos),
+                          reservedChars[reservedIdx]);
+
+            auto escaped = escapeXmlText(baseStr);
+
+            // Verify no raw reserved characters remain in the output
+            // (except within entity references themselves)
+            // Check that each reserved char in input is properly escaped
+            std::size_t srcIdx = 0;
+            std::size_t dstIdx = 0;
+            while (srcIdx < baseStr.size() && dstIdx < escaped.size()) {
+                char c = baseStr[srcIdx];
+                if (c == '&') {
+                    RC_ASSERT(escaped.substr(dstIdx, 5) == "&amp;");
+                    dstIdx += 5;
+                } else if (c == '<') {
+                    RC_ASSERT(escaped.substr(dstIdx, 4) == "&lt;");
+                    dstIdx += 4;
+                } else if (c == '>') {
+                    RC_ASSERT(escaped.substr(dstIdx, 4) == "&gt;");
+                    dstIdx += 4;
+                } else if (c == '"') {
+                    RC_ASSERT(escaped.substr(dstIdx, 6) == "&quot;");
+                    dstIdx += 6;
+                } else if (c == '\'') {
+                    RC_ASSERT(escaped.substr(dstIdx, 6) == "&apos;");
+                    dstIdx += 6;
+                } else {
+                    RC_ASSERT(escaped[dstIdx] == c);
+                    dstIdx += 1;
+                }
+                srcIdx++;
+            }
+            RC_ASSERT(srcIdx == baseStr.size());
+            RC_ASSERT(dstIdx == escaped.size());
+        });
+}
