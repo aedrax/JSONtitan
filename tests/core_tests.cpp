@@ -1621,3 +1621,587 @@ TEST(PrettyPrinter, EmptyStringValue) {
     auto node = JsonNode::makeString("", "");
     EXPECT_EQ(prettyPrint(*node), "\"\"");
 }
+
+// ===========================================================================
+// Task 6: SearchEngine Tests
+// Requirements: 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 8.1
+// ===========================================================================
+
+#include "core/search_engine.h"
+
+#include <regex>
+
+// ---------------------------------------------------------------------------
+// Task 6.6: Unit tests for SearchEngine
+// Requirements: 4.1, 4.2, 4.4, 4.5, 4.6, 4.7
+// ---------------------------------------------------------------------------
+
+// === Empty query returns no matches ========================================
+
+TEST(SearchEngine, EmptyQueryReturnsNoMatches) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+        JsonNode::makeNumber("age", "30")
+    });
+    auto result = filter(*root, SearchQuery{.pattern = ""});
+    EXPECT_TRUE(result.matches.empty());
+    EXPECT_FALSE(result.error.has_value());
+}
+
+// === Substring matching on keys ============================================
+
+TEST(SearchEngine, SubstringMatchesKey) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("username", "Alice"),
+        JsonNode::makeNumber("age", "30")
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "user"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->key, "username");
+}
+
+TEST(SearchEngine, SubstringMatchesMultipleKeys) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("firstName", "Alice"),
+        JsonNode::makeString("lastName", "Smith"),
+        JsonNode::makeNumber("age", "30")
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "Name"});
+    EXPECT_EQ(result.matches.size(), 2u);
+}
+
+// === Substring matching on string values ===================================
+
+TEST(SearchEngine, SubstringMatchesStringValue) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+        JsonNode::makeString("city", "Wonderland")
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "alice"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->value, "Alice");
+}
+
+// === Case-insensitive matching (default) ===================================
+
+TEST(SearchEngine, CaseInsensitiveByDefault) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("Name", "ALICE"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "name"});
+    // Should match the key "Name" case-insensitively
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->key, "Name");
+}
+
+TEST(SearchEngine, CaseInsensitiveValueMatch) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("x", "Hello World"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "hello world"});
+    ASSERT_EQ(result.matches.size(), 1u);
+}
+
+// === Case-sensitive matching ===============================================
+
+TEST(SearchEngine, CaseSensitiveNoMatch) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("Name", "Alice"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "name",
+        .mode = SearchMode::Substring,
+        .caseSensitive = true
+    });
+    EXPECT_TRUE(result.matches.empty());
+}
+
+TEST(SearchEngine, CaseSensitiveMatch) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("Name", "Alice"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "Name",
+        .mode = SearchMode::Substring,
+        .caseSensitive = true
+    });
+    ASSERT_EQ(result.matches.size(), 1u);
+}
+
+// === No matches returns empty vector (not error) ===========================
+
+TEST(SearchEngine, NoMatchesReturnsEmptyVector) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "zzz_nonexistent"});
+    EXPECT_TRUE(result.matches.empty());
+    EXPECT_FALSE(result.error.has_value());
+}
+
+// === Query matching root node ==============================================
+
+TEST(SearchEngine, MatchesRootKey) {
+    // Root with a key that matches
+    auto root = JsonNode::makeObject("rootKey", {
+        JsonNode::makeString("child", "value"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "rootKey"});
+    ASSERT_GE(result.matches.size(), 1u);
+    // The root match should have an empty ancestor path
+    bool foundRoot = false;
+    for (const auto& m : result.matches) {
+        if (m.ancestorIndices.empty()) {
+            foundRoot = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundRoot);
+}
+
+// === Query matching leaf node ==============================================
+
+TEST(SearchEngine, MatchesLeafNode) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeObject("level1", {
+            JsonNode::makeString("deep", "target_value"),
+        }),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "target_value"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->value, "target_value");
+    // Ancestor path should be [0, 0] (first child of root, first child of level1)
+    ASSERT_EQ(result.matches[0].ancestorIndices.size(), 2u);
+    EXPECT_EQ(result.matches[0].ancestorIndices[0], 0u);
+    EXPECT_EQ(result.matches[0].ancestorIndices[1], 0u);
+}
+
+// === Ancestor index path correctness =======================================
+
+TEST(SearchEngine, AncestorPathIsCorrect) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("a", "no"),
+        JsonNode::makeObject("b", {
+            JsonNode::makeString("c", "no"),
+            JsonNode::makeString("d", "found_me"),
+        }),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "found_me"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    // Path: root -> child[1] ("b") -> child[1] ("d")
+    auto& path = result.matches[0].ancestorIndices;
+    ASSERT_EQ(path.size(), 2u);
+    EXPECT_EQ(path[0], 1u); // "b" is at index 1
+    EXPECT_EQ(path[1], 1u); // "d" is at index 1 within "b"
+}
+
+// === Searches across nested structures =====================================
+
+TEST(SearchEngine, SearchesNestedChildren) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeArray("items", {
+            JsonNode::makeString("", "apple"),
+            JsonNode::makeString("", "banana"),
+            JsonNode::makeString("", "cherry"),
+        }),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "banana"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->value, "banana");
+}
+
+// === Does not match non-string values ======================================
+
+TEST(SearchEngine, DoesNotMatchNumberValues) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeNumber("count", "42"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "42"});
+    // "42" is a number value, not a string value — should not match value
+    // But "count" key doesn't contain "42" either
+    EXPECT_TRUE(result.matches.empty());
+}
+
+TEST(SearchEngine, DoesNotMatchBoolValues) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeBool("flag", true),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "true"});
+    EXPECT_TRUE(result.matches.empty());
+}
+
+TEST(SearchEngine, DoesNotMatchNullValues) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeNull("nothing"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "null"});
+    EXPECT_TRUE(result.matches.empty());
+}
+
+// === Regex mode ============================================================
+
+TEST(SearchEngine, RegexMatchesKey) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("user_name", "Alice"),
+        JsonNode::makeString("user_email", "alice@example.com"),
+        JsonNode::makeNumber("age", "30"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "^user_",
+        .mode = SearchMode::Regex
+    });
+    EXPECT_EQ(result.matches.size(), 2u);
+}
+
+TEST(SearchEngine, RegexMatchesStringValue) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("email", "alice@example.com"),
+        JsonNode::makeString("name", "Alice"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = R"(\w+@\w+\.\w+)",
+        .mode = SearchMode::Regex
+    });
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->value, "alice@example.com");
+}
+
+TEST(SearchEngine, RegexCaseInsensitiveByDefault) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("Name", "ALICE"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "^name$",
+        .mode = SearchMode::Regex
+    });
+    ASSERT_EQ(result.matches.size(), 1u);
+}
+
+TEST(SearchEngine, RegexCaseSensitive) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("Name", "ALICE"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "^name$",
+        .mode = SearchMode::Regex,
+        .caseSensitive = true
+    });
+    EXPECT_TRUE(result.matches.empty());
+}
+
+// === Invalid regex returns error ===========================================
+
+TEST(SearchEngine, InvalidRegexReturnsError) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "Alice"),
+    });
+    auto result = filter(*root, SearchQuery{
+        .pattern = "[invalid",
+        .mode = SearchMode::Regex
+    });
+    EXPECT_TRUE(result.matches.empty());
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_FALSE(result.error->description.empty());
+}
+
+TEST(SearchEngine, InvalidRegexUnmatchedParen) {
+    auto root = JsonNode::makeObject("", {});
+    auto result = filter(*root, SearchQuery{
+        .pattern = "(unclosed",
+        .mode = SearchMode::Regex
+    });
+    EXPECT_TRUE(result.matches.empty());
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_FALSE(result.error->description.empty());
+}
+
+// === Multiple matches at different depths ==================================
+
+TEST(SearchEngine, MultipleMatchesAtDifferentDepths) {
+    auto root = JsonNode::makeObject("", {
+        JsonNode::makeString("name", "test"),
+        JsonNode::makeObject("nested", {
+            JsonNode::makeString("name", "test2"),
+            JsonNode::makeObject("deep", {
+                JsonNode::makeString("name", "test3"),
+            }),
+        }),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "name"});
+    // Should match all three "name" keys
+    EXPECT_EQ(result.matches.size(), 3u);
+}
+
+// === Array element matching ================================================
+
+TEST(SearchEngine, MatchesArrayStringElements) {
+    auto root = JsonNode::makeArray("", {
+        JsonNode::makeString("", "hello"),
+        JsonNode::makeString("", "world"),
+        JsonNode::makeNumber("", "42"),
+    });
+    auto result = filter(*root, SearchQuery{.pattern = "hello"});
+    ASSERT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches[0].node->value, "hello");
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.2: Property 5 — Search Completeness (Case-Insensitive)
+// Validates: Requirements 4.1, 4.4
+// ---------------------------------------------------------------------------
+
+// Helper: collect all string values and keys from a JsonNode tree
+static void collectKeysAndStringValues(const JsonNode& node,
+                                        std::vector<std::pair<std::string, const JsonNode*>>& results) {
+    if (!node.key.empty()) {
+        results.push_back({node.key, &node});
+    }
+    if (node.type == NodeType::String && !node.value.empty()) {
+        results.push_back({node.value, &node});
+    }
+    for (const auto& child : node.children) {
+        collectKeysAndStringValues(*child, results);
+    }
+}
+
+TEST(SearchEngineProperty, SearchCompleteness) {
+    rc::check("Property 5: Search Completeness (Case-Insensitive)",
+        [](void) {
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random JsonNode tree
+            std::uniform_int_distribution<int> depthDist(1, 3);
+            auto tree = generateRandomNode(depthDist(rng), rng);
+            RC_ASSERT(tree != nullptr);
+
+            // Collect all keys and string values
+            std::vector<std::pair<std::string, const JsonNode*>> keysAndValues;
+            collectKeysAndStringValues(*tree, keysAndValues);
+
+            // Skip if tree has no searchable content
+            RC_PRE(!keysAndValues.empty());
+
+            // Pick a random key/value
+            std::uniform_int_distribution<std::size_t> pickDist(0, keysAndValues.size() - 1);
+            auto& [text, sourceNode] = keysAndValues[pickDist(rng)];
+
+            // Extract a random substring (at least 1 char)
+            RC_PRE(text.size() >= 1);
+            std::uniform_int_distribution<std::size_t> startDist(0, text.size() - 1);
+            auto start = startDist(rng);
+            std::uniform_int_distribution<std::size_t> lenDist(1, text.size() - start);
+            auto len = lenDist(rng);
+            std::string substring = text.substr(start, len);
+
+            // Filter with that substring (case-insensitive, default mode)
+            auto result = filter(*tree, SearchQuery{.pattern = substring});
+            RC_ASSERT(!result.error.has_value());
+
+            // Verify the source node appears in results
+            bool found = false;
+            for (const auto& match : result.matches) {
+                if (match.node.get() == sourceNode ||
+                    (match.node->key == sourceNode->key &&
+                     match.node->value == sourceNode->value &&
+                     match.node->type == sourceNode->type)) {
+                    found = true;
+                    break;
+                }
+            }
+            RC_ASSERT(found);
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.3: Property 6 — Search Ancestor Preservation
+// Validates: Requirement 4.2
+// ---------------------------------------------------------------------------
+
+// Helper: verify an ancestor index path traces a valid route from root to node
+static bool verifyAncestorPath(const JsonNode& root,
+                                const std::vector<std::size_t>& path,
+                                const JsonNode& expectedNode) {
+    const JsonNode* current = &root;
+    for (std::size_t idx : path) {
+        if (idx >= current->children.size()) return false;
+        current = current->children[idx].get();
+    }
+    // The node at the end of the path should match the expected node
+    return current->key == expectedNode.key &&
+           current->value == expectedNode.value &&
+           current->type == expectedNode.type;
+}
+
+TEST(SearchEngineProperty, SearchAncestorPreservation) {
+    rc::check("Property 6: Search Ancestor Preservation",
+        [](void) {
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random JsonNode tree
+            std::uniform_int_distribution<int> depthDist(1, 4);
+            auto tree = generateRandomNode(depthDist(rng), rng);
+            RC_ASSERT(tree != nullptr);
+
+            // Collect searchable content
+            std::vector<std::pair<std::string, const JsonNode*>> keysAndValues;
+            collectKeysAndStringValues(*tree, keysAndValues);
+            RC_PRE(!keysAndValues.empty());
+
+            // Pick a random substring to search for
+            std::uniform_int_distribution<std::size_t> pickDist(0, keysAndValues.size() - 1);
+            auto& [text, _] = keysAndValues[pickDist(rng)];
+            RC_PRE(text.size() >= 1);
+            std::uniform_int_distribution<std::size_t> startDist(0, text.size() - 1);
+            auto start = startDist(rng);
+            std::uniform_int_distribution<std::size_t> lenDist(1, text.size() - start);
+            std::string substring = text.substr(start, lenDist(rng));
+
+            auto result = filter(*tree, SearchQuery{.pattern = substring});
+            RC_ASSERT(!result.error.has_value());
+
+            // For every match, verify the ancestor path is valid
+            for (const auto& match : result.matches) {
+                RC_ASSERT(verifyAncestorPath(*tree, match.ancestorIndices, *match.node));
+            }
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.4: Property 7 — Regex Search Correctness
+// Validates: Requirement 4.5
+// ---------------------------------------------------------------------------
+
+// Helper: collect all nodes that should match a regex pattern
+static void collectRegexMatches(const JsonNode& node,
+                                 const std::regex& pattern,
+                                 std::vector<const JsonNode*>& expected) {
+    if (std::regex_search(node.key, pattern)) {
+        expected.push_back(&node);
+    } else if (node.type == NodeType::String && std::regex_search(node.value, pattern)) {
+        expected.push_back(&node);
+    }
+    for (const auto& child : node.children) {
+        collectRegexMatches(*child, pattern, expected);
+    }
+}
+
+TEST(SearchEngineProperty, RegexSearchCorrectness) {
+    rc::check("Property 7: Regex Search Correctness",
+        [](void) {
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random JsonNode tree
+            std::uniform_int_distribution<int> depthDist(1, 3);
+            auto tree = generateRandomNode(depthDist(rng), rng);
+            RC_ASSERT(tree != nullptr);
+
+            // Generate a simple valid regex pattern from known content
+            // Strategy: pick a literal substring from the tree and use it as a regex
+            std::vector<std::pair<std::string, const JsonNode*>> keysAndValues;
+            collectKeysAndStringValues(*tree, keysAndValues);
+            RC_PRE(!keysAndValues.empty());
+
+            std::uniform_int_distribution<std::size_t> pickDist(0, keysAndValues.size() - 1);
+            auto& [text, _] = keysAndValues[pickDist(rng)];
+            RC_PRE(text.size() >= 1);
+
+            // Use a simple literal pattern (escape regex special chars)
+            std::string pattern;
+            for (char c : text) {
+                if (std::string("[](){}*+?.\\^$|").find(c) != std::string::npos) {
+                    pattern += '\\';
+                }
+                pattern += c;
+            }
+
+            // Compute expected matches manually
+            std::regex compiledPattern(pattern, std::regex_constants::ECMAScript | std::regex_constants::icase);
+            std::vector<const JsonNode*> expected;
+            collectRegexMatches(*tree, compiledPattern, expected);
+
+            // Run filter
+            auto result = filter(*tree, SearchQuery{
+                .pattern = pattern,
+                .mode = SearchMode::Regex,
+                .caseSensitive = false
+            });
+            RC_ASSERT(!result.error.has_value());
+
+            // Verify: no false negatives — every expected node is in results
+            for (const auto* expectedNode : expected) {
+                bool found = false;
+                for (const auto& match : result.matches) {
+                    if (match.node->key == expectedNode->key &&
+                        match.node->value == expectedNode->value &&
+                        match.node->type == expectedNode->type) {
+                        found = true;
+                        break;
+                    }
+                }
+                RC_ASSERT(found);
+            }
+
+            // Verify: no false positives — every result is in expected
+            for (const auto& match : result.matches) {
+                bool found = false;
+                for (const auto* expectedNode : expected) {
+                    if (match.node->key == expectedNode->key &&
+                        match.node->value == expectedNode->value &&
+                        match.node->type == expectedNode->type) {
+                        found = true;
+                        break;
+                    }
+                }
+                RC_ASSERT(found);
+            }
+
+            // Verify count matches
+            RC_ASSERT(result.matches.size() == expected.size());
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.5: Property 8 — Invalid Regex Error Reporting
+// Validates: Requirement 4.6
+// ---------------------------------------------------------------------------
+
+TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
+    rc::check("Property 8: Invalid Regex Error Reporting",
+        [](void) {
+            // Generate strings that are not valid regular expressions
+            auto invalidPatternIdx = *rc::gen::inRange(0, 8);
+            std::string invalidPattern;
+            switch (invalidPatternIdx) {
+                case 0: invalidPattern = "[unclosed"; break;
+                case 1: invalidPattern = "(unclosed"; break;
+                case 2: invalidPattern = "invalid\\"; break;
+                case 3: invalidPattern = "[z-a]"; break;
+                case 4: invalidPattern = "(?P<bad"; break;
+                case 5: invalidPattern = "*leading_quantifier"; break;
+                case 6: invalidPattern = "+leading_quantifier"; break;
+                case 7: invalidPattern = "?leading_quantifier"; break;
+            }
+
+            // Create a minimal tree to search
+            auto root = JsonNode::makeObject("", {
+                JsonNode::makeString("key", "value"),
+            });
+
+            auto result = filter(*root, SearchQuery{
+                .pattern = invalidPattern,
+                .mode = SearchMode::Regex
+            });
+
+            // Should have empty matches and a non-empty error description
+            RC_ASSERT(result.matches.empty());
+            RC_ASSERT(result.error.has_value());
+            RC_ASSERT(!result.error->description.empty());
+        }
+    );
+}
