@@ -4113,3 +4113,652 @@ TEST(SourceBuffer, DataReturnsConstPointer) {
         std::is_same_v<decltype(buf.data()), const char*>,
         "SourceBuffer::data() must return const char*");
 }
+
+// ===========================================================================
+// Task 3.4: Property 3 — SIMD/scalar scanner equivalence
+// Validates: Requirements 3.4, 3.5
+// ===========================================================================
+
+#include "core/simd_scanner.h"
+
+// ---------------------------------------------------------------------------
+// Property 3: For any byte sequence, the SIMD scanner produces identical
+// ScanBlock results to the scalar reference implementation.
+// ---------------------------------------------------------------------------
+
+TEST(ScannerProperty, SimdScalarEquivalence) {
+    rc::check("Property 3: SIMD/scalar scanner equivalence",
+        [](void) {
+            // Generate random byte sequence with varying length (0..300)
+            auto length = *rc::gen::inRange(0, 300);
+            auto bytes = *rc::gen::container<std::vector<char>>(
+                length, rc::gen::arbitrary<char>());
+
+            auto scalarResult = scalarScan(bytes.data(), bytes.size());
+            auto simdResult = simdScan(bytes.data(), bytes.size(), SimdLevel::SSE2);
+
+            RC_ASSERT(scalarResult.size() == simdResult.size());
+            for (size_t i = 0; i < scalarResult.size(); ++i) {
+                RC_ASSERT(scalarResult[i].structuralBits == simdResult[i].structuralBits);
+                RC_ASSERT(scalarResult[i].whitespaceBits == simdResult[i].whitespaceBits);
+                RC_ASSERT(scalarResult[i].quoteBits == simdResult[i].quoteBits);
+                RC_ASSERT(scalarResult[i].stringMask == simdResult[i].stringMask);
+            }
+        });
+}
+
+TEST(ScannerProperty, SimdScalarEquivalenceAVX2) {
+    rc::check("Property 3: SIMD/scalar scanner equivalence (AVX2 level)",
+        [](void) {
+            auto length = *rc::gen::inRange(0, 300);
+            auto bytes = *rc::gen::container<std::vector<char>>(
+                length, rc::gen::arbitrary<char>());
+
+            auto scalarResult = scalarScan(bytes.data(), bytes.size());
+            auto simdResult = simdScan(bytes.data(), bytes.size(), SimdLevel::AVX2);
+
+            RC_ASSERT(scalarResult.size() == simdResult.size());
+            for (size_t i = 0; i < scalarResult.size(); ++i) {
+                RC_ASSERT(scalarResult[i].structuralBits == simdResult[i].structuralBits);
+                RC_ASSERT(scalarResult[i].whitespaceBits == simdResult[i].whitespaceBits);
+                RC_ASSERT(scalarResult[i].quoteBits == simdResult[i].quoteBits);
+                RC_ASSERT(scalarResult[i].stringMask == simdResult[i].stringMask);
+            }
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Boundary variant: test lengths at SIMD register boundaries
+// (multiples of 16 ± 1, multiples of 64 ± 1)
+// ---------------------------------------------------------------------------
+
+TEST(ScannerProperty, SimdScalarEquivalenceAtRegisterBoundaries) {
+    rc::check("Property 3: SIMD/scalar equivalence at register boundaries",
+        [](void) {
+            // Build a set of interesting boundary lengths
+            static const std::vector<int> boundaryLengths = {
+                0, 1,
+                15, 16, 17,
+                31, 32, 33,
+                47, 48, 49,
+                63, 64, 65,
+                79, 80, 81,
+                95, 96, 97,
+                127, 128, 129,
+                191, 192, 193,
+                255, 256, 257
+            };
+
+            auto idx = *rc::gen::inRange(std::size_t{0}, boundaryLengths.size());
+            auto length = boundaryLengths[idx];
+            auto bytes = *rc::gen::container<std::vector<char>>(
+                length, rc::gen::arbitrary<char>());
+
+            auto scalarResult = scalarScan(bytes.data(), bytes.size());
+            auto simdResultSSE2 = simdScan(bytes.data(), bytes.size(), SimdLevel::SSE2);
+            auto simdResultAVX2 = simdScan(bytes.data(), bytes.size(), SimdLevel::AVX2);
+
+            RC_ASSERT(scalarResult.size() == simdResultSSE2.size());
+            RC_ASSERT(scalarResult.size() == simdResultAVX2.size());
+            for (size_t i = 0; i < scalarResult.size(); ++i) {
+                // SSE2 equivalence
+                RC_ASSERT(scalarResult[i].structuralBits == simdResultSSE2[i].structuralBits);
+                RC_ASSERT(scalarResult[i].whitespaceBits == simdResultSSE2[i].whitespaceBits);
+                RC_ASSERT(scalarResult[i].quoteBits == simdResultSSE2[i].quoteBits);
+                RC_ASSERT(scalarResult[i].stringMask == simdResultSSE2[i].stringMask);
+                // AVX2 equivalence
+                RC_ASSERT(scalarResult[i].structuralBits == simdResultAVX2[i].structuralBits);
+                RC_ASSERT(scalarResult[i].whitespaceBits == simdResultAVX2[i].whitespaceBits);
+                RC_ASSERT(scalarResult[i].quoteBits == simdResultAVX2[i].quoteBits);
+                RC_ASSERT(scalarResult[i].stringMask == simdResultAVX2[i].stringMask);
+            }
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 3.5: Property 4 — Structural Index Correctness
+// Validates: Requirements 3.1, 3.2, 3.3, 3.6
+// ---------------------------------------------------------------------------
+
+#include "core/structural_scanner.h"
+
+// Helper: determine if a character is a JSON structural character
+static bool isStructuralChar(char c) {
+    return c == '{' || c == '}' || c == '[' || c == ']' || c == ',' || c == ':';
+}
+
+// Helper: manually collect all structural character positions outside strings
+// by walking the input and tracking string state (with escape handling).
+static std::vector<std::size_t> collectExpectedStructuralPositions(
+    const std::string& json) {
+    std::vector<std::size_t> positions;
+    bool inString = false;
+
+    for (std::size_t i = 0; i < json.size(); ++i) {
+        char c = json[i];
+        if (inString) {
+            if (c == '\\') {
+                ++i; // skip escaped character
+            } else if (c == '"') {
+                inString = false;
+            }
+        } else {
+            if (c == '"') {
+                inString = true;
+            } else if (isStructuralChar(c)) {
+                positions.push_back(i);
+            }
+        }
+    }
+    return positions;
+}
+
+TEST(StructuralIndexProperty, StructuralIndexCorrectness) {
+    rc::check("Property 4: Structural index correctness",
+        [](void) {
+            // Generate a random valid JSON document
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+            std::uniform_int_distribution<int> depthDist(0, 3);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Run scalarScan to get ScanBlocks
+            auto scanBlocks = scalarScan(json.data(), json.size());
+
+            // Build structural index
+            auto index = buildStructuralIndex(json.data(), json.size(), scanBlocks);
+
+            // (a) Every entry in the index corresponds to an actual structural
+            //     character at that byte offset in the input
+            for (const auto& entry : index.entries) {
+                RC_ASSERT(entry.offset < json.size());
+                RC_ASSERT(json[entry.offset] == entry.character);
+                RC_ASSERT(isStructuralChar(entry.character));
+            }
+
+            // (b) No structural characters outside of string literals are
+            //     missing from the index
+            auto expected = collectExpectedStructuralPositions(json);
+            std::vector<std::size_t> actualOffsets;
+            actualOffsets.reserve(index.entries.size());
+            for (const auto& entry : index.entries) {
+                actualOffsets.push_back(entry.offset);
+            }
+            RC_ASSERT(actualOffsets.size() == expected.size());
+            RC_ASSERT(actualOffsets == expected);
+
+            // (c) Nesting depths are correct:
+            //     - All depths are non-negative
+            //     - Opening brackets record depth before increment
+            //     - Closing brackets record depth after decrement
+            int depth = 0;
+            for (const auto& entry : index.entries) {
+                RC_ASSERT(entry.depth >= 0);
+                if (entry.character == '{' || entry.character == '[') {
+                    RC_ASSERT(entry.depth == depth);
+                    ++depth;
+                } else if (entry.character == '}' || entry.character == ']') {
+                    --depth;
+                    RC_ASSERT(entry.depth == depth);
+                } else {
+                    // comma or colon — at current depth
+                    RC_ASSERT(entry.depth == depth);
+                }
+            }
+
+            // (d) Entries are ordered by offset (ascending)
+            for (std::size_t i = 1; i < index.entries.size(); ++i) {
+                RC_ASSERT(index.entries[i].offset > index.entries[i - 1].offset);
+            }
+
+            // (e) Depth returns to 0 at the end for valid JSON
+            RC_ASSERT(depth == 0);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 3.6: Property 5 — Partition Boundary Validity
+// Validates: Requirements 4.1
+// ---------------------------------------------------------------------------
+
+TEST(PartitionProperty, PartitionBoundaryValidity) {
+    rc::check("Property 5: Partition boundary validity",
+        [](void) {
+            // Generate a random valid JSON document
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+            std::uniform_int_distribution<int> depthDist(0, 3);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Run scalarScan to get ScanBlocks
+            auto scanBlocks = scalarScan(json.data(), json.size());
+
+            // Build structural index
+            auto index = buildStructuralIndex(json.data(), json.size(), scanBlocks);
+
+            // Find partition points
+            auto partitionPoints = index.findPartitionPoints();
+
+            // (a) Partition points are in ascending order
+            for (std::size_t i = 1; i < partitionPoints.size(); ++i) {
+                RC_ASSERT(partitionPoints[i] > partitionPoints[i - 1]);
+            }
+
+            // (b) Each partition point is within bounds (> 0 and <= input length)
+            for (auto pp : partitionPoints) {
+                RC_ASSERT(pp > 0);
+                RC_ASSERT(pp <= json.size());
+            }
+
+            // (c) The byte at partitionPoint - 1 is either '}' or ']'
+            for (auto pp : partitionPoints) {
+                char preceding = json[pp - 1];
+                RC_ASSERT(preceding == '}' || preceding == ']');
+            }
+
+            // (d) That closing bracket is at depth 0 in the structural index
+            //     Verify by finding the entry for offset (pp - 1) and checking depth == 0
+            for (auto pp : partitionPoints) {
+                std::size_t bracketOffset = pp - 1;
+                bool foundEntry = false;
+                for (const auto& entry : index.entries) {
+                    if (entry.offset == bracketOffset) {
+                        RC_ASSERT(entry.depth == 0);
+                        RC_ASSERT(entry.character == '}' || entry.character == ']');
+                        foundEntry = true;
+                        break;
+                    }
+                }
+                RC_ASSERT(foundEntry);
+            }
+
+            // (e) Completeness: every depth-0 closing bracket in the index
+            //     should produce a partition point
+            std::vector<std::size_t> expectedPoints;
+            for (const auto& entry : index.entries) {
+                if ((entry.character == '}' || entry.character == ']') &&
+                    entry.depth == 0) {
+                    expectedPoints.push_back(entry.offset + 1);
+                }
+            }
+            RC_ASSERT(partitionPoints.size() == expectedPoints.size());
+            RC_ASSERT(partitionPoints == expectedPoints);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 3.7: Unit tests for SimdScanner and StructuralScanner
+// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
+// ---------------------------------------------------------------------------
+
+// ===========================================================================
+// SimdScanner unit tests
+// ===========================================================================
+
+// 1. Empty input: scalarScan and simdScan return empty vectors
+TEST(SimdScanner, EmptyInputScalarScan) {
+    auto result = scalarScan(nullptr, 0);
+    EXPECT_TRUE(result.empty());
+}
+
+TEST(SimdScanner, EmptyInputSimdScan) {
+    auto result = simdScan(nullptr, 0, SimdLevel::SSE2);
+    EXPECT_TRUE(result.empty());
+}
+
+TEST(SimdScanner, EmptyInputSimdScanScalarLevel) {
+    auto result = simdScan(nullptr, 0, SimdLevel::Scalar);
+    EXPECT_TRUE(result.empty());
+}
+
+// 2. All structural characters detected
+TEST(SimdScanner, AllStructuralCharactersDetected) {
+    const std::string input = "{}[],:" ;
+    auto blocks = scalarScan(input.data(), input.size());
+    ASSERT_EQ(blocks.size(), 1u);
+
+    // Each of the 6 characters should have its bit set
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        uint64_t bit = uint64_t{1} << i;
+        EXPECT_NE(blocks[0].structuralBits & bit, 0u)
+            << "Structural bit not set for character '" << input[i]
+            << "' at position " << i;
+    }
+}
+
+// 3. Whitespace correctly classified
+TEST(SimdScanner, WhitespaceCorrectlyClassified) {
+    const std::string input = " \t\n\r";
+    auto blocks = scalarScan(input.data(), input.size());
+    ASSERT_EQ(blocks.size(), 1u);
+
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        uint64_t bit = uint64_t{1} << i;
+        EXPECT_NE(blocks[0].whitespaceBits & bit, 0u)
+            << "Whitespace bit not set for byte 0x"
+            << std::hex << static_cast<int>(static_cast<unsigned char>(input[i]))
+            << " at position " << std::dec << i;
+    }
+}
+
+// 4. Escaped quotes not counted
+TEST(SimdScanner, EscapedQuotesNotCounted) {
+    // JSON string: "\"hello\""
+    // Raw bytes (11): " \ " h e l l o \ " "
+    //                  0 1 2 3 4 5 6 7 8 9 10
+    // The \" sequences are escaped quotes and should NOT appear in quoteBits.
+    // Only the outer unescaped " at positions 0 and 10 should be in quoteBits.
+    const std::string input = R"("\"hello\"")";
+    ASSERT_EQ(input.size(), 11u);
+    auto blocks = scalarScan(input.data(), input.size());
+    ASSERT_EQ(blocks.size(), 1u);
+
+    // Position 0: opening " (unescaped)
+    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 0), 0u)
+        << "Opening quote should be in quoteBits";
+
+    // Position 2: escaped " (preceded by backslash at position 1)
+    EXPECT_EQ(blocks[0].quoteBits & (uint64_t{1} << 2), 0u)
+        << "Escaped quote at position 2 should NOT be in quoteBits";
+
+    // Position 9: escaped " (preceded by backslash at position 8)
+    EXPECT_EQ(blocks[0].quoteBits & (uint64_t{1} << 9), 0u)
+        << "Escaped quote at position 9 should NOT be in quoteBits";
+
+    // Position 10: closing " (unescaped)
+    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 10), 0u)
+        << "Closing quote should be in quoteBits";
+}
+
+// 5. Backslash-escaped quote handling: \\\\" inside a JSON string
+//    means escaped backslash followed by an unescaped closing quote.
+TEST(SimdScanner, EscapedBackslashFollowedByQuote) {
+    // JSON string: "\\"  — raw bytes: " \ \ "
+    //                                  0 1 2 3
+    // The two backslashes form an escaped backslash pair.
+    // Position 0: opening " (unescaped quote)
+    // Position 1: backslash
+    // Position 2: backslash (escaped by position 1)
+    // Position 3: closing " (unescaped quote — the \\ pair is consumed)
+    const std::string input = R"("\\")";
+    ASSERT_EQ(input.size(), 4u);
+    auto blocks = scalarScan(input.data(), input.size());
+    ASSERT_EQ(blocks.size(), 1u);
+
+    // Position 0: opening " (unescaped)
+    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 0), 0u)
+        << "Opening quote should be in quoteBits";
+
+    // Position 3: closing " (unescaped — after escaped backslash pair)
+    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 3), 0u)
+        << "Quote after escaped backslash pair should be unescaped";
+
+    // Verify exactly 2 unescaped quotes total
+    int quoteCount = __builtin_popcountll(blocks[0].quoteBits);
+    EXPECT_EQ(quoteCount, 2) << "Should have exactly 2 unescaped quotes";
+}
+
+// 6. String mask correctness
+TEST(SimdScanner, StringMaskCorrectness) {
+    // Input: "hello"  — positions: 0=" 1=h 2=e 3=l 4=l 5=o 6="
+    const std::string input = R"("hello")";
+    auto blocks = scalarScan(input.data(), input.size());
+    ASSERT_EQ(blocks.size(), 1u);
+
+    // Bits 1-5 (inside the string, between the quotes) should be set in stringMask
+    for (std::size_t i = 1; i <= 5; ++i) {
+        uint64_t bit = uint64_t{1} << i;
+        EXPECT_NE(blocks[0].stringMask & bit, 0u)
+            << "stringMask bit should be set for position " << i
+            << " (inside string)";
+    }
+
+    // Bit 0 (opening quote) — the prefix-XOR toggles at the quote, so position 0
+    // is the quote itself. Per the prefix-XOR algorithm, the quote position bit
+    // IS set (the string state starts at the quote byte).
+    // Bit 6 (closing quote) — after the closing quote, string state toggles off.
+    // The closing quote position itself should NOT have the string bit set
+    // (the XOR toggles it off at that position).
+    EXPECT_EQ(blocks[0].stringMask & (uint64_t{1} << 6), 0u)
+        << "stringMask bit should NOT be set at closing quote position";
+}
+
+// 7. Tail handling for non-aligned lengths
+TEST(SimdScanner, TailHandlingNonAlignedLength) {
+    // 17 bytes — not a multiple of 16, so SIMD path must handle a 1-byte tail
+    const std::string input = R"({"key":"value"}  )";
+    ASSERT_EQ(input.size(), 17u);
+
+    auto scalarResult = scalarScan(input.data(), input.size());
+    auto simdResult = simdScan(input.data(), input.size(), SimdLevel::SSE2);
+
+    ASSERT_EQ(scalarResult.size(), simdResult.size());
+    for (std::size_t i = 0; i < scalarResult.size(); ++i) {
+        EXPECT_EQ(scalarResult[i].structuralBits, simdResult[i].structuralBits)
+            << "structuralBits mismatch in block " << i;
+        EXPECT_EQ(scalarResult[i].whitespaceBits, simdResult[i].whitespaceBits)
+            << "whitespaceBits mismatch in block " << i;
+        EXPECT_EQ(scalarResult[i].quoteBits, simdResult[i].quoteBits)
+            << "quoteBits mismatch in block " << i;
+        EXPECT_EQ(scalarResult[i].stringMask, simdResult[i].stringMask)
+            << "stringMask mismatch in block " << i;
+    }
+}
+
+// 8. Single byte input
+TEST(SimdScanner, SingleByteInput) {
+    const char input[] = "{";
+    auto blocks = scalarScan(input, 1);
+    ASSERT_EQ(blocks.size(), 1u);
+    EXPECT_NE(blocks[0].structuralBits & 1u, 0u)
+        << "Structural bit should be set for '{'";
+}
+
+// 9. Input exactly 64 bytes produces exactly 1 ScanBlock
+TEST(SimdScanner, Exactly64BytesProducesOneScanBlock) {
+    std::string input(64, 'a');
+    auto blocks = scalarScan(input.data(), input.size());
+    EXPECT_EQ(blocks.size(), 1u);
+
+    auto simdBlocks = simdScan(input.data(), input.size(), SimdLevel::SSE2);
+    EXPECT_EQ(simdBlocks.size(), 1u);
+}
+
+// 10. Input 65 bytes produces exactly 2 ScanBlocks
+TEST(SimdScanner, Input65BytesProducesTwoScanBlocks) {
+    std::string input(65, 'a');
+    auto blocks = scalarScan(input.data(), input.size());
+    EXPECT_EQ(blocks.size(), 2u);
+
+    auto simdBlocks = simdScan(input.data(), input.size(), SimdLevel::SSE2);
+    EXPECT_EQ(simdBlocks.size(), 2u);
+}
+
+// 11. detectSimdLevel returns a valid level
+TEST(SimdScanner, DetectSimdLevelReturnsValidLevel) {
+    auto level = detectSimdLevel();
+    EXPECT_TRUE(level == SimdLevel::Scalar ||
+                level == SimdLevel::SSE2 ||
+                level == SimdLevel::AVX2);
+}
+
+// ===========================================================================
+// StructuralScanner unit tests
+// ===========================================================================
+
+// 1. Empty input: buildStructuralIndex with empty scan blocks returns empty entries
+TEST(StructuralScanner, EmptyInputReturnsEmptyIndex) {
+    std::vector<ScanBlock> emptyBlocks;
+    auto index = buildStructuralIndex(nullptr, 0, emptyBlocks);
+    EXPECT_TRUE(index.entries.empty());
+}
+
+// 2. Single value (number): no structural characters, empty index
+TEST(StructuralScanner, SingleNumberValueEmptyIndex) {
+    const std::string input = "42";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+    EXPECT_TRUE(index.entries.empty());
+}
+
+// 3. Simple object: verify entries for { : } with correct depths
+TEST(StructuralScanner, SimpleObjectDepths) {
+    const std::string input = R"({"a":1})";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+
+    // Expected structural chars: { at 0, : at 4, } at 6
+    ASSERT_EQ(index.entries.size(), 3u);
+
+    EXPECT_EQ(index.entries[0].character, '{');
+    EXPECT_EQ(index.entries[0].offset, 0u);
+    EXPECT_EQ(index.entries[0].depth, 0);  // opening: depth before increment
+
+    EXPECT_EQ(index.entries[1].character, ':');
+    EXPECT_EQ(index.entries[1].offset, 4u);
+    EXPECT_EQ(index.entries[1].depth, 1);  // inside the object
+
+    EXPECT_EQ(index.entries[2].character, '}');
+    EXPECT_EQ(index.entries[2].offset, 6u);
+    EXPECT_EQ(index.entries[2].depth, 0);  // closing: depth after decrement
+}
+
+// 4. Simple array: verify entries for [ , , ] with correct depths
+TEST(StructuralScanner, SimpleArrayDepths) {
+    const std::string input = "[1,2,3]";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+
+    // Expected: [ at 0, , at 2, , at 4, ] at 6
+    ASSERT_EQ(index.entries.size(), 4u);
+
+    EXPECT_EQ(index.entries[0].character, '[');
+    EXPECT_EQ(index.entries[0].depth, 0);
+
+    EXPECT_EQ(index.entries[1].character, ',');
+    EXPECT_EQ(index.entries[1].depth, 1);
+
+    EXPECT_EQ(index.entries[2].character, ',');
+    EXPECT_EQ(index.entries[2].depth, 1);
+
+    EXPECT_EQ(index.entries[3].character, ']');
+    EXPECT_EQ(index.entries[3].depth, 0);
+}
+
+// 5. Nested objects: verify depth tracking
+TEST(StructuralScanner, NestedObjectDepths) {
+    const std::string input = R"({"a":{"b":1}})";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+
+    // Expected structural chars: { : { : } }
+    ASSERT_EQ(index.entries.size(), 6u);
+
+    // Outer {
+    EXPECT_EQ(index.entries[0].character, '{');
+    EXPECT_EQ(index.entries[0].depth, 0);
+
+    // Outer :
+    EXPECT_EQ(index.entries[1].character, ':');
+    EXPECT_EQ(index.entries[1].depth, 1);
+
+    // Inner {
+    EXPECT_EQ(index.entries[2].character, '{');
+    EXPECT_EQ(index.entries[2].depth, 1);
+
+    // Inner :
+    EXPECT_EQ(index.entries[3].character, ':');
+    EXPECT_EQ(index.entries[3].depth, 2);
+
+    // Inner }
+    EXPECT_EQ(index.entries[4].character, '}');
+    EXPECT_EQ(index.entries[4].depth, 1);
+
+    // Outer }
+    EXPECT_EQ(index.entries[5].character, '}');
+    EXPECT_EQ(index.entries[5].depth, 0);
+}
+
+// 6. Nested arrays: verify depth tracking
+TEST(StructuralScanner, NestedArrayDepths) {
+    const std::string input = "[[1],[2]]";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+
+    // Expected: [ [ ] , [ ] ]
+    ASSERT_EQ(index.entries.size(), 7u);
+
+    EXPECT_EQ(index.entries[0].character, '[');
+    EXPECT_EQ(index.entries[0].depth, 0);
+
+    EXPECT_EQ(index.entries[1].character, '[');
+    EXPECT_EQ(index.entries[1].depth, 1);
+
+    EXPECT_EQ(index.entries[2].character, ']');
+    EXPECT_EQ(index.entries[2].depth, 1);
+
+    EXPECT_EQ(index.entries[3].character, ',');
+    EXPECT_EQ(index.entries[3].depth, 1);
+
+    EXPECT_EQ(index.entries[4].character, '[');
+    EXPECT_EQ(index.entries[4].depth, 1);
+
+    EXPECT_EQ(index.entries[5].character, ']');
+    EXPECT_EQ(index.entries[5].depth, 1);
+
+    EXPECT_EQ(index.entries[6].character, ']');
+    EXPECT_EQ(index.entries[6].depth, 0);
+}
+
+// 7. Strings containing structural characters: chars inside strings NOT in index
+TEST(StructuralScanner, StringsContainingStructuralCharsExcluded) {
+    const std::string input = R"({"key":"{not,structural}"})";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+
+    // Only the outer { : } should be in the index.
+    // The { , } inside the string value should be excluded.
+    ASSERT_EQ(index.entries.size(), 3u);
+
+    EXPECT_EQ(index.entries[0].character, '{');
+    EXPECT_EQ(index.entries[0].depth, 0);
+
+    EXPECT_EQ(index.entries[1].character, ':');
+    EXPECT_EQ(index.entries[1].depth, 1);
+
+    EXPECT_EQ(index.entries[2].character, '}');
+    EXPECT_EQ(index.entries[2].depth, 0);
+}
+
+// 8. findPartitionPoints on simple object: partition point after closing }
+TEST(StructuralScanner, FindPartitionPointsSimpleObject) {
+    const std::string input = "{}";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+    auto points = index.findPartitionPoints();
+
+    ASSERT_EQ(points.size(), 1u);
+    EXPECT_EQ(points[0], 2u);  // offset 1 (}) + 1 = 2
+}
+
+// 9. findPartitionPoints on nested: single partition point after closing }
+TEST(StructuralScanner, FindPartitionPointsNested) {
+    const std::string input = R"({"a":[1,2]})";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+    auto points = index.findPartitionPoints();
+
+    // Only the outermost } at depth 0 produces a partition point
+    ASSERT_EQ(points.size(), 1u);
+    EXPECT_EQ(points[0], input.size());  // right after the final }
+}
+
+// 10. findPartitionPoints with no depth-0 closers: just a number
+TEST(StructuralScanner, FindPartitionPointsNoDepthZeroClosers) {
+    const std::string input = "42";
+    auto scanBlocks = scalarScan(input.data(), input.size());
+    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
+    auto points = index.findPartitionPoints();
+
+    EXPECT_TRUE(points.empty());
+}

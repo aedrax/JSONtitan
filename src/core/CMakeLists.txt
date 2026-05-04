@@ -7,6 +7,8 @@ add_library(jsontitan_core STATIC
     csv_exporter.cpp
     xml_exporter.cpp
     arena_allocator.cpp
+    simd_scanner.cpp
+    structural_scanner.cpp
 )
 
 target_include_directories(jsontitan_core
