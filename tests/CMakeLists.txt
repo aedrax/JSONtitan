@@ -46,14 +46,17 @@ target_link_libraries(shell_tests
 
 add_test(NAME shell_tests COMMAND shell_tests)
 
-# ── Search Performance Tests (Google Test + RapidCheck, no Qt) ───
+# ── Search Performance Tests (Google Test + RapidCheck + Qt for async validation) ───
 add_executable(search_perf_tests search_perf_tests.cpp)
 
 target_link_libraries(search_perf_tests
     PRIVATE
-        jsontitan_core
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
         GTest::gtest
-        GTest::gtest_main
         rapidcheck
 )
 
@@ -114,3 +117,31 @@ target_link_libraries(debounce_tests
 )
 
 add_test(NAME debounce_tests COMMAND debounce_tests)
+
+# ── Toggle Button Tests (Qt Test) ────────────────────────────────
+add_executable(toggle_tests toggle_tests.cpp)
+
+target_link_libraries(toggle_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+)
+
+add_test(NAME toggle_tests COMMAND toggle_tests)
+
+# ── Integration Search Tests (Qt Test) ───────────────────────────
+add_executable(integration_search_tests integration_search_tests.cpp)
+
+target_link_libraries(integration_search_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+)
+
+add_test(NAME integration_search_tests COMMAND integration_search_tests)
