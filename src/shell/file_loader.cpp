@@ -37,18 +37,62 @@ void FileLoaderWorker::process(const QString& filePath) {
 
     emit progressUpdated(0);
 
-    // Phase 1: Read entire file into memory
-    QByteArray raw = file.readAll();
-    std::string input(raw.constData(), static_cast<std::size_t>(raw.size()));
-    emit progressUpdated(50);
+    // Phase 1: Read file in chunks with incremental progress
+    constexpr qint64 kReadChunkSize = 1024 * 1024;  // 1 MB chunks
+    std::string input;
+    input.reserve(static_cast<std::size_t>(totalSize));
+
+    qint64 bytesRead = 0;
+    int lastProgress = 0;
+
+    while (bytesRead < totalSize) {
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+
+        QByteArray chunk = file.read(kReadChunkSize);
+        if (chunk.isEmpty()) {
+            break;  // EOF or error
+        }
+
+        input.append(chunk.constData(), static_cast<std::size_t>(chunk.size()));
+        bytesRead += chunk.size();
+
+        // Calculate progress in [0, 50] range
+        int progress = static_cast<int>((bytesRead * 50) / totalSize);
+        if (progress != lastProgress) {
+            emit progressUpdated(progress);
+            lastProgress = progress;
+        }
+    }
+
+    // Ensure we emit 50 at the end of read phase
+    if (lastProgress != 50) {
+        emit progressUpdated(50);
+    }
 
     // Cancellation check after read
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
 
-    // Phase 2: Parse via optimized pipeline
-    auto arenaResult = parseBuffer(std::move(input));
+    // Phase 2: Parse via optimized pipeline with progress reporting
+    ParseBufferOptions parseOptions;
+    int lastParseProgress = 50;
+    parseOptions.progressCallback = [this, &lastParseProgress](float coreProgress) {
+        // Check cancellation
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        // Map core's 0.0–1.0 to shell's 50–100 range
+        int progress = 50 + static_cast<int>(coreProgress * 50);
+        if (progress != lastParseProgress) {
+            emit progressUpdated(progress);
+            lastParseProgress = progress;
+        }
+    };
+
+    auto arenaResult = parseBuffer(std::move(input), parseOptions);
 
     if (arenaResult.error) {
         emit parseError(QStringLiteral("Parse error at byte %1: %2")

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -34,6 +35,7 @@ struct ParseBufferOptions {
     std::size_t parallelThreshold = 1024 * 1024;  // 1 MB
     unsigned maxThreads = 0;  // 0 = use hardware_concurrency()
     SimdLevel simdLevel = detectSimdLevel();
+    std::function<void(float)> progressCallback = nullptr;  // Optional progress reporting (0.0–1.0)
 };
 
 // Parse a complete buffer using the parallel pipeline.
