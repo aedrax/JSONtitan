@@ -110,12 +110,14 @@ void MainWindow::setupCentralWidget() {
     searchLayout->setSpacing(2);
 
     m_searchBar = new QLineEdit(centralWidget);
+    m_searchBar->setObjectName("searchBar");
     m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
     connect(m_searchBar, &QLineEdit::textChanged,
             this, &MainWindow::onSearchTextChanged);
     searchLayout->addWidget(m_searchBar);
 
     m_caseSensitiveToggle = new QToolButton(centralWidget);
+    m_caseSensitiveToggle->setObjectName("caseSensitiveToggle");
     m_caseSensitiveToggle->setText(tr("Aa"));
     m_caseSensitiveToggle->setCheckable(true);
     m_caseSensitiveToggle->setChecked(false);
@@ -125,6 +127,7 @@ void MainWindow::setupCentralWidget() {
     searchLayout->addWidget(m_caseSensitiveToggle);
 
     m_regexToggle = new QToolButton(centralWidget);
+    m_regexToggle->setObjectName("regexToggle");
     m_regexToggle->setText(tr(".*"));
     m_regexToggle->setCheckable(true);
     m_regexToggle->setChecked(false);
@@ -137,7 +140,7 @@ void MainWindow::setupCentralWidget() {
 
     // Search error label (hidden by default)
     m_searchErrorLabel = new QLabel(centralWidget);
-    m_searchErrorLabel->setStyleSheet("QLabel { color: red; }");
+    m_searchErrorLabel->setObjectName("searchErrorLabel");
     m_searchErrorLabel->hide();
     mainLayout->addWidget(m_searchErrorLabel);
 
@@ -153,6 +156,7 @@ void MainWindow::setupCentralWidget() {
     m_treeView = new QTreeView(treeContainer);
     m_treeView->setModel(m_filterProxy);
     m_treeView->setHeaderHidden(true);
+    m_treeView->setAlternatingRowColors(true);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_treeView, &QTreeView::customContextMenuRequested,
             this, [this](const QPoint& pos) {
@@ -172,16 +176,16 @@ void MainWindow::setupCentralWidget() {
 
     // "No results found" label (hidden by default)
     m_noResultsLabel = new QLabel(tr("No results found"), treeContainer);
+    m_noResultsLabel->setObjectName("noResultsLabel");
     m_noResultsLabel->setAlignment(Qt::AlignCenter);
-    m_noResultsLabel->setStyleSheet("QLabel { color: gray; font-size: 14px; }");
     m_noResultsLabel->hide();
     treeLayout->addWidget(m_noResultsLabel);
 
     // Welcome label (shown when no file is loaded)
     m_welcomeLabel = new QLabel(treeContainer);
+    m_welcomeLabel->setObjectName("welcomeLabel");
     m_welcomeLabel->setAlignment(Qt::AlignCenter);
     m_welcomeLabel->setWordWrap(true);
-    m_welcomeLabel->setStyleSheet("QLabel { color: gray; font-size: 16px; padding: 40px; }");
     m_welcomeLabel->setText(tr("Welcome to JSONTitan\n\n"
                                "Open a JSON file using File > Open\n"
                                "or combine multiple files with File > Union Files"));
@@ -191,6 +195,7 @@ void MainWindow::setupCentralWidget() {
 
     // Detail panel
     m_detailPanel = new QTextEdit(splitter);
+    m_detailPanel->setObjectName("detailPanel");
     m_detailPanel->setReadOnly(true);
     m_detailPanel->setPlaceholderText(tr("Select a node to view its full value"));
 
@@ -220,17 +225,9 @@ void MainWindow::setupStatusBar() {
 
 void MainWindow::setupDropOverlay() {
     m_dropOverlay = new QLabel(this);
+    m_dropOverlay->setObjectName("dropOverlay");
     m_dropOverlay->setText(tr("Drop JSON file here"));
     m_dropOverlay->setAlignment(Qt::AlignCenter);
-    m_dropOverlay->setStyleSheet(
-        "QLabel {"
-        "  background-color: rgba(0, 120, 215, 80);"
-        "  color: white;"
-        "  font-size: 24px;"
-        "  font-weight: bold;"
-        "  border: 3px dashed rgba(255, 255, 255, 180);"
-        "  border-radius: 12px;"
-        "}");
     m_dropOverlay->hide();
 }
 

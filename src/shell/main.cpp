@@ -1,4 +1,6 @@
 #include <QApplication>
+#include <QDebug>
+#include <QFile>
 #include <QMetaType>
 
 #include <memory>
@@ -15,6 +17,14 @@ int main(int argc, char* argv[]) {
     app.setOrganizationName("JSONTitan");
     app.setApplicationName("JSONTitan");
     app.setApplicationVersion("0.1.0");
+
+    QFile styleFile(":/resources/style.qss");
+    if (styleFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        app.setStyleSheet(QString::fromUtf8(styleFile.readAll()));
+        styleFile.close();
+    } else {
+        qWarning() << "Failed to load stylesheet from resources";
+    }
 
     MainWindow window;
     window.show();
