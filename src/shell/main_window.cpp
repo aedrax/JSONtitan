@@ -606,7 +606,17 @@ void MainWindow::onTreeSelectionChanged() {
         return;
     }
 
-    // Pretty-print the selected node's value
-    std::string formatted = jsontitan::core::prettyPrint(*node);
-    m_detailPanel->setPlainText(QString::fromStdString(formatted));
+    // Pretty-print the selected node's value with bounded output to avoid UI hangs
+    jsontitan::core::PrettyPrintOptions opts;
+    opts.maxOutputSize = 65536;  // 64 KB limit
+
+    auto result = jsontitan::core::prettyPrintBounded(*node, opts);
+
+    if (result.truncated) {
+        m_detailPanel->setPlainText(
+            QString::fromStdString(result.output) +
+            QStringLiteral("\n\n... (output truncated)"));
+    } else {
+        m_detailPanel->setPlainText(QString::fromStdString(result.output));
+    }
 }
