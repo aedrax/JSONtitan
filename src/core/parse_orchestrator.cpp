@@ -152,7 +152,11 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
 
     // Single-threaded fast path for small inputs
     if (source->size() <= options.parallelThreshold) {
-        return parseSingleThreaded(std::move(source), std::move(arena));
+        auto result = parseSingleThreaded(std::move(source), std::move(arena));
+        if (result.ok() && options.progressCallback) {
+            options.progressCallback(1.0f);
+        }
+        return result;
     }
 
     // Phase 1: SIMD structural scan
@@ -167,7 +171,11 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
 
     // If no partition points found (single top-level value), use single-threaded
     if (partitionPoints.empty()) {
-        return parseSingleThreaded(std::move(source), std::move(arena));
+        auto result = parseSingleThreaded(std::move(source), std::move(arena));
+        if (result.ok() && options.progressCallback) {
+            options.progressCallback(1.0f);
+        }
+        return result;
     }
 
     unsigned numThreads = effectiveThreadCount(options.maxThreads);
@@ -177,12 +185,20 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
     auto chunks = distributeChunks(partitionPoints, source->size(), numThreads);
 
     if (chunks.empty()) {
-        return parseSingleThreaded(std::move(source), std::move(arena));
+        auto result = parseSingleThreaded(std::move(source), std::move(arena));
+        if (result.ok() && options.progressCallback) {
+            options.progressCallback(1.0f);
+        }
+        return result;
     }
 
     // If only one chunk after distribution, use single-threaded
     if (chunks.size() == 1) {
-        return parseSingleThreaded(std::move(source), std::move(arena));
+        auto result = parseSingleThreaded(std::move(source), std::move(arena));
+        if (result.ok() && options.progressCallback) {
+            options.progressCallback(1.0f);
+        }
+        return result;
     }
 
     // Phase 4: Parallel chunk parsing
@@ -234,12 +250,18 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
                 f.wait();
             }
         }
-        return parseSingleThreaded(std::move(source), std::move(arena));
+        auto result = parseSingleThreaded(std::move(source), std::move(arena));
+        if (result.ok() && options.progressCallback) {
+            options.progressCallback(1.0f);
+        }
+        return result;
     }
 
     // Collect results
     std::vector<ArenaJsonNode*> subtrees;
     subtrees.reserve(futures.size());
+
+    const float totalChunks = static_cast<float>(futures.size());
 
     for (std::size_t i = 0; i < futures.size(); ++i) {
         auto chunkResult = futures[i].get();
@@ -275,6 +297,12 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
         }
 
         subtrees.push_back(chunkResult.parseResult.root);
+
+        // Report progress after each chunk completes
+        if (options.progressCallback) {
+            float progress = static_cast<float>(i + 1) / totalChunks;
+            options.progressCallback(progress);
+        }
     }
 
     // Phase 5: Merge thread-local arenas into main arena

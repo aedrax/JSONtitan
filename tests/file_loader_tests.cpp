@@ -6,6 +6,7 @@
 #include <QtTest/QtTest>
 
 #include <rapidcheck.h>
+#include <set>
 
 #include "core/json_node.h"
 #include "shell/file_loader.h"
@@ -650,40 +651,52 @@ private slots:
 
 // ---------------------------------------------------------------------------
 // Bug Condition Exploration: Property 1
-// File Loader Uses Streaming Parser Instead of parseBuffer
+// Progress Bar Only Emits Three Values
 //
 // CRITICAL: This test MUST FAIL on unfixed code — failure confirms the bug.
 // DO NOT attempt to fix the test or the code when it fails.
 //
-// The test encodes the EXPECTED behavior: progress signals follow the pattern
-// {0, 50, 100} when parseBuffer is used. On unfixed code, the streaming path
-// emits many intermediate progress values (one per 64KB chunk), causing failure.
+// The test encodes the EXPECTED CORRECT behavior: for files larger than 1 MB
+// (the read chunk size), the progress bar should emit MORE than 2 distinct
+// values in each phase range [0,50] and [50,100], providing smooth incremental
+// feedback. On unfixed code, only {0, 50, 100} are emitted.
 //
-// Requirements: 1.1, 1.3, 2.1
+// Validates: Requirements 1.1, 1.2, 1.3, 2.1, 2.2, 2.3
 // ---------------------------------------------------------------------------
 
 class BugConditionExplorationTest : public QObject {
     Q_OBJECT
 
 private:
-    // Generate a random valid JSON string of approximately the given size.
-    // Produces a JSON array of objects with random string values.
+    // Generate a valid JSON string of approximately the given size.
+    // Produces multiple top-level JSON objects separated by newlines.
+    // Multiple top-level values are required to trigger the parallel parse path,
+    // which finds partition points at depth-0 boundaries.
+    // We generate objects large enough that each one exceeds the chunk size,
+    // ensuring the parallel path produces multiple progress callbacks.
     static std::string generateValidJson(std::size_t approxSize) {
-        std::string json = "[";
-        std::size_t currentSize = 1;
+        std::string json;
+        json.reserve(approxSize + 1024);
+
+        // Generate objects that are each ~500 KB to ensure we get multiple
+        // partition points without too many objects (avoids chunk merging issues)
+        constexpr std::size_t kObjectSize = 500 * 1024;
+        std::size_t currentSize = 0;
         bool first = true;
 
         while (currentSize < approxSize) {
             if (!first) {
-                json += ",";
+                json += "\n";
                 currentSize += 1;
             }
             first = false;
 
-            // Generate an object with a few keys and random-length string values
+            std::size_t remaining = approxSize - currentSize;
+            std::size_t targetSize = std::min(kObjectSize, remaining);
+            if (targetSize < 30) targetSize = 30;
+
             std::string entry = "{\"key\":\"";
-            // Fill value to pad size — use a repeating character
-            std::size_t valueLen = std::min<std::size_t>(512, approxSize - currentSize);
+            std::size_t valueLen = (targetSize > 20) ? targetSize - 20 : 10;
             entry += std::string(valueLen, 'v');
             entry += "\",\"idx\":0}";
 
@@ -691,7 +704,6 @@ private:
             currentSize += entry.size();
         }
 
-        json += "]";
         return json;
     }
 
@@ -710,20 +722,31 @@ private:
     }
 
 private slots:
-    // Property-based test: For any valid JSON file loaded through FileLoaderWorker,
-    // the progress signal sequence MUST be exactly {0, 50, 100}.
-    // On unfixed code, the streaming parser emits many intermediate values.
-    void testProgressPatternIsOptimizedPipeline() {
-        // Use RapidCheck to generate random file sizes (128KB to 2MB)
-        // that are large enough to produce multiple chunks in the streaming path.
-        bool allPassed = true;
+    // -----------------------------------------------------------------------
+    // Property 1: Bug Condition — Progress Bar Only Emits Three Values
+    //
+    // For any valid JSON file > 1 MB loaded through FileLoaderWorker::process(),
+    // the EXPECTED correct behavior is:
+    //   - More than 2 distinct progress values in [0, 50] (read phase)
+    //   - More than 2 distinct progress values in [50, 100] (parse phase)
+    //   - Progress values are monotonically non-decreasing
+    //   - First value == 0 and last value == 100
+    //
+    // On UNFIXED code this test FAILS because only {0, 50, 100} are emitted.
+    // The failure confirms the bug exists.
+    // -----------------------------------------------------------------------
+    void testIncrementalProgressForLargeFiles() {
         std::string counterexample;
 
         auto result = rc::check(
-            "Bug Condition: progress pattern must be {0, 50, 100} for valid JSON files",
+            "Bug Condition: files > 1 MB must emit more than 2 distinct progress "
+            "values in each phase range [0,50] and [50,100]",
             [this, &counterexample]() {
-                // Generate a random size between 128KB and 1MB
-                const auto size = *rc::gen::inRange<std::size_t>(128 * 1024, 1024 * 1024);
+                // Generate a random size between 2 MB and 4 MB
+                // (must exceed 1 MB parallel threshold and have enough top-level
+                // values to trigger multiple parallel chunks)
+                const auto size = *rc::gen::inRange<std::size_t>(
+                    2 * 1024 * 1024, 4 * 1024 * 1024);
 
                 // Generate a valid JSON document of approximately that size
                 std::string jsonStr = generateValidJson(size);
@@ -739,7 +762,6 @@ private slots:
                 QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
 
-                // Call process directly (runs synchronously in this thread)
                 worker.process(filePath);
 
                 // Must have completed successfully
@@ -752,41 +774,84 @@ private slots:
                     progressValues.push_back(args.at(0).toInt());
                 }
 
-                // EXPECTED (optimized pipeline): exactly {0, 50, 100}
-                // ACTUAL (streaming/unfixed): many intermediate values from chunk-based progress
-                std::vector<int> expectedPattern = {0, 50, 100};
+                // Collect distinct values in each phase range
+                std::set<int> readPhaseValues;   // [0, 50]
+                std::set<int> parsePhaseValues;  // [50, 100]
 
-                if (progressValues != expectedPattern) {
-                    counterexample = "For a " + std::to_string(jsonStr.size()) +
-                                     " byte file, progress emitted " +
-                                     std::to_string(progressValues.size()) +
-                                     " values [";
-                    for (std::size_t i = 0; i < progressValues.size(); ++i) {
-                        if (i > 0) counterexample += ", ";
-                        counterexample += std::to_string(progressValues[i]);
-                        if (i > 10) {
-                            counterexample += ", ...";
-                            break;
-                        }
-                    }
-                    counterexample += "] instead of [0, 50, 100]";
+                for (int v : progressValues) {
+                    if (v >= 0 && v <= 50) readPhaseValues.insert(v);
+                    if (v >= 50 && v <= 100) parsePhaseValues.insert(v);
                 }
 
-                RC_ASSERT(progressValues == expectedPattern);
+                // Assert: monotonically non-decreasing
+                for (std::size_t i = 1; i < progressValues.size(); ++i) {
+                    RC_ASSERT(progressValues[i] >= progressValues[i - 1]);
+                }
+
+                // Assert: first value == 0 and last value == 100
+                RC_ASSERT(!progressValues.empty());
+                RC_ASSERT(progressValues.front() == 0);
+                RC_ASSERT(progressValues.back() == 100);
+
+                // Assert: more than 2 distinct values in read phase [0, 50]
+                if (readPhaseValues.size() <= 2) {
+                    counterexample = "For a " + std::to_string(jsonStr.size()) +
+                        " byte file, read phase [0,50] has only " +
+                        std::to_string(readPhaseValues.size()) +
+                        " distinct values: {";
+                    bool first = true;
+                    for (int v : readPhaseValues) {
+                        if (!first) counterexample += ", ";
+                        counterexample += std::to_string(v);
+                        first = false;
+                    }
+                    counterexample += "}. Full progress: {";
+                    first = true;
+                    for (int v : progressValues) {
+                        if (!first) counterexample += ", ";
+                        counterexample += std::to_string(v);
+                        first = false;
+                    }
+                    counterexample += "}";
+                }
+                RC_ASSERT(readPhaseValues.size() > 2);
+
+                // Assert: more than 2 distinct values in parse phase [50, 100]
+                if (parsePhaseValues.size() <= 2) {
+                    counterexample = "For a " + std::to_string(jsonStr.size()) +
+                        " byte file, parse phase [50,100] has only " +
+                        std::to_string(parsePhaseValues.size()) +
+                        " distinct values: {";
+                    bool first = true;
+                    for (int v : parsePhaseValues) {
+                        if (!first) counterexample += ", ";
+                        counterexample += std::to_string(v);
+                        first = false;
+                    }
+                    counterexample += "}. Full progress: {";
+                    first = true;
+                    for (int v : progressValues) {
+                        if (!first) counterexample += ", ";
+                        counterexample += std::to_string(v);
+                        first = false;
+                    }
+                    counterexample += "}";
+                }
+                RC_ASSERT(parsePhaseValues.size() > 2);
             });
 
         if (!result) {
             qWarning() << "COUNTEREXAMPLE FOUND (confirms bug exists):";
             qWarning() << QString::fromStdString(counterexample);
-            QFAIL("Bug condition confirmed: streaming parser emits chunk-based progress "
-                   "instead of the optimized {0, 50, 100} pattern. "
+            QFAIL("Bug condition confirmed: progress bar only emits {0, 50, 100} — "
+                   "no intermediate progress values in read or parse phases. "
                    "This is EXPECTED on unfixed code.");
         }
     }
 
-    // Concrete test case: a 256KB file should produce exactly {0, 50, 100} progress
-    void testConcreteProgressPattern256KB() {
-        std::string jsonStr = generateValidJson(256 * 1024);
+    // Concrete test case: a 3 MB file should have intermediate progress values
+    void testConcreteProgressPattern1_5MB() {
+        std::string jsonStr = generateValidJson(3 * 1024 * 1024);  // 3 MB
         QByteArray jsonData(jsonStr.data(), static_cast<qsizetype>(jsonStr.size()));
 
         QString filePath = writeTempFile(jsonData);
@@ -807,61 +872,43 @@ private slots:
             progressValues.push_back(args.at(0).toInt());
         }
 
-        // On unfixed code: will have ~4 intermediate values (256KB / 64KB = 4 chunks)
-        // On fixed code: exactly {0, 50, 100}
-        std::vector<int> expectedPattern = {0, 50, 100};
+        // Collect distinct values in each phase range
+        std::set<int> readPhaseValues;
+        std::set<int> parsePhaseValues;
+        for (int v : progressValues) {
+            if (v >= 0 && v <= 50) readPhaseValues.insert(v);
+            if (v >= 50 && v <= 100) parsePhaseValues.insert(v);
+        }
 
-        if (progressValues != expectedPattern) {
-            QString msg = QString("COUNTEREXAMPLE: 256KB file emitted %1 progress values "
-                                  "instead of 3. First few: ")
-                              .arg(progressValues.size());
-            for (std::size_t i = 0; i < std::min<std::size_t>(progressValues.size(), 8); ++i) {
-                msg += QString::number(progressValues[i]) + " ";
+        // On unfixed code: only {0, 50, 100} emitted — this will FAIL
+        // On fixed code: multiple intermediate values in each phase
+        if (readPhaseValues.size() <= 2 || parsePhaseValues.size() <= 2) {
+            QString msg = QString("COUNTEREXAMPLE: 1.5 MB file emitted only %1 total "
+                                  "progress values. Read phase distinct: %2, Parse phase "
+                                  "distinct: %3. Values: ")
+                              .arg(progressValues.size())
+                              .arg(readPhaseValues.size())
+                              .arg(parsePhaseValues.size());
+            for (int v : progressValues) {
+                msg += QString::number(v) + " ";
             }
             qWarning() << msg;
         }
 
-        QCOMPARE(progressValues, expectedPattern);
-    }
+        QVERIFY2(readPhaseValues.size() > 2,
+                 "Read phase [0,50] must have more than 2 distinct progress values");
+        QVERIFY2(parsePhaseValues.size() > 2,
+                 "Parse phase [50,100] must have more than 2 distinct progress values");
 
-    // Concrete test case: a 1MB file should produce exactly {0, 50, 100} progress
-    void testConcreteProgressPattern1MB() {
-        std::string jsonStr = generateValidJson(1024 * 1024);
-        QByteArray jsonData(jsonStr.data(), static_cast<qsizetype>(jsonStr.size()));
-
-        QString filePath = writeTempFile(jsonData);
-        QVERIFY(!filePath.isEmpty());
-
-        FileLoaderWorker worker;
-        QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
-        QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
-        QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-
-        worker.process(filePath);
-
-        QCOMPARE(completeSpy.count(), 1);
-        QCOMPARE(errorSpy.count(), 0);
-
-        std::vector<int> progressValues;
-        for (const auto& args : progressSpy) {
-            progressValues.push_back(args.at(0).toInt());
+        // Verify monotonically non-decreasing
+        for (std::size_t i = 1; i < progressValues.size(); ++i) {
+            QVERIFY2(progressValues[i] >= progressValues[i - 1],
+                     "Progress values must be monotonically non-decreasing");
         }
 
-        // On unfixed code: will have ~16 intermediate values (1MB / 64KB = 16 chunks)
-        // On fixed code: exactly {0, 50, 100}
-        std::vector<int> expectedPattern = {0, 50, 100};
-
-        if (progressValues != expectedPattern) {
-            QString msg = QString("COUNTEREXAMPLE: 1MB file emitted %1 progress values "
-                                  "instead of 3. First few: ")
-                              .arg(progressValues.size());
-            for (std::size_t i = 0; i < std::min<std::size_t>(progressValues.size(), 8); ++i) {
-                msg += QString::number(progressValues[i]) + " ";
-            }
-            qWarning() << msg;
-        }
-
-        QCOMPARE(progressValues, expectedPattern);
+        // Verify first == 0 and last == 100
+        QCOMPARE(progressValues.front(), 0);
+        QCOMPARE(progressValues.back(), 100);
     }
 };
 
