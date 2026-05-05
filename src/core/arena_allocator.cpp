@@ -60,6 +60,13 @@ void ArenaAllocator::reset() noexcept {
     m_blocks.clear();
 }
 
+void ArenaAllocator::absorb(ArenaAllocator&& other) noexcept {
+    for (auto& block : other.m_blocks) {
+        m_blocks.push_back(std::move(block));
+    }
+    other.m_blocks.clear();
+}
+
 auto ArenaAllocator::totalAllocated() const noexcept -> std::size_t {
     std::size_t total = 0;
     for (const auto& block : m_blocks) {
@@ -84,6 +91,33 @@ void ArenaAllocator::allocateNewBlock(std::size_t minSize) {
         .capacity = capacity,
         .used = 0,
     });
+}
+
+// --- ThreadLocalArena ---
+
+ThreadLocalArena::ThreadLocalArena(std::size_t blockSize)
+    : m_blockSize(blockSize) {}
+
+auto ThreadLocalArena::get() -> ArenaAllocator& {
+    auto id = std::this_thread::get_id();
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_arenas.find(id);
+    if (it == m_arenas.end()) {
+        auto [inserted, _] = m_arenas.emplace(
+            id, std::make_unique<ArenaAllocator>(m_blockSize));
+        return *inserted->second;
+    }
+    return *it->second;
+}
+
+auto ThreadLocalArena::mergeAll() -> ArenaAllocator {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ArenaAllocator merged(m_blockSize);
+    for (auto& [id, arena] : m_arenas) {
+        merged.absorb(std::move(*arena));
+    }
+    m_arenas.clear();
+    return merged;
 }
 
 } // namespace jsontitan::core

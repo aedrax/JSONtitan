@@ -9,6 +9,8 @@ add_library(jsontitan_core STATIC
     arena_allocator.cpp
     simd_scanner.cpp
     structural_scanner.cpp
+    chunk_parser.cpp
+    parse_orchestrator.cpp
 )
 
 target_include_directories(jsontitan_core

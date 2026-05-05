@@ -2,8 +2,11 @@
 
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string_view>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace jsontitan::core {
@@ -61,6 +64,12 @@ public:
     // Release all blocks. All pointers previously returned become invalid.
     void reset() noexcept;
 
+    // Absorb all blocks from another arena into this one.
+    // The other arena is left empty after this operation.
+    // Pointers previously returned by the other arena remain valid
+    // (they are now owned by this arena).
+    void absorb(ArenaAllocator&& other) noexcept;
+
     // Total bytes allocated across all blocks (capacity).
     [[nodiscard]] auto totalAllocated() const noexcept -> std::size_t;
 
@@ -75,6 +84,37 @@ private:
 
     static auto alignUp(std::size_t value, std::size_t alignment) noexcept
         -> std::size_t;
+};
+
+// Per-thread arena wrapper for parallel chunk parsing.
+// Each thread gets its own ArenaAllocator to avoid contention.
+// Thread safety: all public methods are safe to call from any thread.
+class ThreadLocalArena {
+public:
+    explicit ThreadLocalArena(
+        std::size_t blockSize = ArenaAllocator::kDefaultBlockSize);
+
+    // Non-copyable, non-movable (contains mutex).
+    ThreadLocalArena(const ThreadLocalArena&) = delete;
+    ThreadLocalArena& operator=(const ThreadLocalArena&) = delete;
+    ThreadLocalArena(ThreadLocalArena&&) = delete;
+    ThreadLocalArena& operator=(ThreadLocalArena&&) = delete;
+
+    ~ThreadLocalArena() = default;
+
+    // Get the arena for the calling thread.
+    // Creates a new arena on first access from a given thread.
+    [[nodiscard]] auto get() -> ArenaAllocator&;
+
+    // Merge all thread-local arenas into a single arena (post-parse).
+    // After this call, the ThreadLocalArena is empty and should not be reused.
+    [[nodiscard]] auto mergeAll() -> ArenaAllocator;
+
+private:
+    std::size_t m_blockSize;
+    std::mutex m_mutex;
+    std::unordered_map<std::thread::id,
+                       std::unique_ptr<ArenaAllocator>> m_arenas;
 };
 
 } // namespace jsontitan::core

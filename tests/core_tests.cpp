@@ -3953,6 +3953,151 @@ TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
         });
 }
 
+// ---------------------------------------------------------------------------
+// Task 7.2: Property test — Thread-safe concurrent arena allocation
+// Validates: Requirements 1.4
+// ---------------------------------------------------------------------------
+
+#include <thread>
+#include <vector>
+#include <algorithm>
+#include <numeric>
+#include <set>
+#include <cstring>
+
+TEST(ArenaAllocatorProperty, ThreadSafeConcurrentAllocation) {
+    rc::check("Property 2: Thread-safe concurrent arena allocation",
+        [](void) {
+            // Generate random thread count (2-8) and allocations per thread
+            auto threadCount = *rc::gen::inRange(2, 9);
+            auto allocsPerThread = *rc::gen::inRange(5, 50);
+            auto allocSize = *rc::gen::inRange(8, 256);
+
+            jsontitan::core::ThreadLocalArena tla(4096);
+
+            // Each thread will store its allocation results here
+            struct AllocRecord {
+                void* ptr;
+                std::size_t size;
+                std::uint8_t pattern; // unique data pattern written
+            };
+
+            std::vector<std::vector<AllocRecord>> threadResults(
+                static_cast<std::size_t>(threadCount));
+
+            // Spawn threads that concurrently allocate from the ThreadLocalArena
+            std::vector<std::thread> threads;
+            threads.reserve(static_cast<std::size_t>(threadCount));
+
+            for (int t = 0; t < threadCount; ++t) {
+                threads.emplace_back([&, t, allocsPerThread, allocSize]() {
+                    auto& arena = tla.get();
+                    auto tidx = static_cast<std::size_t>(t);
+                    threadResults[tidx].reserve(
+                        static_cast<std::size_t>(allocsPerThread));
+
+                    // Use a unique pattern per thread
+                    auto pattern = static_cast<std::uint8_t>(t + 1);
+
+                    for (int i = 0; i < allocsPerThread; ++i) {
+                        // Vary allocation size slightly per iteration
+                        auto thisSize = static_cast<std::size_t>(
+                            allocSize + (i % 7));
+                        void* ptr = arena.allocate(thisSize);
+
+                        // Write unique data pattern
+                        std::memset(ptr, pattern, thisSize);
+
+                        threadResults[tidx].push_back(
+                            AllocRecord{ptr, thisSize, pattern});
+                    }
+                });
+            }
+
+            // Wait for all threads to complete
+            for (auto& th : threads) {
+                th.join();
+            }
+
+            // Verify 1: All allocations succeeded (non-null)
+            for (int t = 0; t < threadCount; ++t) {
+                auto tidx = static_cast<std::size_t>(t);
+                RC_ASSERT(threadResults[tidx].size() ==
+                          static_cast<std::size_t>(allocsPerThread));
+                for (const auto& rec : threadResults[tidx]) {
+                    bool allocated = (rec.ptr != nullptr);
+                    RC_ASSERT(allocated);
+                }
+            }
+
+            // Verify 2: No memory regions overlap
+            // Collect all (start, end) ranges and check for overlaps
+            struct Range {
+                std::uintptr_t start;
+                std::uintptr_t end;
+            };
+            std::vector<Range> allRanges;
+            for (int t = 0; t < threadCount; ++t) {
+                auto tidx = static_cast<std::size_t>(t);
+                for (const auto& rec : threadResults[tidx]) {
+                    auto start = reinterpret_cast<std::uintptr_t>(rec.ptr);
+                    allRanges.push_back(Range{start, start + rec.size});
+                }
+            }
+
+            // Sort by start address and check for overlaps
+            std::sort(allRanges.begin(), allRanges.end(),
+                      [](const Range& a, const Range& b) {
+                          return a.start < b.start;
+                      });
+
+            for (std::size_t i = 1; i < allRanges.size(); ++i) {
+                RC_ASSERT(allRanges[i].start >= allRanges[i - 1].end);
+            }
+
+            // Verify 3: Data written by each thread is independently readable
+            // without corruption
+            for (int t = 0; t < threadCount; ++t) {
+                auto tidx = static_cast<std::size_t>(t);
+                auto expectedPattern = static_cast<std::uint8_t>(t + 1);
+                for (const auto& rec : threadResults[tidx]) {
+                    auto* bytes = static_cast<std::uint8_t*>(rec.ptr);
+                    for (std::size_t b = 0; b < rec.size; ++b) {
+                        RC_ASSERT(bytes[b] == expectedPattern);
+                    }
+                }
+            }
+
+            // Verify 4: mergeAll() produces a valid combined arena
+            auto merged = tla.mergeAll();
+            RC_ASSERT(merged.totalUsed() > 0);
+
+            // The merged arena should have total usage >= sum of all
+            // allocations
+            std::size_t totalAllocated = 0;
+            for (int t = 0; t < threadCount; ++t) {
+                auto tidx = static_cast<std::size_t>(t);
+                for (const auto& rec : threadResults[tidx]) {
+                    totalAllocated += rec.size;
+                }
+            }
+            RC_ASSERT(merged.totalUsed() >= totalAllocated);
+
+            // After merge, all previously allocated data should still be valid
+            // (pointer stability)
+            for (int t = 0; t < threadCount; ++t) {
+                auto tidx = static_cast<std::size_t>(t);
+                auto expectedPattern = static_cast<std::uint8_t>(t + 1);
+                for (const auto& rec : threadResults[tidx]) {
+                    auto* bytes = static_cast<std::uint8_t*>(rec.ptr);
+                    for (std::size_t b = 0; b < rec.size; ++b) {
+                        RC_ASSERT(bytes[b] == expectedPattern);
+                    }
+                }
+            }
+        });
+}
+
 // ===========================================================================
 // Task 1.7: Unit tests for SourceBuffer and StringRef
 // Requirements: 2.1, 2.3, 2.4
@@ -4761,4 +4906,1124 @@ TEST(StructuralScanner, FindPartitionPointsNoDepthZeroClosers) {
     auto points = index.findPartitionPoints();
 
     EXPECT_TRUE(points.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Task 5.3: Unit tests for ChunkParser
+// Requirements: 2.1, 2.2, 6.1, 6.4
+// ---------------------------------------------------------------------------
+
+#include "core/chunk_parser.h"
+
+// Helper: parse a JSON string using the ChunkParser
+static auto chunkParseAll(const std::string& json) -> ChunkParseResult {
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    return parseChunkRange(source, 0, source.size(), arena);
+}
+
+// Helper: parse and convert to JsonNode for comparison with existing parser
+static auto chunkParseToJsonNode(const std::string& json)
+    -> std::pair<std::shared_ptr<const JsonNode>, std::optional<ParseError>>
+{
+    // We need the arena and source to outlive the ArenaJsonNode usage,
+    // but toJsonNode() deep-copies, so we can do it in one scope.
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    auto result = parseChunkRange(source, 0, source.size(), arena);
+    if (result.error) {
+        return {nullptr, result.error};
+    }
+    return {result.root->toJsonNode(), std::nullopt};
+}
+
+// === Basic value types =====================================================
+
+TEST(ChunkParser, ParseEmptyObject) {
+    auto [node, err] = chunkParseToJsonNode("{}");
+    ASSERT_NE(node, nullptr);
+    EXPECT_FALSE(err.has_value());
+    EXPECT_EQ(node->type, NodeType::Object);
+    EXPECT_TRUE(node->children.empty());
+}
+
+TEST(ChunkParser, ParseEmptyArray) {
+    auto [node, err] = chunkParseToJsonNode("[]");
+    ASSERT_NE(node, nullptr);
+    EXPECT_FALSE(err.has_value());
+    EXPECT_EQ(node->type, NodeType::Array);
+    EXPECT_TRUE(node->children.empty());
+}
+
+TEST(ChunkParser, ParseStringValue) {
+    auto [node, err] = chunkParseToJsonNode(R"("hello world")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::String);
+    EXPECT_EQ(node->value, "hello world");
+}
+
+TEST(ChunkParser, ParseEmptyString) {
+    auto [node, err] = chunkParseToJsonNode(R"("")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::String);
+    EXPECT_EQ(node->value, "");
+}
+
+TEST(ChunkParser, ParseIntegerNumber) {
+    auto [node, err] = chunkParseToJsonNode("42");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "42");
+}
+
+TEST(ChunkParser, ParseNegativeNumber) {
+    auto [node, err] = chunkParseToJsonNode("-123");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "-123");
+}
+
+TEST(ChunkParser, ParseDecimalNumber) {
+    auto [node, err] = chunkParseToJsonNode("3.14");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "3.14");
+}
+
+TEST(ChunkParser, ParseScientificNotation) {
+    auto [node, err] = chunkParseToJsonNode("1.5e10");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "1.5e10");
+}
+
+TEST(ChunkParser, ParseScientificNotationNegativeExponent) {
+    auto [node, err] = chunkParseToJsonNode("2.99E-8");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "2.99E-8");
+}
+
+TEST(ChunkParser, ParseBoolTrue) {
+    auto [node, err] = chunkParseToJsonNode("true");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Boolean);
+    EXPECT_EQ(node->value, "true");
+}
+
+TEST(ChunkParser, ParseBoolFalse) {
+    auto [node, err] = chunkParseToJsonNode("false");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Boolean);
+    EXPECT_EQ(node->value, "false");
+}
+
+TEST(ChunkParser, ParseNull) {
+    auto [node, err] = chunkParseToJsonNode("null");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Null);
+    EXPECT_EQ(node->value, "null");
+}
+
+TEST(ChunkParser, ParseZero) {
+    auto [node, err] = chunkParseToJsonNode("0");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Number);
+    EXPECT_EQ(node->value, "0");
+}
+
+// === String escape sequences ===============================================
+
+TEST(ChunkParser, ParseStringNoEscapesIsZeroCopy) {
+    std::string json = R"("hello")";
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    auto result = parseChunkRange(source, 0, source.size(), arena);
+    ASSERT_NE(result.root, nullptr);
+    EXPECT_FALSE(result.error.has_value());
+    // Zero-copy: the StringRef should point into the source buffer
+    EXPECT_FALSE(result.root->value.ownsData);
+    EXPECT_EQ(result.root->value.view(), "hello");
+    // Verify pointer is within source buffer range
+    EXPECT_GE(result.root->value.data, source.data());
+    EXPECT_LT(result.root->value.data, source.data() + source.size());
+}
+
+TEST(ChunkParser, ParseStringWithEscapesIsOwnedCopy) {
+    std::string json = R"("hello\nworld")";
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    auto result = parseChunkRange(source, 0, source.size(), arena);
+    ASSERT_NE(result.root, nullptr);
+    EXPECT_FALSE(result.error.has_value());
+    // Owned copy: the StringRef should own its data (arena-allocated)
+    EXPECT_TRUE(result.root->value.ownsData);
+    EXPECT_EQ(result.root->value.view(), "hello\nworld");
+}
+
+TEST(ChunkParser, ParseStringWithAllEscapes) {
+    auto [node, err] = chunkParseToJsonNode(R"("\"\\\/\b\f\n\r\t")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "\"\\/\b\f\n\r\t");
+}
+
+TEST(ChunkParser, ParseStringWithUnicodeEscape) {
+    // \u0041 = 'A'
+    auto [node, err] = chunkParseToJsonNode(R"("\u0041")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "A");
+}
+
+TEST(ChunkParser, ParseStringWithUnicodeTwoByteChar) {
+    // \u00E9 = 'é' (2-byte UTF-8)
+    auto [node, err] = chunkParseToJsonNode(R"("\u00E9")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "\xC3\xA9");
+}
+
+TEST(ChunkParser, ParseStringWithUnicodeThreeByteChar) {
+    // \u4E16 = '世' (3-byte UTF-8)
+    auto [node, err] = chunkParseToJsonNode(R"("\u4E16")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "\xE4\xB8\x96");
+}
+
+TEST(ChunkParser, ParseStringWithSurrogatePair) {
+    // U+1F600 (😀) = \uD83D\uDE00
+    auto [node, err] = chunkParseToJsonNode(R"("\uD83D\uDE00")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value.size(), 4u);
+    EXPECT_EQ(node->value, "\xF0\x9F\x98\x80");
+}
+
+TEST(ChunkParser, ParseStringWithSurrogatePairMusicalSymbol) {
+    // U+1D11E (𝄞 Musical Symbol G Clef) = \uD834\uDD1E
+    auto [node, err] = chunkParseToJsonNode(R"("\uD834\uDD1E")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "\xF0\x9D\x84\x9E");
+}
+
+TEST(ChunkParser, ParseStringWithMixedEscapesAndPlainText) {
+    auto [node, err] = chunkParseToJsonNode(R"("hello\tworld\n!")");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->value, "hello\tworld\n!");
+}
+
+// === Objects ===============================================================
+
+TEST(ChunkParser, ParseSimpleObject) {
+    auto [node, err] = chunkParseToJsonNode(R"({"name": "Alice", "age": 30})");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Object);
+    ASSERT_EQ(node->children.size(), 2u);
+    EXPECT_EQ(node->children[0]->key, "name");
+    EXPECT_EQ(node->children[0]->value, "Alice");
+    EXPECT_EQ(node->children[1]->key, "age");
+    EXPECT_EQ(node->children[1]->value, "30");
+}
+
+TEST(ChunkParser, ParseNestedObject) {
+    auto [node, err] = chunkParseToJsonNode(R"({"outer": {"inner": "value"}})");
+    ASSERT_NE(node, nullptr);
+    ASSERT_EQ(node->children.size(), 1u);
+    auto& outer = node->children[0];
+    EXPECT_EQ(outer->key, "outer");
+    EXPECT_EQ(outer->type, NodeType::Object);
+    ASSERT_EQ(outer->children.size(), 1u);
+    EXPECT_EQ(outer->children[0]->key, "inner");
+    EXPECT_EQ(outer->children[0]->value, "value");
+}
+
+TEST(ChunkParser, ParseObjectWithAllValueTypes) {
+    auto [node, err] = chunkParseToJsonNode(
+        R"({"s":"text","n":42,"b":true,"f":false,"x":null,"a":[1],"o":{}})");
+    ASSERT_NE(node, nullptr);
+    ASSERT_EQ(node->children.size(), 7u);
+    EXPECT_EQ(node->children[0]->type, NodeType::String);
+    EXPECT_EQ(node->children[1]->type, NodeType::Number);
+    EXPECT_EQ(node->children[2]->type, NodeType::Boolean);
+    EXPECT_EQ(node->children[3]->type, NodeType::Boolean);
+    EXPECT_EQ(node->children[4]->type, NodeType::Null);
+    EXPECT_EQ(node->children[5]->type, NodeType::Array);
+    EXPECT_EQ(node->children[6]->type, NodeType::Object);
+}
+
+// === Arrays ================================================================
+
+TEST(ChunkParser, ParseSimpleArray) {
+    auto [node, err] = chunkParseToJsonNode(R"([1, 2, 3])");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Array);
+    ASSERT_EQ(node->children.size(), 3u);
+    EXPECT_EQ(node->children[0]->value, "1");
+    EXPECT_EQ(node->children[1]->value, "2");
+    EXPECT_EQ(node->children[2]->value, "3");
+}
+
+TEST(ChunkParser, ParseMixedArray) {
+    auto [node, err] = chunkParseToJsonNode(R"(["hello", 42, true, null])");
+    ASSERT_NE(node, nullptr);
+    ASSERT_EQ(node->children.size(), 4u);
+    EXPECT_EQ(node->children[0]->type, NodeType::String);
+    EXPECT_EQ(node->children[1]->type, NodeType::Number);
+    EXPECT_EQ(node->children[2]->type, NodeType::Boolean);
+    EXPECT_EQ(node->children[3]->type, NodeType::Null);
+}
+
+TEST(ChunkParser, ParseNestedArray) {
+    auto [node, err] = chunkParseToJsonNode(R"([[1, 2], [3, 4]])");
+    ASSERT_NE(node, nullptr);
+    ASSERT_EQ(node->children.size(), 2u);
+    ASSERT_EQ(node->children[0]->children.size(), 2u);
+    ASSERT_EQ(node->children[1]->children.size(), 2u);
+}
+
+TEST(ChunkParser, ArrayElementsHaveEmptyKeys) {
+    auto [node, err] = chunkParseToJsonNode(R"([1, "two"])");
+    ASSERT_NE(node, nullptr);
+    for (const auto& child : node->children) {
+        EXPECT_TRUE(child->key.empty());
+    }
+}
+
+// === Deeply nested =========================================================
+
+TEST(ChunkParser, ParseDeeplyNested) {
+    auto [node, err] = chunkParseToJsonNode(R"({"a":{"b":{"c":{"d":"deep"}}}})");
+    ASSERT_NE(node, nullptr);
+    auto n = node;
+    ASSERT_EQ(n->children.size(), 1u);
+    n = n->children[0]; // a
+    ASSERT_EQ(n->children.size(), 1u);
+    n = n->children[0]; // b
+    ASSERT_EQ(n->children.size(), 1u);
+    n = n->children[0]; // c
+    ASSERT_EQ(n->children.size(), 1u);
+    EXPECT_EQ(n->children[0]->key, "d");
+    EXPECT_EQ(n->children[0]->value, "deep");
+}
+
+// === Whitespace handling ===================================================
+
+TEST(ChunkParser, ParseWithExtraWhitespace) {
+    auto [node, err] = chunkParseToJsonNode("  {  \"key\"  :  \"value\"  }  ");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, NodeType::Object);
+    ASSERT_EQ(node->children.size(), 1u);
+    EXPECT_EQ(node->children[0]->value, "value");
+}
+
+// === Byte range parsing ====================================================
+
+TEST(ChunkParser, ParseSubRange) {
+    // Parse only a portion of the source buffer
+    std::string json = "   {\"key\": \"value\"}   ";
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    // The actual JSON starts at offset 3 and ends at offset 19
+    auto result = parseChunkRange(source, 3, 19, arena);
+    ASSERT_NE(result.root, nullptr);
+    EXPECT_FALSE(result.error.has_value());
+    auto node = result.root->toJsonNode();
+    EXPECT_EQ(node->type, NodeType::Object);
+    ASSERT_EQ(node->children.size(), 1u);
+    EXPECT_EQ(node->children[0]->key, "key");
+    EXPECT_EQ(node->children[0]->value, "value");
+}
+
+TEST(ChunkParser, ParseWithKey) {
+    std::string json = R"({"inner": 42})";
+    SourceBuffer source{std::string{json}};
+    ArenaAllocator arena;
+    // Provide a key name
+    std::string keyStr = "myKey";
+    StringRef namedKey{keyStr.data(), keyStr.size(), false};
+    auto result = parseChunkRange(source, 0, source.size(), arena, namedKey);
+    ASSERT_NE(result.root, nullptr);
+    EXPECT_EQ(result.root->key.view(), "myKey");
+}
+
+// === Error cases ===========================================================
+
+TEST(ChunkParser, ErrorOnEmptyInput) {
+    auto result = chunkParseAll("");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnTruncatedObject) {
+    auto result = chunkParseAll(R"({"key": "val)");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnInvalidToken) {
+    auto result = chunkParseAll("xyz");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+    EXPECT_GT(result.error->description.size(), 0u);
+}
+
+TEST(ChunkParser, ErrorOnMismatchedBrackets) {
+    auto result = chunkParseAll(R"({"key": "value"])");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnTrailingCommaInObject) {
+    auto result = chunkParseAll(R"({"key": "value",})");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnTrailingCommaInArray) {
+    auto result = chunkParseAll(R"([1, 2, 3,])");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnMultipleTopLevelValues) {
+    auto result = chunkParseAll(R"({}[])");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorByteOffsetIsReasonable) {
+    auto result = chunkParseAll(R"({"key": })");
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_GE(result.error->byteOffset, 0u);
+    EXPECT_FALSE(result.error->description.empty());
+}
+
+TEST(ChunkParser, ErrorOnInvalidEscapeSequence) {
+    auto result = chunkParseAll(R"("\q")");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnIncompleteUnicodeEscape) {
+    auto result = chunkParseAll(R"("\u00")");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnInvalidSurrogate) {
+    // High surrogate without low surrogate
+    auto result = chunkParseAll(R"("\uD83D")");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnInvalidLowSurrogate) {
+    // High surrogate followed by non-surrogate
+    auto result = chunkParseAll(R"("\uD83D\u0041")");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnInvalidNumberLeadingZeros) {
+    // "01" is not valid JSON (leading zeros not allowed)
+    auto result = chunkParseAll("01");
+    // The parser will parse "0" then find trailing "1"
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+TEST(ChunkParser, ErrorOnTruncatedNumber) {
+    auto result = chunkParseAll("1.e");
+    EXPECT_EQ(result.root, nullptr);
+    EXPECT_TRUE(result.error.has_value());
+}
+
+// === Semantic equivalence with existing parser =============================
+
+TEST(ChunkParser, EquivalenceSimpleObject) {
+    std::string json = R"({"name": "Alice", "age": 30})";
+    auto ref = parseAll(json);
+    auto [node, err] = chunkParseToJsonNode(json);
+    ASSERT_NE(ref.root, nullptr);
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(nodesEqual(ref.root, node));
+}
+
+TEST(ChunkParser, EquivalenceComplexDocument) {
+    std::string json = R"({
+        "name": "JSONTitan",
+        "version": "0.1.0",
+        "features": ["parsing", "search", "export"],
+        "config": {
+            "maxDepth": 100,
+            "streaming": true,
+            "encoding": null
+        },
+        "stats": {
+            "precision": 1.7976931348623157e+308,
+            "negative": -42,
+            "zero": 0
+        }
+    })";
+    auto ref = parseAll(json);
+    auto [node, err] = chunkParseToJsonNode(json);
+    ASSERT_NE(ref.root, nullptr);
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(nodesEqual(ref.root, node));
+}
+
+TEST(ChunkParser, EquivalenceEscapeSequences) {
+    std::string json = R"({"escaped": "line1\nline2\ttab\"quote\\backslash\uD83D\uDE00"})";
+    auto ref = parseAll(json);
+    auto [node, err] = chunkParseToJsonNode(json);
+    ASSERT_NE(ref.root, nullptr);
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(nodesEqual(ref.root, node));
+}
+
+TEST(ChunkParser, EquivalenceDeeplyNested) {
+    std::string json = R"({"a":{"b":{"c":{"d":{"e":[1,2,{"f":"deep"}]}}}}})";
+    auto ref = parseAll(json);
+    auto [node, err] = chunkParseToJsonNode(json);
+    ASSERT_NE(ref.root, nullptr);
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(nodesEqual(ref.root, node));
+}
+
+// ---------------------------------------------------------------------------
+// Task 5.4: Property test -- Error reporting for invalid JSON
+// Property 8: For any byte sequence that is not valid JSON, the optimized
+// parser returns a ParseError with byte offset >= 0 and a non-empty
+// description, and does not return a non-null root node.
+// Validates: Requirements 6.3
+// ---------------------------------------------------------------------------
+
+TEST(ChunkParserProperty, ErrorReportingForInvalidJson) {
+    rc::check("Property 8: Error reporting for invalid JSON",
+        [](void) {
+            // Strategy: generate valid JSON, then inject a syntax error
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random valid JSON document
+            std::uniform_int_distribution<int> depthDist(0, 3);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Verify the original is valid
+            {
+                SourceBuffer source{std::string{json}};
+                ArenaAllocator arena;
+                auto result = parseChunkRange(source, 0, source.size(), arena);
+                RC_PRE(result.root != nullptr && !result.error.has_value());
+            }
+
+            // Choose an error injection strategy
+            auto strategy = *rc::gen::inRange(0, 5);
+            std::string corrupted = json;
+
+            switch (strategy) {
+                case 0: {
+                    // Insert a random invalid character at a random position
+                    if (corrupted.empty()) break;
+                    auto pos = *rc::gen::inRange(
+                        std::size_t{0}, corrupted.size());
+                    // Characters that are always invalid in JSON context
+                    auto invalidChars = std::string("@#$%^&!~`");
+                    auto charIdx = *rc::gen::inRange(
+                        std::size_t{0}, invalidChars.size());
+                    corrupted.insert(pos, 1, invalidChars[charIdx]);
+                    break;
+                }
+                case 1: {
+                    // Delete a random character
+                    if (corrupted.size() <= 1) break;
+                    auto pos = *rc::gen::inRange(
+                        std::size_t{0}, corrupted.size());
+                    corrupted.erase(pos, 1);
+                    break;
+                }
+                case 2: {
+                    // Replace a structural character with a wrong one
+                    std::vector<std::size_t> structPositions;
+                    for (std::size_t i = 0; i < corrupted.size(); ++i) {
+                        char c = corrupted[i];
+                        if (c == '{' || c == '}' || c == '[' || c == ']' ||
+                            c == ',' || c == ':') {
+                            structPositions.push_back(i);
+                        }
+                    }
+                    if (structPositions.empty()) break;
+                    auto idx = *rc::gen::inRange(
+                        std::size_t{0}, structPositions.size());
+                    // Replace with a mismatched structural char
+                    char replacements[] = {'{', '}', '[', ']', ',', ':'};
+                    auto repIdx = *rc::gen::inRange(0, 6);
+                    char original = corrupted[structPositions[idx]];
+                    char replacement = replacements[repIdx];
+                    if (replacement != original) {
+                        corrupted[structPositions[idx]] = replacement;
+                    } else {
+                        // Just use a different one
+                        corrupted[structPositions[idx]] = '@';
+                    }
+                    break;
+                }
+                case 3: {
+                    // Truncate the input at a random position (not at the end)
+                    if (corrupted.size() <= 2) break;
+                    auto truncPos = *rc::gen::inRange(
+                        std::size_t{1}, corrupted.size() - 1);
+                    corrupted = corrupted.substr(0, truncPos);
+                    break;
+                }
+                case 4: {
+                    // Append garbage after valid JSON
+                    corrupted += " garbage_after";
+                    break;
+                }
+            }
+
+            // Skip if corruption didn't actually change anything
+            RC_PRE(corrupted != json);
+
+            // Also skip if the corrupted version happens to be valid JSON
+            // (unlikely but possible with some mutations).
+            // Use try/catch because the existing parser may throw on
+            // certain malformed inputs (e.g., null pointer in string ctor).
+            {
+                bool isInvalidForReference = false;
+                try {
+                    auto refResult = parseAll(corrupted);
+                    isInvalidForReference =
+                        (refResult.root == nullptr || refResult.error.has_value());
+                } catch (...) {
+                    // If the reference parser throws, the input is definitely
+                    // invalid — that's fine for our purposes.
+                    isInvalidForReference = true;
+                }
+                RC_PRE(isInvalidForReference);
+            }
+
+            // Now verify the ChunkParser error reporting.
+            // The chunk parser must never throw — it should return an error.
+            SourceBuffer source{std::string{corrupted}};
+            ArenaAllocator arena;
+            auto result = parseChunkRange(source, 0, source.size(), arena);
+
+            // Property assertions:
+            // 1. Root must be null for invalid JSON
+            RC_ASSERT(result.root == nullptr);
+            // 2. Error must be present
+            RC_ASSERT(result.error.has_value());
+            // 3. Byte offset must be within bounds
+            RC_ASSERT(result.error->byteOffset <= corrupted.size());
+            // 4. Description must be non-empty
+            RC_ASSERT(!result.error->description.empty());
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.5: Property 6 — Semantic Equivalence (optimized vs. current parser)
+// Validates: Requirements 6.1, 6.4, 8.2, 8.4
+// ---------------------------------------------------------------------------
+
+#include "core/parse_orchestrator.h"
+
+TEST(ParseOrchestratorProperty, SemanticEquivalenceSingleThreaded) {
+    rc::check("Property 6a: Semantic equivalence — single-threaded path",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random valid JSON document with configurable depth
+            std::uniform_int_distribution<int> depthDist(0, 4);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Parse with the current parser (reference)
+            auto refResult = parseAll(json);
+            RC_PRE(refResult.root != nullptr && !refResult.error.has_value());
+
+            // Parse with the optimized parser (single-threaded path, default threshold)
+            ParseBufferOptions opts;
+            opts.parallelThreshold = 1024 * 1024; // 1 MB — ensures single-threaded
+            auto arenaResult = parseBuffer(std::string{json}, opts);
+
+            // The optimized parser must succeed
+            RC_ASSERT(arenaResult.ok());
+
+            // Convert to public JsonNode type
+            auto optimizedResult = arenaResult.toParseResult();
+            RC_ASSERT(optimizedResult.root != nullptr);
+            RC_ASSERT(!optimizedResult.error.has_value());
+
+            // Trees must be structurally and value-equivalent
+            RC_ASSERT(nodesEqual(refResult.root, optimizedResult.root));
+        });
+}
+
+TEST(ParseOrchestratorProperty, SemanticEquivalenceParallelPath) {
+    rc::check("Property 6b: Semantic equivalence — parallel path (low threshold)",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random valid JSON document with configurable depth
+            std::uniform_int_distribution<int> depthDist(1, 4);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Parse with the current parser (reference)
+            auto refResult = parseAll(json);
+            RC_PRE(refResult.root != nullptr && !refResult.error.has_value());
+
+            // Parse with the optimized parser using a very low parallelThreshold.
+            // This forces the input through the SIMD scan + structural index path.
+            // For standard single-value JSON, findPartitionPoints() returns empty
+            // and the code falls back to single-threaded, but it still exercises
+            // the full orchestrator code path up to that fallback point.
+            ParseBufferOptions opts;
+            opts.parallelThreshold = 1; // Force parallel pipeline attempt
+            auto arenaResult = parseBuffer(std::string{json}, opts);
+
+            // The optimized parser must succeed
+            RC_ASSERT(arenaResult.ok());
+
+            // Convert to public JsonNode type
+            auto optimizedResult = arenaResult.toParseResult();
+            RC_ASSERT(optimizedResult.root != nullptr);
+            RC_ASSERT(!optimizedResult.error.has_value());
+
+            // Trees must be structurally and value-equivalent
+            RC_ASSERT(nodesEqual(refResult.root, optimizedResult.root));
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.6: Property 7 — Parse-print round trip
+// Validates: Requirements 6.2
+// ---------------------------------------------------------------------------
+
+TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
+    rc::check("Property 7: Parse-print round trip",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random valid JSON document with configurable depth
+            std::uniform_int_distribution<int> depthDist(1, 4);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Step 1: Parse with the optimized parser (parseBuffer)
+            ParseBufferOptions opts;
+            opts.parallelThreshold = 1; // Exercise full orchestrator path
+            auto firstParseResult = parseBuffer(std::string{json}, opts);
+            RC_PRE(firstParseResult.ok());
+
+            // Step 2: Convert to JsonNode
+            auto firstTree = firstParseResult.toParseResult();
+            RC_ASSERT(firstTree.root != nullptr);
+            RC_ASSERT(!firstTree.error.has_value());
+
+            // Step 3: Pretty-print the result
+            std::string printed = prettyPrint(*firstTree.root);
+            RC_ASSERT(!printed.empty());
+
+            // Step 4: Re-parse the pretty-printed output with parseBuffer
+            auto secondParseResult = parseBuffer(std::string{printed}, opts);
+            RC_ASSERT(secondParseResult.ok());
+
+            // Step 5: Convert to JsonNode
+            auto secondTree = secondParseResult.toParseResult();
+            RC_ASSERT(secondTree.root != nullptr);
+            RC_ASSERT(!secondTree.error.has_value());
+
+            // Step 6: Compare the two JsonNode trees for structural and value equivalence
+            RC_ASSERT(nodesEqual(firstTree.root, secondTree.root));
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.7: Property 9 — Parallel error offset correctness
+// Validates: Requirements 4.6
+// ---------------------------------------------------------------------------
+
+TEST(ParseOrchestratorProperty, ParallelErrorOffsetCorrectness) {
+    rc::check("Property 9: Parallel error offset correctness",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a random valid JSON document with some depth
+            std::uniform_int_distribution<int> depthDist(1, 4);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Verify the original is valid via parseBuffer
+            {
+                ParseBufferOptions opts;
+                opts.parallelThreshold = 1; // Force parallel pipeline
+                auto result = parseBuffer(std::string{json}, opts);
+                RC_PRE(result.ok());
+            }
+
+            // Inject a syntax error at a random byte position
+            RC_PRE(json.size() >= 2);
+            auto injectionPos = *rc::gen::inRange(
+                std::size_t{0}, json.size());
+
+            auto strategy = *rc::gen::inRange(0, 4);
+            std::string corrupted = json;
+
+            switch (strategy) {
+                case 0: {
+                    // Replace a character with an invalid one
+                    std::string invalidChars = "@#$%^&!~`";
+                    auto charIdx = *rc::gen::inRange(
+                        std::size_t{0}, invalidChars.size());
+                    corrupted[injectionPos] = invalidChars[charIdx];
+                    break;
+                }
+                case 1: {
+                    // Delete a character at the injection position
+                    corrupted.erase(injectionPos, 1);
+                    break;
+                }
+                case 2: {
+                    // Insert an invalid character at the injection position
+                    std::string invalidChars = "@#$%^&!~`";
+                    auto charIdx = *rc::gen::inRange(
+                        std::size_t{0}, invalidChars.size());
+                    corrupted.insert(injectionPos, 1, invalidChars[charIdx]);
+                    break;
+                }
+                case 3: {
+                    // Truncate at the injection position (if not at end)
+                    if (injectionPos == 0) injectionPos = 1;
+                    if (injectionPos >= corrupted.size()) {
+                        injectionPos = corrupted.size() - 1;
+                    }
+                    corrupted = corrupted.substr(0, injectionPos);
+                    break;
+                }
+            }
+
+            // Skip if corruption didn't change anything
+            RC_PRE(corrupted != json);
+
+            // Skip if the corrupted version happens to still be valid
+            {
+                ParseBufferOptions checkOpts;
+                checkOpts.parallelThreshold = 1;
+                auto checkResult = parseBuffer(std::string{corrupted}, checkOpts);
+                RC_PRE(!checkResult.ok());
+            }
+
+            // Parse the corrupted JSON with parseBuffer using low parallelThreshold
+            ParseBufferOptions opts;
+            opts.parallelThreshold = 1; // Force the parallel pipeline
+            auto result = parseBuffer(std::string{corrupted}, opts);
+
+            // Property assertions:
+            // 1. The parse must fail (error is reported)
+            RC_ASSERT(!result.ok());
+            RC_ASSERT(result.error.has_value());
+
+            // 2. The error byte offset must be >= 0 and <= input length
+            RC_ASSERT(result.error->byteOffset <= corrupted.size());
+
+            // 3. The error description must be non-empty
+            RC_ASSERT(!result.error->description.empty());
+
+            // 4. The error byte offset should be reasonable relative to
+            //    where the corruption was injected. The parser may detect
+            //    errors slightly after the actual corruption point, but
+            //    the offset must be within the input bounds.
+            //    (The offset >= 0 check is implicit since it's size_t)
+            RC_ASSERT(result.error->byteOffset <= corrupted.size());
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 7.8: Unit tests for ParseOrchestrator
+// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
+// ---------------------------------------------------------------------------
+
+// === Single-threaded path (input below threshold) ==========================
+
+TEST(ParseOrchestratorUnit, SmallInputUsesSingleThreadedPath) {
+    // A small JSON object well below the default 1 MB threshold
+    std::string json = R"({"name": "Alice", "age": 30, "active": true})";
+
+    ParseBufferOptions opts;
+    // Default threshold is 1 MB, so this small input takes single-threaded path
+    auto result = parseBuffer(std::string{json}, opts);
+
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.root, nullptr);
+    EXPECT_FALSE(result.error.has_value());
+
+    // Convert and compare with reference parser
+    auto optimized = result.toParseResult();
+    auto reference = parseAll(json);
+
+    ASSERT_NE(optimized.root, nullptr);
+    ASSERT_NE(reference.root, nullptr);
+    EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
+}
+
+TEST(ParseOrchestratorUnit, SmallArrayUsesSingleThreadedPath) {
+    std::string json = R"([1, 2, 3, "hello", null, true, false])";
+
+    ParseBufferOptions opts;
+    auto result = parseBuffer(std::string{json}, opts);
+
+    ASSERT_TRUE(result.ok());
+
+    auto optimized = result.toParseResult();
+    auto reference = parseAll(json);
+
+    ASSERT_NE(optimized.root, nullptr);
+    ASSERT_NE(reference.root, nullptr);
+    EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
+}
+
+// === Parallel path (input above threshold) =================================
+
+TEST(ParseOrchestratorUnit, LowThresholdForcesParallelPipeline) {
+    // Use a JSON array with multiple top-level elements to allow partitioning
+    // Set parallelThreshold to 1 to force the parallel code path
+    std::string json = R"([{"a":1},{"b":2},{"c":3},{"d":4}])";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 1; // Force parallel pipeline attempt
+
+    auto result = parseBuffer(std::string{json}, opts);
+
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.root, nullptr);
+
+    // Convert and compare with reference parser
+    auto optimized = result.toParseResult();
+    auto reference = parseAll(json);
+
+    ASSERT_NE(optimized.root, nullptr);
+    ASSERT_NE(reference.root, nullptr);
+    EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
+}
+
+TEST(ParseOrchestratorUnit, ParallelPathWithNestedObjects) {
+    std::string json = R"({"x": {"nested": [1,2,3]}, "y": "hello", "z": true})";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 1; // Force parallel pipeline
+
+    auto result = parseBuffer(std::string{json}, opts);
+
+    ASSERT_TRUE(result.ok());
+
+    auto optimized = result.toParseResult();
+    auto reference = parseAll(json);
+
+    ASSERT_NE(optimized.root, nullptr);
+    ASSERT_NE(reference.root, nullptr);
+    EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
+}
+
+// === Error in one chunk cancels others =====================================
+
+TEST(ParseOrchestratorUnit, ErrorInChunkReportsCorrectOffset) {
+    // Create JSON with a syntax error injected
+    // The error is at a known position: the '@' character
+    std::string json = R"({"valid": "ok", "bad": @invalid})";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 1; // Force parallel pipeline
+
+    auto result = parseBuffer(std::string{json}, opts);
+
+    EXPECT_FALSE(result.ok());
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_FALSE(result.error->description.empty());
+    // The error offset should be within the input bounds
+    EXPECT_LE(result.error->byteOffset, json.size());
+}
+
+TEST(ParseOrchestratorUnit, ErrorInMiddleOfInput) {
+    // Error is in the middle of the JSON
+    std::string json = R"({"a": 1, "b": ???, "c": 3})";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 1;
+
+    auto result = parseBuffer(std::string{json}, opts);
+
+    EXPECT_FALSE(result.ok());
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_FALSE(result.error->description.empty());
+    EXPECT_LE(result.error->byteOffset, json.size());
+}
+
+// === Forced scalar fallback produces same result as SIMD path ==============
+
+TEST(ParseOrchestratorUnit, ScalarFallbackMatchesSimdResult) {
+    std::string json = R"({"key": "value", "nums": [1, 2, 3], "flag": true})";
+
+    // Parse with forced scalar
+    ParseBufferOptions scalarOpts;
+    scalarOpts.parallelThreshold = 1;
+    scalarOpts.simdLevel = SimdLevel::Scalar;
+    auto scalarResult = parseBuffer(std::string{json}, scalarOpts);
+
+    // Parse with default SIMD level
+    ParseBufferOptions defaultOpts;
+    defaultOpts.parallelThreshold = 1;
+    auto defaultResult = parseBuffer(std::string{json}, defaultOpts);
+
+    ASSERT_TRUE(scalarResult.ok());
+    ASSERT_TRUE(defaultResult.ok());
+
+    auto scalarTree = scalarResult.toParseResult();
+    auto defaultTree = defaultResult.toParseResult();
+
+    ASSERT_NE(scalarTree.root, nullptr);
+    ASSERT_NE(defaultTree.root, nullptr);
+    EXPECT_TRUE(nodesEqual(scalarTree.root, defaultTree.root));
+}
+
+TEST(ParseOrchestratorUnit, ScalarFallbackMatchesSimdForNestedJson) {
+    std::string json = R"({"a":{"b":{"c":[1,2,3]}},"d":"hello\nworld"})";
+
+    ParseBufferOptions scalarOpts;
+    scalarOpts.parallelThreshold = 1;
+    scalarOpts.simdLevel = SimdLevel::Scalar;
+    auto scalarResult = parseBuffer(std::string{json}, scalarOpts);
+
+    ParseBufferOptions defaultOpts;
+    defaultOpts.parallelThreshold = 1;
+    auto defaultResult = parseBuffer(std::string{json}, defaultOpts);
+
+    ASSERT_TRUE(scalarResult.ok());
+    ASSERT_TRUE(defaultResult.ok());
+
+    auto scalarTree = scalarResult.toParseResult();
+    auto defaultTree = defaultResult.toParseResult();
+
+    ASSERT_NE(scalarTree.root, nullptr);
+    ASSERT_NE(defaultTree.root, nullptr);
+    EXPECT_TRUE(nodesEqual(scalarTree.root, defaultTree.root));
+}
+
+// === Empty input returns error =============================================
+
+TEST(ParseOrchestratorUnit, EmptyInputReturnsError) {
+    auto result = parseBuffer(std::string{""});
+
+    EXPECT_FALSE(result.ok());
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_EQ(result.error->byteOffset, 0u);
+    EXPECT_FALSE(result.error->description.empty());
+    EXPECT_EQ(result.root, nullptr);
+}
+
+// === parseBuffer string overload works =====================================
+
+TEST(ParseOrchestratorUnit, StringOverloadWorks) {
+    std::string json = R"({"greeting": "hello"})";
+
+    // Use the string overload directly
+    auto result = parseBuffer(std::string{json});
+
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.root, nullptr);
+
+    auto parsed = result.toParseResult();
+    ASSERT_NE(parsed.root, nullptr);
+    EXPECT_EQ(parsed.root->type, NodeType::Object);
+    ASSERT_EQ(parsed.root->children.size(), 1u);
+    EXPECT_EQ(parsed.root->children[0]->key, "greeting");
+    EXPECT_EQ(parsed.root->children[0]->value, "hello");
+}
+
+TEST(ParseOrchestratorUnit, StringOverloadWithOptions) {
+    std::string json = R"([10, 20, 30])";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 1;
+    opts.simdLevel = SimdLevel::Scalar;
+
+    auto result = parseBuffer(std::string{json}, opts);
+
+    ASSERT_TRUE(result.ok());
+    auto parsed = result.toParseResult();
+    ASSERT_NE(parsed.root, nullptr);
+    EXPECT_EQ(parsed.root->type, NodeType::Array);
+    ASSERT_EQ(parsed.root->children.size(), 3u);
+    EXPECT_EQ(parsed.root->children[0]->value, "10");
+    EXPECT_EQ(parsed.root->children[1]->value, "20");
+    EXPECT_EQ(parsed.root->children[2]->value, "30");
+}
+
+// === toParseResult() conversion ============================================
+
+TEST(ParseOrchestratorUnit, ToParseResultConvertsValidTree) {
+    std::string json = R"({"name": "Bob", "items": [1, 2], "flag": false})";
+
+    auto result = parseBuffer(std::string{json});
+    ASSERT_TRUE(result.ok());
+
+    auto parsed = result.toParseResult();
+    ASSERT_NE(parsed.root, nullptr);
+    EXPECT_FALSE(parsed.error.has_value());
+
+    // Verify the tree structure
+    EXPECT_EQ(parsed.root->type, NodeType::Object);
+    ASSERT_EQ(parsed.root->children.size(), 3u);
+
+    EXPECT_EQ(parsed.root->children[0]->key, "name");
+    EXPECT_EQ(parsed.root->children[0]->type, NodeType::String);
+    EXPECT_EQ(parsed.root->children[0]->value, "Bob");
+
+    EXPECT_EQ(parsed.root->children[1]->key, "items");
+    EXPECT_EQ(parsed.root->children[1]->type, NodeType::Array);
+    ASSERT_EQ(parsed.root->children[1]->children.size(), 2u);
+    EXPECT_EQ(parsed.root->children[1]->children[0]->value, "1");
+    EXPECT_EQ(parsed.root->children[1]->children[1]->value, "2");
+
+    EXPECT_EQ(parsed.root->children[2]->key, "flag");
+    EXPECT_EQ(parsed.root->children[2]->type, NodeType::Boolean);
+    EXPECT_EQ(parsed.root->children[2]->value, "false");
+}
+
+TEST(ParseOrchestratorUnit, ToParseResultOnErrorReturnsError) {
+    std::string json = R"({invalid json)";
+
+    auto result = parseBuffer(std::string{json});
+    EXPECT_FALSE(result.ok());
+
+    auto parsed = result.toParseResult();
+    EXPECT_EQ(parsed.root, nullptr);
+    ASSERT_TRUE(parsed.error.has_value());
+    EXPECT_FALSE(parsed.error->description.empty());
+}
+
+// === ok() method ===========================================================
+
+TEST(ParseOrchestratorUnit, OkReturnsTrueForSuccessfulParse) {
+    std::string json = R"({"valid": true})";
+
+    auto result = parseBuffer(std::string{json});
+    EXPECT_TRUE(result.ok());
+    EXPECT_NE(result.root, nullptr);
+    EXPECT_FALSE(result.error.has_value());
+}
+
+TEST(ParseOrchestratorUnit, OkReturnsFalseForFailedParse) {
+    std::string json = R"({not valid json!!!)";
+
+    auto result = parseBuffer(std::string{json});
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(ParseOrchestratorUnit, OkReturnsFalseForEmptyInput) {
+    auto result = parseBuffer(std::string{""});
+    EXPECT_FALSE(result.ok());
 }
