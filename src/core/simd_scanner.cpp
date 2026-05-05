@@ -113,6 +113,7 @@ auto scalarScan(const char* input, std::size_t length)
     std::vector<ScanBlock> blocks(blockCount);
 
     uint64_t prevInString = 0; // carry: all-ones if previous block ended inside a string
+    uint64_t prevEndedWithOddBS = 0; // 1 if previous block ended mid-backslash-run (odd length)
 
     for (std::size_t blockIdx = 0; blockIdx < blockCount; ++blockIdx) {
         const std::size_t blockStart = blockIdx * 64;
@@ -154,6 +155,13 @@ auto scalarScan(const char* input, std::size_t length)
 
         // Determine which quotes are escaped by odd-length backslash runs.
         uint64_t escaped = oddBackslashFollowers(backslashes);
+
+        // Handle cross-block backslash carry: if the previous block ended with
+        // an odd-length backslash run, position 0 of this block is escaped.
+        if (prevEndedWithOddBS != 0) {
+            escaped |= uint64_t{1}; // mark position 0 as escaped
+        }
+
         uint64_t unescapedQuotes = rawQuotes & ~escaped;
 
         // Prefix XOR to compute in-string mask, carrying state from previous block.
@@ -167,6 +175,32 @@ auto scalarScan(const char* input, std::size_t length)
         } else {
             prevInString = static_cast<uint64_t>(
                 -static_cast<int64_t>((stringMask >> (blockLen - 1)) & 1));
+        }
+
+        // Compute cross-block backslash carry for the next block.
+        // If the block ends with a backslash run of odd length, the first byte
+        // of the next block is escaped. We check if bit (blockLen-1) is a
+        // backslash and count the trailing run length.
+        uint64_t oldPrevEndedWithOddBS = prevEndedWithOddBS;
+        prevEndedWithOddBS = 0;
+        if (blockLen > 0 && (backslashes >> (blockLen - 1)) & 1) {
+            // Count trailing backslash run length within this block
+            std::size_t runLen = 0;
+            for (std::size_t i = blockLen; i > 0; --i) {
+                if ((backslashes >> (i - 1)) & 1) {
+                    ++runLen;
+                } else {
+                    break;
+                }
+            }
+            // If the trailing run extends to the start of this block AND the
+            // previous block also ended with a backslash run, the runs are
+            // contiguous. Add 1 to account for the cross-block continuation
+            // (the parity of the combined run differs from the local run).
+            if (runLen == blockLen && oldPrevEndedWithOddBS != 0) {
+                runLen += 1;
+            }
+            prevEndedWithOddBS = (runLen % 2 == 1) ? 1 : 0;
         }
 
         blocks[blockIdx].structuralBits = structural;
@@ -261,6 +295,7 @@ auto simdScan(const char* input, std::size_t length, SimdLevel level)
         std::vector<ScanBlock> blocks(blockCount);
 
         uint64_t prevInString = 0;
+        uint64_t prevEndedWithOddBS = 0;
 
         for (std::size_t blockIdx = 0; blockIdx < blockCount; ++blockIdx) {
             const std::size_t blockStart = blockIdx * 64;
@@ -318,6 +353,13 @@ auto simdScan(const char* input, std::size_t length, SimdLevel level)
             // Odd-backslash-run detection and string mask computation
             // (identical to scalar path).
             uint64_t escaped = oddBackslashFollowers(backslashes64);
+
+            // Handle cross-block backslash carry: if the previous block ended with
+            // an odd-length backslash run, position 0 of this block is escaped.
+            if (prevEndedWithOddBS != 0) {
+                escaped |= uint64_t{1};
+            }
+
             uint64_t unescapedQuotes = rawQuotes64 & ~escaped;
             uint64_t stringMask = prefixXor(unescapedQuotes) ^ prevInString;
 
@@ -327,6 +369,24 @@ auto simdScan(const char* input, std::size_t length, SimdLevel level)
             } else {
                 prevInString = static_cast<uint64_t>(
                     -static_cast<int64_t>((stringMask >> (blockLen - 1)) & 1));
+            }
+
+            // Compute cross-block backslash carry for the next block.
+            uint64_t oldPrevEndedWithOddBS = prevEndedWithOddBS;
+            prevEndedWithOddBS = 0;
+            if (blockLen > 0 && (backslashes64 >> (blockLen - 1)) & 1) {
+                std::size_t runLen = 0;
+                for (std::size_t i = blockLen; i > 0; --i) {
+                    if ((backslashes64 >> (i - 1)) & 1) {
+                        ++runLen;
+                    } else {
+                        break;
+                    }
+                }
+                if (runLen == blockLen && oldPrevEndedWithOddBS != 0) {
+                    runLen += 1;
+                }
+                prevEndedWithOddBS = (runLen % 2 == 1) ? 1 : 0;
             }
 
             blocks[blockIdx].structuralBits = structural64;
