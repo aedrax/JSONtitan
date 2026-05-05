@@ -1,5 +1,8 @@
 #pragma once
 
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -22,6 +25,11 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
 private slots:
     void onOpenFile();
     void onUnionFiles();
@@ -38,6 +46,9 @@ private:
     void setupMenuBar();
     void setupCentralWidget();
     void setupStatusBar();
+    void setupDropOverlay();
+    void showDropOverlay();
+    void hideDropOverlay();
     void showWelcomeMessage();
     void updateStatusBar(const QString& fileName, int nodeCount);
     int countNodes(const jsontitan::core::JsonNode& node) const;
@@ -52,6 +63,7 @@ private:
     QProgressBar* m_progressBar = nullptr;
     QLabel* m_statusLabel = nullptr;
     QLabel* m_noResultsLabel = nullptr;
+    QLabel* m_dropOverlay = nullptr;
 
     // Menu actions
     QAction* m_openAction = nullptr;
