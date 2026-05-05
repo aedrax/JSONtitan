@@ -104,12 +104,36 @@ void MainWindow::setupCentralWidget() {
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
 
-    // Search bar
+    // Search bar with toggle buttons in a horizontal layout
+    auto* searchLayout = new QHBoxLayout();
+    searchLayout->setContentsMargins(0, 0, 0, 0);
+    searchLayout->setSpacing(2);
+
     m_searchBar = new QLineEdit(centralWidget);
     m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
     connect(m_searchBar, &QLineEdit::textChanged,
             this, &MainWindow::onSearchTextChanged);
-    mainLayout->addWidget(m_searchBar);
+    searchLayout->addWidget(m_searchBar);
+
+    m_caseSensitiveToggle = new QToolButton(centralWidget);
+    m_caseSensitiveToggle->setText(tr("Aa"));
+    m_caseSensitiveToggle->setCheckable(true);
+    m_caseSensitiveToggle->setChecked(false);
+    m_caseSensitiveToggle->setToolTip(tr("Case Sensitive"));
+    connect(m_caseSensitiveToggle, &QToolButton::toggled,
+            this, [this]() { if (!m_searchBar->text().isEmpty()) m_debounceTimer->start(); });
+    searchLayout->addWidget(m_caseSensitiveToggle);
+
+    m_regexToggle = new QToolButton(centralWidget);
+    m_regexToggle->setText(tr(".*"));
+    m_regexToggle->setCheckable(true);
+    m_regexToggle->setChecked(false);
+    m_regexToggle->setToolTip(tr("Regex Mode"));
+    connect(m_regexToggle, &QToolButton::toggled,
+            this, [this]() { if (!m_searchBar->text().isEmpty()) m_debounceTimer->start(); });
+    searchLayout->addWidget(m_regexToggle);
+
+    mainLayout->addLayout(searchLayout);
 
     // Search error label (hidden by default)
     m_searchErrorLabel = new QLabel(centralWidget);
@@ -438,14 +462,21 @@ void MainWindow::executeSearch() {
 
     // Build SearchQuery from current UI state
     jsontitan::core::SearchQuery query;
-    if (text.startsWith('/') && text.endsWith('/') && text.length() > 2) {
+    query.caseSensitive = m_caseSensitiveToggle->isChecked();
+
+    if (m_regexToggle->isChecked()) {
+        // Regex toggle is ON: treat entire text as regex pattern
+        query.pattern = text.toStdString();
+        query.mode = jsontitan::core::SearchMode::Regex;
+    } else if (text.startsWith('/') && text.endsWith('/') && text.length() > 2) {
+        // Regex toggle is OFF but /pattern/ convention used: fallback for discoverability
         query.pattern = text.mid(1, text.length() - 2).toStdString();
         query.mode = jsontitan::core::SearchMode::Regex;
     } else {
+        // Default: substring search
         query.pattern = text.toStdString();
         query.mode = jsontitan::core::SearchMode::Substring;
     }
-    query.caseSensitive = false;
 
     // Dispatch search to background worker
     QMetaObject::invokeMethod(m_searchWorker, "executeSearch",

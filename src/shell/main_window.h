@@ -15,6 +15,7 @@
 #include <QTextEdit>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeView>
 
 #include <cstdint>
@@ -68,6 +69,8 @@ private:
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
+    QToolButton* m_caseSensitiveToggle = nullptr;
+    QToolButton* m_regexToggle = nullptr;
     QLabel* m_searchErrorLabel = nullptr;
     QTreeView* m_treeView = nullptr;
     QTextEdit* m_detailPanel = nullptr;
