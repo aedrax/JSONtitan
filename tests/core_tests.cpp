@@ -6729,3 +6729,267 @@ TEST(ParseBufferIntegration, RoundTripParallelPathOutput) {
 
     EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
 }
+
+// ---------------------------------------------------------------------------
+// Task 1.4: Property test for addRecentFile (Property 1)
+// Feature: open-recent-menu
+// Property 1: Add-to-front with deduplication and size cap
+// Validates: Requirements 1.4, 2.2, 3.1, 3.3, 3.4
+// ---------------------------------------------------------------------------
+
+#include "core/recent_files.h"
+#include <set>
+
+TEST(RecentFilesProperty, AddToFrontWithDeduplicationAndSizeCap) {
+    rc::check("Property 1: Add-to-front with deduplication and size cap",
+        []() {
+            // Generate a random list of 0–15 non-empty path strings
+            auto size = *rc::gen::inRange(0, 16);
+            auto list = *rc::gen::container<std::vector<std::string>>(
+                static_cast<std::size_t>(size),
+                rc::gen::nonEmpty<std::string>());
+
+            // Generate a random non-empty path string to add
+            auto path = *rc::gen::nonEmpty<std::string>();
+
+            auto result = addRecentFile(list, path);
+
+            // 1. The returned list has path at index 0
+            RC_ASSERT(!result.empty());
+            RC_ASSERT(result[0] == path);
+
+            // 2. The returned list contains no duplicates
+            std::set<std::string> seen;
+            for (const auto& entry : result) {
+                RC_ASSERT(seen.find(entry) == seen.end());
+                seen.insert(entry);
+            }
+
+            // 3. The returned list size <= kMaxRecentFiles
+            RC_ASSERT(result.size() <= kMaxRecentFiles);
+
+            // 4. Original entries (excluding path) preserve relative order
+            // Collect entries from result that are not equal to path (skip index 0)
+            std::vector<std::string> resultOthers;
+            for (std::size_t i = 1; i < result.size(); ++i) {
+                resultOthers.push_back(result[i]);
+            }
+
+            // Collect entries from original list that are not equal to path
+            // and would fit within kMaxRecentFiles - 1 positions
+            std::vector<std::string> originalOthers;
+            for (const auto& entry : list) {
+                if (entry != path) {
+                    originalOthers.push_back(entry);
+                    if (originalOthers.size() == kMaxRecentFiles - 1) {
+                        break;
+                    }
+                }
+            }
+
+            // resultOthers should be a subsequence of originalOthers
+            // (preserving relative order). Since addRecentFile also deduplicates
+            // the original list, we need to account for that: take only the first
+            // occurrence of each entry from originalOthers.
+            std::vector<std::string> dedupedOriginalOthers;
+            std::set<std::string> seenOriginal;
+            for (const auto& entry : originalOthers) {
+                if (seenOriginal.find(entry) == seenOriginal.end()) {
+                    dedupedOriginalOthers.push_back(entry);
+                    seenOriginal.insert(entry);
+                }
+            }
+
+            // resultOthers should equal dedupedOriginalOthers (same entries, same order)
+            RC_ASSERT(resultOthers == dedupedOriginalOthers);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.5: Property test for removeRecentFile (Property 2)
+// Feature: open-recent-menu
+// Property 2: Remove preserves other entries
+// Validates: Requirements 5.2
+// ---------------------------------------------------------------------------
+
+TEST(RecentFilesProperty, RemovePreservesOtherEntries) {
+    rc::check("Property 2: Remove preserves other entries",
+        []() {
+            // Generate a random list of 0–15 path strings
+            auto size = *rc::gen::inRange(0, 16);
+            auto list = *rc::gen::container<std::vector<std::string>>(
+                static_cast<std::size_t>(size),
+                rc::gen::nonEmpty<std::string>());
+
+            // Generate a random path (may or may not be in the list)
+            auto path = *rc::gen::nonEmpty<std::string>();
+
+            auto result = removeRecentFile(list, path);
+
+            // Assert: result does not contain the removed path
+            for (const auto& entry : result) {
+                RC_ASSERT(entry != path);
+            }
+
+            // Assert: all other entries from original list appear in result
+            // in their original relative order
+            std::vector<std::string> expected;
+            for (const auto& entry : list) {
+                if (entry != path) {
+                    expected.push_back(entry);
+                }
+            }
+
+            RC_ASSERT(result == expected);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.6: Property test for clearRecentFiles (Property 3)
+// Feature: open-recent-menu
+// Property 3: Clear produces empty list
+// Validates: Requirements 6.2
+// ---------------------------------------------------------------------------
+
+TEST(RecentFilesProperty, ClearProducesEmptyList) {
+    rc::check("Property 3: Clear produces empty list",
+        []() {
+            // Generate a random list of 0–15 path strings to show the property
+            // holds regardless of what list might exist
+            auto size = *rc::gen::inRange(0, 16);
+            auto list = *rc::gen::container<std::vector<std::string>>(
+                static_cast<std::size_t>(size),
+                rc::gen::nonEmpty<std::string>());
+
+            // clearRecentFiles() always returns an empty list
+            auto result = clearRecentFiles();
+
+            // Assert: result is empty
+            RC_ASSERT(result.empty());
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.7: Property test for formatRecentEntry (Property 4)
+// Feature: open-recent-menu
+// Property 4: Format function produces correct display text
+// Validates: Requirements 7.1, 7.2
+// ---------------------------------------------------------------------------
+
+#include <filesystem>
+
+TEST(RecentFilesProperty, FormatProducesCorrectDisplayText) {
+    rc::check("Property 4: Format function produces correct display text",
+        []() {
+            // Generate 1–5 directory components (non-empty alphanumeric strings)
+            auto numDirs = *rc::gen::inRange(1, 6);
+            std::string path = "/";
+            for (int i = 0; i < numDirs; ++i) {
+                auto dirComponent = *rc::gen::nonEmpty(
+                    rc::gen::container<std::string>(
+                        rc::gen::map(rc::gen::inRange(0, 26),
+                            [](int v) { return static_cast<char>('a' + v); })));
+                if (i > 0) {
+                    path += "/";
+                }
+                path += dirComponent;
+            }
+
+            // Generate a filename (alphanumeric base + ".json")
+            auto fileBase = *rc::gen::nonEmpty(
+                rc::gen::container<std::string>(
+                    rc::gen::map(rc::gen::inRange(0, 26),
+                        [](int v) { return static_cast<char>('a' + v); })));
+            path += "/" + fileBase + ".json";
+
+            // Call formatRecentEntry
+            auto result = formatRecentEntry(path);
+
+            // Extract expected components using std::filesystem::path
+            namespace fs = std::filesystem;
+            fs::path fsPath(path);
+            std::string expectedFilename = fsPath.filename().string();
+            std::string expectedDirectory = fsPath.parent_path().string();
+
+            // Assert: result starts with the filename component
+            RC_ASSERT(result.substr(0, expectedFilename.size()) == expectedFilename);
+
+            // Assert: result contains "[" and "]" with the directory path between them
+            auto openBracket = result.find('[');
+            auto closeBracket = result.find(']');
+            RC_ASSERT(openBracket != std::string::npos);
+            RC_ASSERT(closeBracket != std::string::npos);
+            RC_ASSERT(closeBracket > openBracket);
+
+            std::string dirInBrackets = result.substr(openBracket + 1,
+                                                       closeBracket - openBracket - 1);
+            RC_ASSERT(dirInBrackets == expectedDirectory);
+
+            // Assert: result matches the exact pattern: "filename [directory]"
+            std::string expectedResult = expectedFilename + " [" + expectedDirectory + "]";
+            RC_ASSERT(result == expectedResult);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.8: Unit tests for core recent files functions
+// Feature: open-recent-menu
+// Requirements: 1.3, 3.3, 3.4, 7.1
+// ---------------------------------------------------------------------------
+
+TEST(RecentFilesUnit, AddToEmptyList) {
+    RecentFilesList empty;
+    auto result = addRecentFile(empty, "/home/user/test.json");
+    ASSERT_EQ(result.size(), 1u);
+    EXPECT_EQ(result[0], "/home/user/test.json");
+}
+
+TEST(RecentFilesUnit, AddDuplicateMovesToFront) {
+    RecentFilesList list = {"/path/a.json", "/path/b.json", "/path/c.json"};
+    auto result = addRecentFile(list, "/path/b.json");
+    ASSERT_EQ(result.size(), 3u);
+    EXPECT_EQ(result[0], "/path/b.json");
+    EXPECT_EQ(result[1], "/path/a.json");
+    EXPECT_EQ(result[2], "/path/c.json");
+}
+
+TEST(RecentFilesUnit, AddToFullListDropsOldest) {
+    RecentFilesList list;
+    for (int i = 0; i < 10; ++i) {
+        list.push_back("/path/file" + std::to_string(i) + ".json");
+    }
+    ASSERT_EQ(list.size(), 10u);
+
+    auto result = addRecentFile(list, "/path/new.json");
+    ASSERT_EQ(result.size(), 10u);
+    EXPECT_EQ(result[0], "/path/new.json");
+    // The oldest entry (file9.json at index 9) should be dropped
+    EXPECT_EQ(result[9], "/path/file8.json");
+    // Verify file9.json is not in the result
+    for (const auto& entry : result) {
+        EXPECT_NE(entry, "/path/file9.json");
+    }
+}
+
+TEST(RecentFilesUnit, AddEmptyPathReturnsUnchanged) {
+    RecentFilesList list = {"/path/a.json", "/path/b.json"};
+    auto result = addRecentFile(list, "");
+    EXPECT_EQ(result, list);
+}
+
+TEST(RecentFilesUnit, AddWhitespacePathReturnsUnchanged) {
+    RecentFilesList list = {"/path/a.json", "/path/b.json"};
+    auto result = addRecentFile(list, "   \t\n  ");
+    EXPECT_EQ(result, list);
+}
+
+TEST(RecentFilesUnit, RemovePathNotInListReturnsUnchanged) {
+    RecentFilesList list = {"/path/a.json", "/path/b.json", "/path/c.json"};
+    auto result = removeRecentFile(list, "/path/nonexistent.json");
+    EXPECT_EQ(result, list);
+}
+
+TEST(RecentFilesUnit, FormatEntrySimplePath) {
+    auto result = formatRecentEntry("/home/user/data.json");
+    EXPECT_EQ(result, "data.json [/home/user]");
+}

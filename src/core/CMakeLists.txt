@@ -2,6 +2,7 @@ add_library(jsontitan_core STATIC
     json_node.cpp
     parser.cpp
     pretty_printer.cpp
+    recent_files.cpp
     search_engine.cpp
     union_engine.cpp
     csv_exporter.cpp

@@ -3,10 +3,13 @@
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDropEvent>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QStatusBar>
 #include <QTextEdit>
@@ -18,6 +21,7 @@
 #include "shell/export_handler.h"
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
+#include "shell/recent_files_manager.h"
 #include "shell/tree_model.h"
 
 class MainWindow : public QMainWindow {
@@ -41,6 +45,7 @@ private slots:
     void onProgressUpdated(int percentage);
     void onTreeSelectionChanged();
     void onRemoveFromUnion();
+    void onRecentFileSelected(const QString& filePath);
 
 private:
     void setupMenuBar();
@@ -68,9 +73,13 @@ private:
     // Menu actions
     QAction* m_openAction = nullptr;
     QAction* m_unionAction = nullptr;
+    QMenu* m_recentMenu = nullptr;
     QAction* m_exportCsvAction = nullptr;
     QAction* m_exportXmlAction = nullptr;
     QAction* m_exitAction = nullptr;
+
+    // Recent files
+    RecentFilesManager* m_recentFilesManager = nullptr;
 
     // Models
     TreeModel* m_treeModel = nullptr;
@@ -82,5 +91,6 @@ private:
     // Current data
     std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;
     QString m_currentFileName;
+    QString m_currentFilePath;
     bool m_isUnionMode = false;
 };
