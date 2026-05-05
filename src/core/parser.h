@@ -44,4 +44,20 @@ auto parseChunk(const ParserState& state, std::span<const std::byte> chunk)
 
 auto finalizeParse(const ParserState& state) -> ParseResult;
 
+// --- New API: parallel/optimized parse entry points ---
+
+// Forward declarations for the optimized pipeline types.
+struct ArenaParseResult;
+struct ParseBufferOptions;
+class SourceBuffer;
+
+// Parse a complete buffer using the optimized parallel pipeline.
+// See parse_orchestrator.h for full type definitions and default options.
+auto parseBuffer(std::string input,
+                 ParseBufferOptions options) -> ArenaParseResult;
+
+// Overload accepting a pre-constructed SourceBuffer.
+auto parseBuffer(std::unique_ptr<SourceBuffer> source,
+                 ParseBufferOptions options) -> ArenaParseResult;
+
 } // namespace jsontitan::core

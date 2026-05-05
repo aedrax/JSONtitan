@@ -6027,3 +6027,357 @@ TEST(ParseOrchestratorUnit, OkReturnsFalseForEmptyInput) {
     auto result = parseBuffer(std::string{""});
     EXPECT_FALSE(result.ok());
 }
+
+// ---------------------------------------------------------------------------
+// Task 9.4: Property 10 — Incremental emission correctness
+// Validates: Requirements 5.1, 5.4
+// ---------------------------------------------------------------------------
+
+TEST(IncrementalParserProperty, IncrementalEmissionCorrectness) {
+    rc::check("Property 10: Incremental emission correctness",
+        [](void) {
+            // Generate a random seed for our JSON generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a valid JSON document (top-level object or array)
+            std::uniform_int_distribution<int> depthDist(1, 3);
+            std::string json = generateJsonValue(depthDist(rng), rng);
+
+            // Ensure it's a top-level array or object
+            // (the generator might produce scalars at low depth)
+            if (json.empty() || (json[0] != '{' && json[0] != '[')) {
+                // Wrap in an array to ensure it's a container
+                json = "[" + json + "]";
+            }
+
+            // Single-pass parse (reference result)
+            auto refResult = parseAll(json);
+            RC_ASSERT(refResult.root != nullptr);
+            RC_ASSERT(!refResult.error.has_value());
+
+            // Split into random chunks at random positions (including mid-token)
+            auto numSplits = *rc::gen::inRange(1, std::max(2, static_cast<int>(json.size())));
+            std::vector<std::size_t> splitPoints;
+            for (int i = 0; i < numSplits; ++i) {
+                auto pt = *rc::gen::inRange(std::size_t{1}, json.size());
+                splitPoints.push_back(pt);
+            }
+            std::sort(splitPoints.begin(), splitPoints.end());
+            splitPoints.erase(std::unique(splitPoints.begin(), splitPoints.end()),
+                              splitPoints.end());
+
+            // Feed chunks through parseChunk
+            auto state = makeParserState();
+            std::vector<std::shared_ptr<const JsonNode>> allEmitted;
+
+            std::size_t prevSplit = 0;
+            for (auto sp : splitPoints) {
+                std::size_t chunkSize = sp - prevSplit;
+                std::vector<std::byte> chunkBytes(chunkSize);
+                for (std::size_t i = 0; i < chunkSize; ++i) {
+                    chunkBytes[i] = static_cast<std::byte>(json[prevSplit + i]);
+                }
+                auto result = parseChunk(*state, std::span<const std::byte>(chunkBytes));
+                RC_ASSERT(!result.error.has_value());
+                for (auto& node : result.emittedNodes) {
+                    allEmitted.push_back(node);
+                }
+                state = std::move(result.nextState);
+                prevSplit = sp;
+            }
+
+            // Feed remaining bytes
+            if (prevSplit < json.size()) {
+                std::size_t remaining = json.size() - prevSplit;
+                std::vector<std::byte> chunkBytes(remaining);
+                for (std::size_t i = 0; i < remaining; ++i) {
+                    chunkBytes[i] = static_cast<std::byte>(json[prevSplit + i]);
+                }
+                auto result = parseChunk(*state, std::span<const std::byte>(chunkBytes));
+                RC_ASSERT(!result.error.has_value());
+                for (auto& node : result.emittedNodes) {
+                    allEmitted.push_back(node);
+                }
+                state = std::move(result.nextState);
+            }
+
+            // Finalize
+            auto finalResult = finalizeParse(*state);
+            RC_ASSERT(!finalResult.error.has_value());
+
+            // Combine: all emitted nodes + final root (if any)
+            if (finalResult.root) {
+                allEmitted.push_back(finalResult.root);
+            }
+
+            // For a single top-level value, the union should be exactly one node
+            // equivalent to the reference parse
+            RC_ASSERT(allEmitted.size() == 1u);
+            RC_ASSERT(nodesEqual(allEmitted[0], refResult.root));
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Task 9.5: Unit tests for updated incremental parseChunk
+// Requirements: 5.1, 5.2, 5.3, 5.4
+// ---------------------------------------------------------------------------
+
+// Helper: convert string to byte span
+static auto toBytes(const std::string& s) -> std::vector<std::byte> {
+    std::vector<std::byte> bytes(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        bytes[i] = static_cast<std::byte>(s[i]);
+    }
+    return bytes;
+}
+
+// --- Test emitting complete values mid-stream ---
+
+TEST(IncrementalParser, EmitsCompleteValuesWhenMoreFollow) {
+    // Feed two complete JSON values in one chunk: `{} []`
+    // parseChunk should emit `{}` since `[]` follows it
+    auto state = makeParserState();
+    auto bytes = toBytes("{} []");
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+
+    ASSERT_FALSE(result.error.has_value());
+    // `{}` should be emitted because `[]` follows
+    ASSERT_EQ(result.emittedNodes.size(), 1u);
+    EXPECT_EQ(result.emittedNodes[0]->type, NodeType::Object);
+    EXPECT_TRUE(result.emittedNodes[0]->children.empty());
+}
+
+TEST(IncrementalParser, EmitsMultipleCompleteValues) {
+    // Feed three values: `1 2 3`
+    // parseChunk should emit `1` and `2` (since more content follows each)
+    // but keep `3` in buffer (nothing follows it)
+    auto state = makeParserState();
+    auto bytes = toBytes("1 2 3");
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+
+    ASSERT_FALSE(result.error.has_value());
+    ASSERT_EQ(result.emittedNodes.size(), 2u);
+    EXPECT_EQ(result.emittedNodes[0]->type, NodeType::Number);
+    EXPECT_EQ(result.emittedNodes[0]->value, "1");
+    EXPECT_EQ(result.emittedNodes[1]->type, NodeType::Number);
+    EXPECT_EQ(result.emittedNodes[1]->value, "2");
+}
+
+TEST(IncrementalParser, DoesNotEmitLastValueInBuffer) {
+    // Feed a single complete value: `{"key": "value"}`
+    // parseChunk should NOT emit it (nothing follows)
+    auto state = makeParserState();
+    auto bytes = toBytes(R"({"key": "value"})");
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+
+    ASSERT_FALSE(result.error.has_value());
+    EXPECT_TRUE(result.emittedNodes.empty());
+}
+
+// --- Test buffering incomplete values across chunk boundaries ---
+
+TEST(IncrementalParser, BuffersIncompleteObjectAcrossChunks) {
+    auto state = makeParserState();
+
+    // First chunk: incomplete object
+    auto bytes1 = toBytes(R"({"key": "val)");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    // Second chunk: completes the object
+    auto bytes2 = toBytes(R"(ue"})");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty()); // Still last value, not emitted
+
+    // Finalize should produce the complete object
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    ASSERT_FALSE(final_result.error.has_value());
+    EXPECT_EQ(final_result.root->type, NodeType::Object);
+    ASSERT_EQ(final_result.root->children.size(), 1u);
+    EXPECT_EQ(final_result.root->children[0]->key, "key");
+    EXPECT_EQ(final_result.root->children[0]->value, "value");
+}
+
+TEST(IncrementalParser, BuffersIncompleteArrayAcrossChunks) {
+    auto state = makeParserState();
+
+    // First chunk: start of array
+    auto bytes1 = toBytes("[1, 2,");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    // Second chunk: completes the array
+    auto bytes2 = toBytes(" 3]");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty());
+
+    // Finalize
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    EXPECT_EQ(final_result.root->type, NodeType::Array);
+    ASSERT_EQ(final_result.root->children.size(), 3u);
+}
+
+// --- Test resuming after chunk boundary in string/number/keyword ---
+
+TEST(IncrementalParser, ResumesAfterChunkBoundaryInString) {
+    auto state = makeParserState();
+
+    // Split a string value mid-content
+    auto bytes1 = toBytes(R"("hel)");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    auto bytes2 = toBytes(R"(lo")");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty());
+
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    EXPECT_EQ(final_result.root->type, NodeType::String);
+    EXPECT_EQ(final_result.root->value, "hello");
+}
+
+TEST(IncrementalParser, ResumesAfterChunkBoundaryInNumber) {
+    auto state = makeParserState();
+
+    // Split a number mid-digits
+    auto bytes1 = toBytes("3.14");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    auto bytes2 = toBytes("159");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty());
+
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    EXPECT_EQ(final_result.root->type, NodeType::Number);
+    EXPECT_EQ(final_result.root->value, "3.14159");
+}
+
+TEST(IncrementalParser, ResumesAfterChunkBoundaryInKeyword) {
+    auto state = makeParserState();
+
+    // Split "true" mid-keyword
+    auto bytes1 = toBytes("tr");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    auto bytes2 = toBytes("ue");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty());
+
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    EXPECT_EQ(final_result.root->type, NodeType::Boolean);
+    EXPECT_EQ(final_result.root->value, "true");
+}
+
+// --- Test finalizeParse on residual bytes only ---
+
+TEST(IncrementalParser, FinalizeOnResidualBytesOnly) {
+    // Feed multiple values: `{"a":1} {"b":2}`
+    // parseChunk should emit `{"a":1}` and keep `{"b":2}` in buffer
+    // finalizeParse should parse only `{"b":2}`
+    auto state = makeParserState();
+    auto bytes = toBytes(R"({"a":1} {"b":2})");
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+
+    ASSERT_FALSE(result.error.has_value());
+    ASSERT_EQ(result.emittedNodes.size(), 1u);
+    EXPECT_EQ(result.emittedNodes[0]->type, NodeType::Object);
+    ASSERT_EQ(result.emittedNodes[0]->children.size(), 1u);
+    EXPECT_EQ(result.emittedNodes[0]->children[0]->key, "a");
+
+    // finalizeParse should report error (multiple top-level values)
+    auto final_result = finalizeParse(*result.nextState);
+    EXPECT_TRUE(final_result.error.has_value());
+}
+
+TEST(IncrementalParser, FinalizeEmptyBufferAfterEmission) {
+    // Feed `{} ` (with trailing space) — parseChunk won't emit since
+    // after parsing `{}` only whitespace remains.
+    // Then feed ` {}` — now buffer is `{} {}`, first `{}` gets emitted.
+    // Then finalize — buffer has `{}`, emittedCount=1, so error.
+    auto state = makeParserState();
+
+    auto bytes1 = toBytes("{} ");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty()); // only whitespace after {}
+    state = std::move(r1.nextState);
+
+    auto bytes2 = toBytes("{}");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    // Now buffer has "{} {}" — first {} emitted, second kept
+    ASSERT_EQ(r2.emittedNodes.size(), 1u);
+    EXPECT_EQ(r2.emittedNodes[0]->type, NodeType::Object);
+
+    // finalizeParse: buffer has `{}`, emittedCount=1 → error
+    auto final_result = finalizeParse(*r2.nextState);
+    EXPECT_TRUE(final_result.error.has_value());
+}
+
+TEST(IncrementalParser, SingleValueStreamProducesCorrectResult) {
+    // Standard use case: stream a single JSON object in multiple chunks
+    auto state = makeParserState();
+
+    auto bytes1 = toBytes(R"({"name": )");
+    auto r1 = parseChunk(*state, std::span<const std::byte>(bytes1));
+    ASSERT_FALSE(r1.error.has_value());
+    EXPECT_TRUE(r1.emittedNodes.empty());
+    state = std::move(r1.nextState);
+
+    auto bytes2 = toBytes(R"("Alice", "age": 30})");
+    auto r2 = parseChunk(*state, std::span<const std::byte>(bytes2));
+    ASSERT_FALSE(r2.error.has_value());
+    EXPECT_TRUE(r2.emittedNodes.empty()); // single value, nothing after
+
+    auto final_result = finalizeParse(*r2.nextState);
+    ASSERT_NE(final_result.root, nullptr);
+    ASSERT_FALSE(final_result.error.has_value());
+    EXPECT_EQ(final_result.root->type, NodeType::Object);
+    ASSERT_EQ(final_result.root->children.size(), 2u);
+    EXPECT_EQ(final_result.root->children[0]->key, "name");
+    EXPECT_EQ(final_result.root->children[0]->value, "Alice");
+    EXPECT_EQ(final_result.root->children[1]->key, "age");
+    EXPECT_EQ(final_result.root->children[1]->value, "30");
+}
+
+TEST(IncrementalParser, RetainsOnlyUnparsedTrailingBytes) {
+    // After emitting values, only the unparsed residual should remain
+    auto state = makeParserState();
+    auto bytes = toBytes(R"(null true {"incomplete": )");
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+
+    ASSERT_FALSE(result.error.has_value());
+    // `null` and `true` should be emitted (more content follows each)
+    ASSERT_EQ(result.emittedNodes.size(), 2u);
+    EXPECT_EQ(result.emittedNodes[0]->type, NodeType::Null);
+    EXPECT_EQ(result.emittedNodes[1]->type, NodeType::Boolean);
+    EXPECT_EQ(result.emittedNodes[1]->value, "true");
+
+    // The residual buffer should contain only the incomplete object
+    // Finalize should fail because the object is incomplete
+    auto final_result = finalizeParse(*result.nextState);
+    EXPECT_TRUE(final_result.error.has_value());
+}

@@ -1,10 +1,7 @@
 #include "core/parser.h"
 
-#include <algorithm>
 #include <cctype>
 #include <cstdint>
-#include <sstream>
-#include <stdexcept>
 #include <utility>
 
 namespace jsontitan::core {
@@ -17,6 +14,8 @@ struct ParserState {
     std::string buffer;            // Residual byte buffer accumulated across chunks
     std::size_t bytesConsumed = 0; // Total bytes processed so far
     int currentDepth = 0;          // Current nesting depth (informational)
+    std::size_t emittedCount = 0;  // Number of top-level values emitted so far
+    std::shared_ptr<const JsonNode> lastEmitted; // Last emitted node (for finalizeParse)
 };
 
 // ---------------------------------------------------------------------------
@@ -26,11 +25,6 @@ struct ParserState {
 void ParserStateDeleter::operator()(ParserState* p) const noexcept {
     delete p;
 }
-
-// ---------------------------------------------------------------------------
-// ParseChunkResult is now a simple aggregate with the custom-deleter unique_ptr,
-// so no special member functions are needed.
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Internal recursive-descent parser
@@ -379,44 +373,171 @@ auto makeParserState() -> std::unique_ptr<ParserState, ParserStateDeleter> {
 auto parseChunk(const ParserState& state, std::span<const std::byte> chunk)
     -> ParseChunkResult
 {
-    // Build new state by appending chunk bytes to the accumulated buffer
-    auto nextState = std::unique_ptr<ParserState, ParserStateDeleter>(new ParserState());
-    nextState->buffer = state.buffer;
-    nextState->buffer.append(
+    // Build new buffer by appending chunk bytes to the accumulated buffer
+    std::string newBuffer = state.buffer;
+    newBuffer.append(
         reinterpret_cast<const char*>(chunk.data()),
         chunk.size()
     );
+
+    // Try to parse complete top-level values from the buffer.
+    // Strategy: parse values sequentially. Only EMIT a value if there is
+    // clearly more non-whitespace content after it. If after parsing a value
+    // we're at end of buffer (or only whitespace remains), keep that value
+    // in the buffer — more bytes might arrive that extend it (e.g., numbers).
+    std::vector<std::shared_ptr<const JsonNode>> emitted;
+    std::size_t cursor = 0;
+    std::size_t emittedCount = state.emittedCount;
+    std::shared_ptr<const JsonNode> lastEmitted = state.lastEmitted;
+
+    while (cursor < newBuffer.size()) {
+        // Skip leading whitespace
+        std::size_t valueStart = cursor;
+        while (cursor < newBuffer.size()) {
+            char c = newBuffer[cursor];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                ++cursor;
+            } else {
+                break;
+            }
+        }
+
+        if (cursor >= newBuffer.size()) {
+            // Only whitespace remains - discard it, buffer is effectively empty
+            cursor = newBuffer.size();
+            break;
+        }
+
+        // Remember where this value starts (after whitespace)
+        valueStart = cursor;
+
+        // Attempt to parse one complete value starting at cursor
+        std::string remaining = newBuffer.substr(cursor);
+        InternalParser parser(remaining);
+        auto [node, err] = parser.parseValue("");
+
+        if (err) {
+            // Parse failed — could be incomplete data or syntax error.
+            // In parseChunk, keep the bytes in the buffer for later.
+            // The cursor stays at valueStart so these bytes are retained.
+            cursor = valueStart;
+            break;
+        }
+
+        // Successfully parsed a value. Check if there's more non-whitespace
+        // content after it in the buffer.
+        std::size_t afterValue = cursor + parser.pos;
+        std::size_t checkPos = afterValue;
+        while (checkPos < newBuffer.size()) {
+            char c = newBuffer[checkPos];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                ++checkPos;
+            } else {
+                break;
+            }
+        }
+
+        if (checkPos >= newBuffer.size()) {
+            // No more non-whitespace content after this value.
+            // Don't emit — keep it in the buffer in case more data arrives
+            // that extends this value (e.g., number `3` might become `3.14`).
+            cursor = valueStart;
+            break;
+        }
+
+        // There IS more content after this value — safe to emit it.
+        emitted.push_back(node);
+        lastEmitted = node;
+        emittedCount++;
+        cursor = afterValue;
+    }
+
+    // Build next state with only the unparsed residual bytes
+    auto nextState = std::unique_ptr<ParserState, ParserStateDeleter>(new ParserState());
+    nextState->buffer = newBuffer.substr(cursor);
     nextState->bytesConsumed = state.bytesConsumed + chunk.size();
     nextState->currentDepth = state.currentDepth;
+    nextState->emittedCount = emittedCount;
+    nextState->lastEmitted = lastEmitted;
 
     return ParseChunkResult{
-        .emittedNodes = {},
+        .emittedNodes = std::move(emitted),
         .nextState = std::move(nextState),
         .error = std::nullopt
     };
 }
 
 auto finalizeParse(const ParserState& state) -> ParseResult {
+    // Case 1: Buffer is empty
     if (state.buffer.empty()) {
+        if (state.emittedCount == 0) {
+            // No data was ever provided
+            return ParseResult{
+                .root = nullptr,
+                .error = ParseError{0, "Empty input"}
+            };
+        }
+        if (state.emittedCount == 1) {
+            // Exactly one value was emitted by parseChunk - return it as root
+            return ParseResult{.root = state.lastEmitted, .error = std::nullopt};
+        }
+        // Multiple values were emitted - this is an error (multiple top-level values)
         return ParseResult{
             .root = nullptr,
-            .error = ParseError{0, "Empty input"}
+            .error = ParseError{0, "Unexpected content after JSON value"}
         };
     }
 
-    InternalParser parser(state.buffer);
+    // Case 2: Buffer has content - check if it's only whitespace
+    bool onlyWhitespace = true;
+    for (char c : state.buffer) {
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+            onlyWhitespace = false;
+            break;
+        }
+    }
+
+    if (onlyWhitespace) {
+        // Trailing whitespace only - same as empty buffer
+        if (state.emittedCount == 0) {
+            return ParseResult{
+                .root = nullptr,
+                .error = ParseError{0, "Empty input"}
+            };
+        }
+        if (state.emittedCount == 1) {
+            return ParseResult{.root = state.lastEmitted, .error = std::nullopt};
+        }
+        return ParseResult{
+            .root = nullptr,
+            .error = ParseError{0, "Unexpected content after JSON value"}
+        };
+    }
+
+    // Case 3: Buffer has non-whitespace content - parse it
+    InternalParser parser(state.buffer, state.bytesConsumed - state.buffer.size());
     auto [root, err] = parser.parseValue("");
 
     if (err) {
         return ParseResult{.root = nullptr, .error = err};
     }
 
-    // Check for trailing non-whitespace content
+    // Check for trailing non-whitespace content after the parsed value
     parser.skipWhitespace();
     if (!parser.atEnd()) {
         return ParseResult{
             .root = nullptr,
             .error = parser.makeError("Unexpected content after JSON value")
+        };
+    }
+
+    // If values were previously emitted, having another value here means
+    // multiple top-level values total
+    if (state.emittedCount > 0) {
+        return ParseResult{
+            .root = nullptr,
+            .error = ParseError{state.bytesConsumed - state.buffer.size(),
+                                "Unexpected content after JSON value"}
         };
     }
 
