@@ -6993,3 +6993,261 @@ TEST(RecentFilesUnit, FormatEntrySimplePath) {
     auto result = formatRecentEntry("/home/user/data.json");
     EXPECT_EQ(result, "data.json [/home/user]");
 }
+
+// ---------------------------------------------------------------------------
+// detail-panel-hang-fix: Task 1
+// Property 1: Bug Condition — Unbounded Output for Large Nodes
+// Validates: Requirements 1.1, 1.2, 2.1, 2.2, 2.3
+//
+// GOAL: Surface counterexamples that demonstrate prettyPrint() produces
+// unbounded output for large nodes. On unfixed code, prettyPrintBounded()
+// does not exist, so this test will fail to compile — confirming the bug
+// condition (no size-limiting mechanism exists).
+// ---------------------------------------------------------------------------
+
+TEST(DetailPanelHangFix, BugConditionUnboundedOutputForLargeNodes) {
+    rc::check("Property 1: Bug Condition — prettyPrintBounded limits output for large nodes",
+        [](void) {
+            // Generate a random child count between 5000 and 8000
+            const auto childCount = *rc::gen::inRange(5000, 8001);
+
+            // Build a large object node with many string children
+            std::vector<std::shared_ptr<const JsonNode>> children;
+            children.reserve(static_cast<std::size_t>(childCount));
+            for (int i = 0; i < childCount; ++i) {
+                // Each child is a string value with a key like "key_XXXX"
+                // and a value like "value_XXXX_padding..." to ensure output > 65536 bytes
+                std::string key = "key_" + std::to_string(i);
+                std::string value = "value_" + std::to_string(i) + "_padding_data";
+                children.push_back(JsonNode::makeString(std::move(key), std::move(value)));
+            }
+
+            auto largeNode = JsonNode::makeObject("root", std::move(children));
+
+            // Verify the full output would exceed the limit (bug condition holds)
+            auto fullOutput = prettyPrint(*largeNode);
+            RC_PRE(fullOutput.size() > 65536);  // Precondition: node is large enough
+
+            // Call prettyPrintBounded with maxOutputSize = 65536
+            // This API does not exist on unfixed code — will fail to compile
+            PrettyPrintOptions opts;
+            opts.maxOutputSize = 65536;
+            auto result = prettyPrintBounded(*largeNode, opts);
+
+            // Assert: output is bounded (with small constant for partial line)
+            RC_ASSERT(result.output.size() <= 65536 + 256);
+
+            // Assert: truncation is signaled
+            RC_ASSERT(result.truncated == true);
+        });
+}
+
+
+// ---------------------------------------------------------------------------
+// detail-panel-hang-fix: Task 2
+// Property 2: Preservation — Small Node Output Is Identical
+// Validates: Requirements 3.1, 3.2, 3.3, 3.4
+//
+// GOAL: Verify that for small nodes (output ≤ 65536 bytes), the bounded
+// pretty printer produces byte-for-byte identical output to the unlimited
+// version, and signals no truncation. On unfixed code, prettyPrintBounded()
+// and PrettyPrintResult do not exist, so these tests will fail to compile —
+// confirming the API doesn't exist yet.
+// ---------------------------------------------------------------------------
+
+// Helper: count total descendants in a JsonNode tree
+static std::size_t countDescendants(const std::shared_ptr<const JsonNode>& node) {
+    if (!node) return 0;
+    std::size_t count = 1;
+    for (const auto& child : node->children) {
+        count += countDescendants(child);
+    }
+    return count;
+}
+
+// Helper: generate a random small JsonNode tree with bounded descendants
+static std::shared_ptr<const JsonNode> generateSmallTree(int maxDepth, int& budget, std::mt19937& rng) {
+    if (budget <= 0 || maxDepth <= 0) {
+        // Generate a scalar node
+        std::uniform_int_distribution<int> scalarDist(0, 3);
+        switch (scalarDist(rng)) {
+            case 0: return JsonNode::makeString("k", "value");
+            case 1: return JsonNode::makeNumber("k", "42");
+            case 2: return JsonNode::makeBool("k", true);
+            default: return JsonNode::makeNull("k");
+        }
+    }
+
+    std::uniform_int_distribution<int> typeDist(0, 5);
+    int t = typeDist(rng);
+
+    if (t <= 1) {
+        // Object with a few children
+        std::uniform_int_distribution<int> sizeDist(0, std::min(10, budget));
+        int n = sizeDist(rng);
+        budget -= n;
+        std::vector<std::shared_ptr<const JsonNode>> children;
+        for (int i = 0; i < n; ++i) {
+            auto child = generateSmallTree(maxDepth - 1, budget, rng);
+            children.push_back(child);
+        }
+        return JsonNode::makeObject("obj", std::move(children));
+    }
+    if (t <= 3) {
+        // Array with a few children
+        std::uniform_int_distribution<int> sizeDist(0, std::min(10, budget));
+        int n = sizeDist(rng);
+        budget -= n;
+        std::vector<std::shared_ptr<const JsonNode>> children;
+        for (int i = 0; i < n; ++i) {
+            auto child = generateSmallTree(maxDepth - 1, budget, rng);
+            children.push_back(child);
+        }
+        return JsonNode::makeArray("arr", std::move(children));
+    }
+    // Scalar
+    std::uniform_int_distribution<int> scalarDist(0, 3);
+    switch (scalarDist(rng)) {
+        case 0: return JsonNode::makeString("s", "hello world");
+        case 1: return JsonNode::makeNumber("n", "3.14");
+        case 2: return JsonNode::makeBool("b", false);
+        default: return JsonNode::makeNull("x");
+    }
+}
+
+TEST(DetailPanelHangFix, PreservationSmallNodeOutputIdentical) {
+    rc::check("Property 2: Preservation — small node output is identical with bounded and unbounded",
+        [](void) {
+            // Generate a random seed for our tree generator
+            auto seed = *rc::gen::arbitrary<uint32_t>();
+            std::mt19937 rng(seed);
+
+            // Generate a small tree with 1–200 descendants
+            int budget = *rc::gen::inRange(1, 201);
+            auto tree = generateSmallTree(5, budget, rng);
+
+            // Get the unlimited output (existing API)
+            auto unlimitedOutput = prettyPrint(*tree);
+
+            // Precondition: the full output must be ≤ 65536 bytes (small tree)
+            RC_PRE(unlimitedOutput.size() <= 65536);
+
+            // Call prettyPrintBounded with maxOutputSize = 65536
+            // This API does not exist on unfixed code — will fail to compile
+            PrettyPrintOptions opts;
+            opts.maxOutputSize = 65536;
+            auto result = prettyPrintBounded(*tree, opts);
+
+            // Assert: output is byte-for-byte identical to unlimited version
+            RC_ASSERT(result.output == unlimitedOutput);
+
+            // Assert: no truncation occurred
+            RC_ASSERT(result.truncated == false);
+        });
+}
+
+TEST(DetailPanelHangFix, PreservationEmptyObject) {
+    // Empty object {} must produce identical output
+    auto emptyObj = JsonNode::makeObject("", {});
+    auto unlimitedOutput = prettyPrint(*emptyObj);
+    EXPECT_EQ(unlimitedOutput, "{}");
+
+    // Bounded version must produce the same
+    PrettyPrintOptions opts;
+    opts.maxOutputSize = 65536;
+    auto result = prettyPrintBounded(*emptyObj, opts);
+    EXPECT_EQ(result.output, "{}");
+    EXPECT_FALSE(result.truncated);
+}
+
+TEST(DetailPanelHangFix, PreservationEmptyArray) {
+    // Empty array [] must produce identical output
+    auto emptyArr = JsonNode::makeArray("", {});
+    auto unlimitedOutput = prettyPrint(*emptyArr);
+    EXPECT_EQ(unlimitedOutput, "[]");
+
+    // Bounded version must produce the same
+    PrettyPrintOptions opts;
+    opts.maxOutputSize = 65536;
+    auto result = prettyPrintBounded(*emptyArr, opts);
+    EXPECT_EQ(result.output, "[]");
+    EXPECT_FALSE(result.truncated);
+}
+
+TEST(DetailPanelHangFix, PreservationScalarNodes) {
+    // Scalar nodes are always small — output must be identical
+
+    auto strNode = JsonNode::makeString("", "hello world");
+    auto numNode = JsonNode::makeNumber("", "3.14159");
+    auto boolNode = JsonNode::makeBool("", true);
+    auto nullNode = JsonNode::makeNull("");
+
+    PrettyPrintOptions opts;
+    opts.maxOutputSize = 65536;
+
+    // String
+    auto strResult = prettyPrintBounded(*strNode, opts);
+    EXPECT_EQ(strResult.output, prettyPrint(*strNode));
+    EXPECT_FALSE(strResult.truncated);
+
+    // Number
+    auto numResult = prettyPrintBounded(*numNode, opts);
+    EXPECT_EQ(numResult.output, prettyPrint(*numNode));
+    EXPECT_FALSE(numResult.truncated);
+
+    // Boolean
+    auto boolResult = prettyPrintBounded(*boolNode, opts);
+    EXPECT_EQ(boolResult.output, prettyPrint(*boolNode));
+    EXPECT_FALSE(boolResult.truncated);
+
+    // Null
+    auto nullResult = prettyPrintBounded(*nullNode, opts);
+    EXPECT_EQ(nullResult.output, prettyPrint(*nullNode));
+    EXPECT_FALSE(nullResult.truncated);
+}
+
+TEST(DetailPanelHangFix, PreservationSortKeysEnabled) {
+    // With sortKeys = true, small objects must produce identical sorted output
+    auto child1 = JsonNode::makeString("zebra", "z");
+    auto child2 = JsonNode::makeString("apple", "a");
+    auto child3 = JsonNode::makeString("mango", "m");
+    auto obj = JsonNode::makeObject("", {child1, child2, child3});
+
+    PrettyPrintOptions opts;
+    opts.sortKeys = true;
+    opts.maxOutputSize = 65536;
+
+    auto unlimitedOutput = prettyPrint(*obj, {.sortKeys = true});
+    auto result = prettyPrintBounded(*obj, opts);
+
+    // Output must be byte-for-byte identical
+    EXPECT_EQ(result.output, unlimitedOutput);
+    EXPECT_FALSE(result.truncated);
+
+    // Verify keys are actually sorted in the output
+    auto applePos = result.output.find("\"apple\"");
+    auto mangoPos = result.output.find("\"mango\"");
+    auto zebraPos = result.output.find("\"zebra\"");
+    EXPECT_LT(applePos, mangoPos);
+    EXPECT_LT(mangoPos, zebraPos);
+}
+
+TEST(DetailPanelHangFix, PreservationUnlimitedModeIdentical) {
+    // With maxOutputSize = 0 (unlimited), prettyPrintBounded must produce
+    // the same output as prettyPrint for any node
+    auto child1 = JsonNode::makeString("name", "JSONTitan");
+    auto child2 = JsonNode::makeNumber("version", "1");
+    auto child3 = JsonNode::makeBool("active", true);
+    auto child4 = JsonNode::makeNull("data");
+    auto nested = JsonNode::makeArray("items", {child1, child2});
+    auto root = JsonNode::makeObject("", {nested, child3, child4});
+
+    PrettyPrintOptions opts;
+    opts.maxOutputSize = 0;  // unlimited
+
+    auto unlimitedOutput = prettyPrint(*root);
+    auto result = prettyPrintBounded(*root, opts);
+
+    EXPECT_EQ(result.output, unlimitedOutput);
+    EXPECT_FALSE(result.truncated);
+}

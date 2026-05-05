@@ -42,7 +42,17 @@ auto escapeJsonString(const std::string& s) -> std::string {
 void printNode(const JsonNode& node,
                const PrettyPrintOptions& options,
                int depth,
-               std::string& out) {
+               std::string& out,
+               bool& truncated) {
+    // Early exit if already truncated
+    if (truncated) return;
+
+    // Check size limit before doing any work
+    if (options.maxOutputSize > 0 && out.size() >= options.maxOutputSize) {
+        truncated = true;
+        return;
+    }
+
     const std::string indent(static_cast<std::size_t>(depth * options.indentWidth), ' ');
     const std::string childIndent(static_cast<std::size_t>((depth + 1) * options.indentWidth), ' ');
 
@@ -64,10 +74,16 @@ void printNode(const JsonNode& node,
 
             out += "{\n";
             for (std::size_t i = 0; i < children.size(); ++i) {
+                if (truncated) return;
+                if (options.maxOutputSize > 0 && out.size() >= options.maxOutputSize) {
+                    truncated = true;
+                    return;
+                }
                 out += childIndent;
                 out += escapeJsonString(children[i]->key);
                 out += ": ";
-                printNode(*children[i], options, depth + 1, out);
+                printNode(*children[i], options, depth + 1, out, truncated);
+                if (truncated) return;
                 if (i + 1 < children.size()) {
                     out += ',';
                 }
@@ -86,8 +102,14 @@ void printNode(const JsonNode& node,
 
             out += "[\n";
             for (std::size_t i = 0; i < node.children.size(); ++i) {
+                if (truncated) return;
+                if (options.maxOutputSize > 0 && out.size() >= options.maxOutputSize) {
+                    truncated = true;
+                    return;
+                }
                 out += childIndent;
-                printNode(*node.children[i], options, depth + 1, out);
+                printNode(*node.children[i], options, depth + 1, out, truncated);
+                if (truncated) return;
                 if (i + 1 < node.children.size()) {
                     out += ',';
                 }
@@ -120,9 +142,19 @@ void printNode(const JsonNode& node,
 } // anonymous namespace
 
 auto prettyPrint(const JsonNode& node, PrettyPrintOptions options) -> std::string {
+    // Backward compatible: use maxOutputSize = 0 (unlimited)
+    options.maxOutputSize = 0;
     std::string result;
-    printNode(node, options, 0, result);
+    bool truncated = false;
+    printNode(node, options, 0, result, truncated);
     return result;
+}
+
+auto prettyPrintBounded(const JsonNode& node, PrettyPrintOptions options) -> PrettyPrintResult {
+    std::string output;
+    bool truncated = false;
+    printNode(node, options, 0, output, truncated);
+    return PrettyPrintResult{.output = std::move(output), .truncated = truncated};
 }
 
 } // namespace jsontitan::core
