@@ -6381,3 +6381,351 @@ TEST(IncrementalParser, RetainsOnlyUnparsedTrailingBytes) {
     auto final_result = finalizeParse(*result.nextState);
     EXPECT_TRUE(final_result.error.has_value());
 }
+
+// ---------------------------------------------------------------------------
+// Task 10.2: Integration tests for parseBuffer end-to-end
+// Requirements: 6.1, 6.2, 8.2, 8.3
+// ---------------------------------------------------------------------------
+
+#include "core/parse_orchestrator.h"
+
+// Helper: compare two JsonNode trees for structural and value equivalence
+static bool treesEquivalent(const std::shared_ptr<const JsonNode>& a,
+                            const std::shared_ptr<const JsonNode>& b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    if (a->type != b->type) return false;
+    if (a->key != b->key) return false;
+    if (a->value != b->value) return false;
+    if (a->children.size() != b->children.size()) return false;
+    for (std::size_t i = 0; i < a->children.size(); ++i) {
+        if (!treesEquivalent(a->children[i], b->children[i])) return false;
+    }
+    return true;
+}
+
+// === Small input (single-threaded path) produces correct result ============
+
+TEST(ParseBufferIntegration, SmallInputProducesCorrectResult) {
+    // Input well below the 1MB parallel threshold — uses single-threaded path
+    std::string json = R"({"name": "Alice", "age": 30, "active": true})";
+
+    auto result = parseBuffer(std::string(json));
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.root, nullptr);
+    ASSERT_FALSE(result.error.has_value());
+
+    // Convert to public ParseResult and verify structure
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+    ASSERT_FALSE(pr.error.has_value());
+    EXPECT_EQ(pr.root->type, NodeType::Object);
+    ASSERT_EQ(pr.root->children.size(), 3u);
+    EXPECT_EQ(pr.root->children[0]->key, "name");
+    EXPECT_EQ(pr.root->children[0]->value, "Alice");
+    EXPECT_EQ(pr.root->children[1]->key, "age");
+    EXPECT_EQ(pr.root->children[1]->value, "30");
+    EXPECT_EQ(pr.root->children[2]->key, "active");
+    EXPECT_EQ(pr.root->children[2]->value, "true");
+}
+
+TEST(ParseBufferIntegration, SmallInputNestedStructure) {
+    std::string json = R"({"data": [1, 2, {"nested": true}], "meta": null})";
+
+    auto result = parseBuffer(std::string(json));
+    ASSERT_TRUE(result.ok());
+
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+    EXPECT_EQ(pr.root->type, NodeType::Object);
+    ASSERT_EQ(pr.root->children.size(), 2u);
+
+    auto& data = pr.root->children[0];
+    EXPECT_EQ(data->key, "data");
+    EXPECT_EQ(data->type, NodeType::Array);
+    ASSERT_EQ(data->children.size(), 3u);
+    EXPECT_EQ(data->children[0]->value, "1");
+    EXPECT_EQ(data->children[1]->value, "2");
+    EXPECT_EQ(data->children[2]->type, NodeType::Object);
+
+    auto& meta = pr.root->children[1];
+    EXPECT_EQ(meta->key, "meta");
+    EXPECT_EQ(meta->type, NodeType::Null);
+}
+
+TEST(ParseBufferIntegration, SmallInputEquivalentToTraditionalParser) {
+    // Verify parseBuffer produces the same result as parseChunk+finalizeParse
+    std::string json = R"({
+        "name": "JSONTitan",
+        "version": "0.1.0",
+        "features": ["parsing", "search", "export"],
+        "config": {
+            "maxDepth": 100,
+            "streaming": true,
+            "encoding": null
+        }
+    })";
+
+    // Parse via traditional API
+    auto traditional = parseAll(json);
+    ASSERT_NE(traditional.root, nullptr);
+
+    // Parse via parseBuffer
+    auto arenaResult = parseBuffer(std::string(json));
+    ASSERT_TRUE(arenaResult.ok());
+    auto optimized = arenaResult.toParseResult();
+    ASSERT_NE(optimized.root, nullptr);
+
+    // Trees must be equivalent
+    EXPECT_TRUE(treesEquivalent(traditional.root, optimized.root));
+}
+
+// === Large input (parallel path) produces result equivalent to single-threaded
+
+TEST(ParseBufferIntegration, LargeInputParallelEquivalentToSingleThreaded) {
+    // Generate a large JSON array that exceeds the parallel threshold when
+    // we set a low threshold. This tests the parallel path.
+    std::string json = "[";
+    const int numElements = 500;
+    for (int i = 0; i < numElements; ++i) {
+        if (i > 0) json += ",";
+        json += R"({"id":)" + std::to_string(i) +
+                R"(,"value":"item_)" + std::to_string(i) + R"("})";
+    }
+    json += "]";
+
+    // Parse with single-threaded path (high threshold)
+    ParseBufferOptions singleOpts;
+    singleOpts.parallelThreshold = json.size() + 1; // Force single-threaded
+    auto singleResult = parseBuffer(std::string(json), singleOpts);
+    ASSERT_TRUE(singleResult.ok());
+    auto singlePR = singleResult.toParseResult();
+    ASSERT_NE(singlePR.root, nullptr);
+
+    // Parse with parallel path (low threshold)
+    ParseBufferOptions parallelOpts;
+    parallelOpts.parallelThreshold = 64; // Force parallel
+    auto parallelResult = parseBuffer(std::string(json), parallelOpts);
+    ASSERT_TRUE(parallelResult.ok());
+    auto parallelPR = parallelResult.toParseResult();
+    ASSERT_NE(parallelPR.root, nullptr);
+
+    // Both should produce equivalent trees
+    EXPECT_TRUE(treesEquivalent(singlePR.root, parallelPR.root));
+}
+
+TEST(ParseBufferIntegration, LargeInputParallelPreservesAllElements) {
+    // Build a large array and verify all elements are present after parallel parse
+    std::string json = "[";
+    const int numElements = 200;
+    for (int i = 0; i < numElements; ++i) {
+        if (i > 0) json += ",";
+        json += std::to_string(i * 7);
+    }
+    json += "]";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 64; // Force parallel path
+    auto result = parseBuffer(std::string(json), opts);
+    ASSERT_TRUE(result.ok());
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+    EXPECT_EQ(pr.root->type, NodeType::Array);
+    ASSERT_EQ(pr.root->children.size(), static_cast<std::size_t>(numElements));
+
+    for (int i = 0; i < numElements; ++i) {
+        EXPECT_EQ(pr.root->children[i]->value, std::to_string(i * 7));
+    }
+}
+
+// === Forced SimdLevel::Scalar produces same result as SIMD path ============
+
+TEST(ParseBufferIntegration, ScalarProducesSameResultAsSimd) {
+    std::string json = R"({
+        "users": [
+            {"name": "Alice", "score": 95.5},
+            {"name": "Bob", "score": 87.3},
+            {"name": "Charlie", "score": 92.1}
+        ],
+        "metadata": {"count": 3, "valid": true}
+    })";
+
+    // Parse with detected SIMD level
+    ParseBufferOptions simdOpts;
+    simdOpts.simdLevel = detectSimdLevel();
+    auto simdResult = parseBuffer(std::string(json), simdOpts);
+    ASSERT_TRUE(simdResult.ok());
+    auto simdPR = simdResult.toParseResult();
+    ASSERT_NE(simdPR.root, nullptr);
+
+    // Parse with forced Scalar
+    ParseBufferOptions scalarOpts;
+    scalarOpts.simdLevel = SimdLevel::Scalar;
+    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
+    ASSERT_TRUE(scalarResult.ok());
+    auto scalarPR = scalarResult.toParseResult();
+    ASSERT_NE(scalarPR.root, nullptr);
+
+    // Results must be equivalent
+    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
+}
+
+TEST(ParseBufferIntegration, ScalarEquivalenceWithEscapeSequences) {
+    // Test with strings containing escape sequences to stress SIMD string handling
+    std::string json = R"({
+        "escaped": "line1\nline2\ttab",
+        "unicode": "\u0041\u0042\u0043",
+        "surrogate": "\uD83D\uDE00",
+        "backslash": "path\\to\\file"
+    })";
+
+    ParseBufferOptions simdOpts;
+    simdOpts.simdLevel = detectSimdLevel();
+    auto simdResult = parseBuffer(std::string(json), simdOpts);
+    ASSERT_TRUE(simdResult.ok());
+    auto simdPR = simdResult.toParseResult();
+
+    ParseBufferOptions scalarOpts;
+    scalarOpts.simdLevel = SimdLevel::Scalar;
+    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
+    ASSERT_TRUE(scalarResult.ok());
+    auto scalarPR = scalarResult.toParseResult();
+
+    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
+}
+
+TEST(ParseBufferIntegration, ScalarEquivalenceOnLargeParallelInput) {
+    // Test scalar vs SIMD on input that triggers the parallel path
+    std::string json = "[";
+    for (int i = 0; i < 100; ++i) {
+        if (i > 0) json += ",";
+        json += R"({"key":"value_)" + std::to_string(i) + R"("})";
+    }
+    json += "]";
+
+    ParseBufferOptions simdOpts;
+    simdOpts.parallelThreshold = 64;
+    simdOpts.simdLevel = detectSimdLevel();
+    auto simdResult = parseBuffer(std::string(json), simdOpts);
+    ASSERT_TRUE(simdResult.ok());
+    auto simdPR = simdResult.toParseResult();
+
+    ParseBufferOptions scalarOpts;
+    scalarOpts.parallelThreshold = 64;
+    scalarOpts.simdLevel = SimdLevel::Scalar;
+    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
+    ASSERT_TRUE(scalarResult.ok());
+    auto scalarPR = scalarResult.toParseResult();
+
+    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
+}
+
+// === Round-trip through PrettyPrinter for optimized parser output ===========
+
+TEST(ParseBufferIntegration, RoundTripThroughPrettyPrinter) {
+    std::string json = R"({"name":"Alice","scores":[100,95,87],"active":true,"address":null})";
+
+    // Parse with optimized parser
+    auto result = parseBuffer(std::string(json));
+    ASSERT_TRUE(result.ok());
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+
+    // Pretty-print the result
+    std::string printed = prettyPrint(*pr.root);
+    EXPECT_FALSE(printed.empty());
+
+    // Re-parse the pretty-printed output
+    auto reparsed = parseBuffer(std::string(printed));
+    ASSERT_TRUE(reparsed.ok());
+    auto rePR = reparsed.toParseResult();
+    ASSERT_NE(rePR.root, nullptr);
+
+    // The re-parsed tree must be equivalent to the original
+    EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
+}
+
+TEST(ParseBufferIntegration, RoundTripPreservesComplexStructure) {
+    std::string json = R"({
+        "database": {
+            "host": "localhost",
+            "port": 5432,
+            "credentials": {
+                "user": "admin",
+                "pass": "s3cr3t"
+            }
+        },
+        "features": [
+            {"name": "parsing", "enabled": true},
+            {"name": "export", "enabled": false}
+        ],
+        "version": "2.0.1",
+        "debug": null
+    })";
+
+    // Parse -> print -> re-parse
+    auto result = parseBuffer(std::string(json));
+    ASSERT_TRUE(result.ok());
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+
+    std::string printed = prettyPrint(*pr.root);
+    EXPECT_FALSE(printed.empty());
+
+    auto reparsed = parseBuffer(std::string(printed));
+    ASSERT_TRUE(reparsed.ok());
+    auto rePR = reparsed.toParseResult();
+    ASSERT_NE(rePR.root, nullptr);
+
+    EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
+}
+
+TEST(ParseBufferIntegration, RoundTripWithEscapeSequences) {
+    // Escape sequences must survive parse -> print -> re-parse
+    std::string json = R"({"msg":"hello\nworld","path":"C:\\Users\\test","quote":"say \"hi\""})";
+
+    auto result = parseBuffer(std::string(json));
+    ASSERT_TRUE(result.ok());
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+
+    // Verify escape sequences were resolved correctly
+    EXPECT_EQ(pr.root->children[0]->value, "hello\nworld");
+    EXPECT_EQ(pr.root->children[1]->value, "C:\\Users\\test");
+    EXPECT_EQ(pr.root->children[2]->value, "say \"hi\"");
+
+    // Round-trip
+    std::string printed = prettyPrint(*pr.root);
+    auto reparsed = parseBuffer(std::string(printed));
+    ASSERT_TRUE(reparsed.ok());
+    auto rePR = reparsed.toParseResult();
+    ASSERT_NE(rePR.root, nullptr);
+
+    EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
+}
+
+TEST(ParseBufferIntegration, RoundTripParallelPathOutput) {
+    // Verify round-trip works for output from the parallel parsing path
+    std::string json = "[";
+    for (int i = 0; i < 50; ++i) {
+        if (i > 0) json += ",";
+        json += R"({"id":)" + std::to_string(i) + R"(,"label":"item_)" + std::to_string(i) + R"("})";
+    }
+    json += "]";
+
+    ParseBufferOptions opts;
+    opts.parallelThreshold = 64; // Force parallel path
+    auto result = parseBuffer(std::string(json), opts);
+    ASSERT_TRUE(result.ok());
+    auto pr = result.toParseResult();
+    ASSERT_NE(pr.root, nullptr);
+
+    // Pretty-print and re-parse
+    std::string printed = prettyPrint(*pr.root);
+    auto reparsed = parseBuffer(std::string(printed));
+    ASSERT_TRUE(reparsed.ok());
+    auto rePR = reparsed.toParseResult();
+    ASSERT_NE(rePR.root, nullptr);
+
+    EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
+}
