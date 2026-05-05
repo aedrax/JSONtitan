@@ -161,3 +161,32 @@ target_link_libraries(qss_resource_tests
 )
 
 add_test(NAME qss_resource_tests COMMAND qss_resource_tests)
+
+# ── Token Emitter Tests (Google Test + RapidCheck, no Qt) ────────
+add_executable(token_emitter_tests token_emitter_tests.cpp)
+
+target_link_libraries(token_emitter_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(token_emitter_tests)
+
+# ── Syntax Highlighter Tests (Google Test + Qt for QTextEdit) ────
+add_executable(syntax_highlighter_tests syntax_highlighter_tests.cpp)
+
+target_link_libraries(syntax_highlighter_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(syntax_highlighter_tests)

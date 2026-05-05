@@ -14,8 +14,10 @@
 #include "core/parser.h"
 #include "core/pretty_printer.h"
 #include "core/search_engine.h"
+#include "core/token_emitter.h"
 #include "core/union_engine.h"
 #include "shell/drop_validator.h"
+#include "shell/syntax_highlighter.h"
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -683,17 +685,10 @@ void MainWindow::onTreeSelectionChanged() {
         return;
     }
 
-    // Pretty-print the selected node's value with bounded output to avoid UI hangs
+    // Emit tokens with bounded output to avoid UI hangs
     jsontitan::core::PrettyPrintOptions opts;
     opts.maxOutputSize = 65536;  // 64 KB limit
 
-    auto result = jsontitan::core::prettyPrintBounded(*node, opts);
-
-    if (result.truncated) {
-        m_detailPanel->setPlainText(
-            QString::fromStdString(result.output) +
-            QStringLiteral("\n\n... (output truncated)"));
-    } else {
-        m_detailPanel->setPlainText(QString::fromStdString(result.output));
-    }
+    auto tokenResult = jsontitan::core::emitTokens(*node, opts);
+    jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
 }

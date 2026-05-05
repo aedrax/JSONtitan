@@ -5,17 +5,15 @@ FilterProxyModel::FilterProxyModel(QObject* parent)
 }
 
 void FilterProxyModel::applyFilter(const jsontitan::core::FilterResult& result) {
-    beginFilterChange();
     m_filtered = true;
     buildVisiblePaths(result);
-    endFilterChange();
+    invalidateFilter();
 }
 
 void FilterProxyModel::clearFilter() {
-    beginFilterChange();
     m_filtered = false;
     m_visiblePaths.clear();
-    endFilterChange();
+    invalidateFilter();
 }
 
 bool FilterProxyModel::filterAcceptsRow(int sourceRow,

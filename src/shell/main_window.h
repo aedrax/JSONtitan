@@ -27,6 +27,7 @@
 #include "shell/filter_proxy_model.h"
 #include "shell/recent_files_manager.h"
 #include "shell/search_worker.h"
+#include "shell/syntax_highlighter.h"
 #include "shell/tree_model.h"
 
 class MainWindow : public QMainWindow {
@@ -105,6 +106,9 @@ private:
     // Background search worker
     SearchWorker* m_searchWorker = nullptr;
     QThread* m_searchThread = nullptr;
+
+    // Syntax highlighting
+    jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();
 
     // Current data
     std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;
