@@ -1,7 +1,6 @@
 #include "shell/file_loader.h"
 
-#include "core/json_node.h"
-#include "core/parser.h"
+#include "core/parse_orchestrator.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -36,63 +35,38 @@ void FileLoaderWorker::process(const QString& filePath) {
         return;
     }
 
-    constexpr qint64 chunkSize = 64 * 1024; // 64 KB chunks
-    auto state = makeParserState();
-    qint64 bytesRead = 0;
-    int lastReportedProgress = -1;
+    emit progressUpdated(0);
 
-    while (!file.atEnd()) {
-        // Check cancellation between chunks
-        if (m_cancelled.load(std::memory_order_relaxed)) {
-            return; // Cancelled — emit no result
-        }
+    // Phase 1: Read entire file into memory
+    QByteArray raw = file.readAll();
+    std::string input(raw.constData(), static_cast<std::size_t>(raw.size()));
+    emit progressUpdated(50);
 
-        QByteArray rawChunk = file.read(chunkSize);
-        if (rawChunk.isEmpty()) {
-            break;
-        }
-
-        bytesRead += rawChunk.size();
-
-        // Convert QByteArray to span<const std::byte>
-        auto chunkSpan = std::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(rawChunk.constData()),
-            static_cast<std::size_t>(rawChunk.size()));
-
-        auto result = parseChunk(*state, chunkSpan);
-
-        if (result.error) {
-            emit parseError(QStringLiteral("Parse error at byte %1: %2")
-                                .arg(result.error->byteOffset)
-                                .arg(QString::fromStdString(result.error->description)));
-            return;
-        }
-
-        state = std::move(result.nextState);
-
-        // Report progress
-        int progress = static_cast<int>((bytesRead * 100) / totalSize);
-        if (progress != lastReportedProgress) {
-            lastReportedProgress = progress;
-            emit progressUpdated(progress);
-        }
-    }
-
-    // Check cancellation one final time before finalizing
+    // Cancellation check after read
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
 
-    auto finalResult = finalizeParse(*state);
+    // Phase 2: Parse via optimized pipeline
+    auto arenaResult = parseBuffer(std::move(input));
 
-    if (finalResult.error) {
+    if (arenaResult.error) {
         emit parseError(QStringLiteral("Parse error at byte %1: %2")
-                            .arg(finalResult.error->byteOffset)
-                            .arg(QString::fromStdString(finalResult.error->description)));
+                            .arg(arenaResult.error->byteOffset)
+                            .arg(QString::fromStdString(arenaResult.error->description)));
         return;
     }
 
-    emit parseComplete(std::move(finalResult.root));
+    // Phase 3: Convert to public type
+    auto result = arenaResult.toParseResult();
+
+    // Cancellation check after parse
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    emit progressUpdated(100);
+    emit parseComplete(std::move(result.root));
 }
 
 void FileLoaderWorker::cancel() {
