@@ -2,9 +2,11 @@
 
 #include <QApplication>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QSplitter>
 #include <QVBoxLayout>
 
@@ -12,11 +14,13 @@
 #include "core/pretty_printer.h"
 #include "core/search_engine.h"
 #include "core/union_engine.h"
+#include "shell/drop_validator.h"
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
     setWindowTitle("JSONTitan");
     resize(1200, 800);
+    setAcceptDrops(true);
 
     m_treeModel = new TreeModel(this);
     m_filterProxy = new FilterProxyModel(this);
@@ -26,6 +30,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupMenuBar();
     setupCentralWidget();
     setupStatusBar();
+    setupDropOverlay();
     showWelcomeMessage();
 
     // Connect file loader signals
@@ -159,6 +164,74 @@ void MainWindow::setupStatusBar() {
     m_progressBar->setRange(0, 100);
     m_progressBar->hide();
     statusBar()->addPermanentWidget(m_progressBar);
+}
+
+void MainWindow::setupDropOverlay() {
+    m_dropOverlay = new QLabel(this);
+    m_dropOverlay->setText(tr("Drop JSON file here"));
+    m_dropOverlay->setAlignment(Qt::AlignCenter);
+    m_dropOverlay->setStyleSheet(
+        "QLabel {"
+        "  background-color: rgba(0, 120, 215, 80);"
+        "  color: white;"
+        "  font-size: 24px;"
+        "  font-weight: bold;"
+        "  border: 3px dashed rgba(255, 255, 255, 180);"
+        "  border-radius: 12px;"
+        "}");
+    m_dropOverlay->hide();
+}
+
+void MainWindow::showDropOverlay() {
+    m_dropOverlay->setGeometry(rect());
+    m_dropOverlay->raise();
+    m_dropOverlay->show();
+}
+
+void MainWindow::hideDropOverlay() {
+    m_dropOverlay->hide();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    auto result = DropValidator::validate(event->mimeData());
+    if (result.accepted) {
+        event->acceptProposedAction();
+        showDropOverlay();
+    }
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent* /*event*/) {
+    hideDropOverlay();
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    hideDropOverlay();
+
+    auto result = DropValidator::validate(event->mimeData());
+    if (!result.accepted) {
+        return;
+    }
+
+    event->acceptProposedAction();
+
+    // Cancel any in-progress parse
+    m_fileLoader->cancelParse();
+
+    // Clear search bar, detail panel, and exit union mode
+    m_searchBar->clear();
+    m_searchErrorLabel->hide();
+    m_detailPanel->clear();
+    m_isUnionMode = false;
+
+    // Set current file name from the dropped file path
+    m_currentFileName = QFileInfo(result.filePath).fileName();
+
+    // Show progress bar and start parsing
+    m_progressBar->setValue(0);
+    m_progressBar->show();
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+
+    m_fileLoader->startParse(result.filePath);
 }
 
 void MainWindow::showWelcomeMessage() {
