@@ -1,0 +1,299 @@
+/*
+ * JSONTitan Dark Theme — Catppuccin Mocha Palette
+ *
+ * Color Palette:
+ *   Base:    #1e1e2e  (window/container backgrounds)
+ *   Surface: #313244  (input fields, panels)
+ *   Overlay: #45475a  (hover states)
+ *   Text:    #cdd6f4  (primary foreground)
+ *   Subtext: #a6adc8  (secondary/muted text)
+ *   Accent:  #89b4fa  (focus, selections, active)
+ *   Error:   #f38ba8  (error labels)
+ */
+
+/* === Base Widgets === */
+
+QMainWindow,
+QWidget {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+    font-size: 14px;
+}
+
+/* === Menu Bar === */
+
+QMenuBar {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    border: none;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 4px 8px;
+}
+
+QMenuBar::item:selected {
+    background-color: #45475a;
+}
+
+QMenu {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+}
+
+QMenu::item:selected {
+    background-color: #45475a;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #45475a;
+    margin: 4px 8px;
+}
+
+/* === Search Bar === */
+
+QLineEdit#searchBar {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 4px 8px;
+    selection-background-color: #89b4fa;
+    selection-color: #1e1e2e;
+}
+
+QLineEdit#searchBar:focus {
+    border: 1px solid #89b4fa;
+}
+
+/* === Toggle Buttons === */
+
+QToolButton {
+    background-color: transparent;
+    color: #cdd6f4;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QToolButton:hover {
+    background-color: #45475a;
+}
+
+QToolButton:checked {
+    background-color: #89b4fa;
+    color: #1e1e2e;
+}
+
+QToolButton:checked:hover {
+    background-color: #74a8fc;
+    color: #1e1e2e;
+}
+
+/* === Tree View === */
+
+QTreeView {
+    background-color: #1e1e2e;
+    alternate-background-color: #262637;
+    color: #cdd6f4;
+    border: none;
+    outline: none;
+}
+
+QTreeView::item {
+    padding: 2px 0px;
+}
+
+QTreeView::item:hover {
+    background-color: #45475a;
+}
+
+QTreeView::item:selected {
+    background-color: #89b4fa;
+    color: #1e1e2e;
+}
+
+QTreeView::branch {
+    background-color: #1e1e2e;
+}
+
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {
+    image: url(:/resources/branch-closed.svg);
+}
+
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {
+    image: url(:/resources/branch-open.svg);
+}
+
+QTreeView::branch:hover {
+    background-color: #45475a;
+}
+
+QTreeView::branch:selected {
+    background-color: #89b4fa;
+}
+
+/* === Detail Panel === */
+
+QTextEdit#detailPanel {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: none;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+    font-size: 13px;
+}
+
+/* === Progress Bar === */
+
+QProgressBar {
+    background-color: #1e1e2e;
+    border: none;
+    border-radius: 2px;
+    text-align: center;
+    color: transparent;
+    max-height: 4px;
+}
+
+QProgressBar::chunk {
+    background-color: #89b4fa;
+    border-radius: 2px;
+}
+
+/* === Scrollbars (Vertical) === */
+
+QScrollBar:vertical {
+    background-color: #1e1e2e;
+    width: 10px;
+    margin: 0px;
+    border: none;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #45475a;
+    border-radius: 5px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #a6adc8;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+/* === Scrollbars (Horizontal) === */
+
+QScrollBar:horizontal {
+    background-color: #1e1e2e;
+    height: 10px;
+    margin: 0px;
+    border: none;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #45475a;
+    border-radius: 5px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #a6adc8;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* === Status Bar === */
+
+QStatusBar {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    border: none;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+/* === Splitter === */
+
+QSplitter::handle {
+    background-color: #45475a;
+    width: 2px;
+    height: 2px;
+}
+
+QSplitter::handle:hover {
+    background-color: #89b4fa;
+}
+
+/* === Error Label === */
+
+QLabel#searchErrorLabel {
+    color: #f38ba8;
+}
+
+/* === No Results Label === */
+
+QLabel#noResultsLabel {
+    color: #a6adc8;
+    font-size: 14px;
+    qproperty-alignment: AlignCenter;
+}
+
+/* === Welcome Label === */
+
+QLabel#welcomeLabel {
+    color: #a6adc8;
+    font-size: 16px;
+    padding: 40px;
+    qproperty-alignment: AlignCenter;
+}
+
+/* === Drop Overlay === */
+
+QLabel#dropOverlay {
+    background-color: rgba(137, 180, 250, 0.85);
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    border: 2px dashed white;
+    border-radius: 8px;
+}
+
+/* === Tooltips === */
+
+QToolTip {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    padding: 4px 6px;
+}

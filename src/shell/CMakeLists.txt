@@ -25,7 +25,7 @@ target_link_libraries(jsontitan_shell_lib
 )
 
 # Main executable
-add_executable(jsontitan_shell main.cpp)
+add_executable(jsontitan_shell main.cpp resources.qrc)
 
 target_link_libraries(jsontitan_shell
     PRIVATE

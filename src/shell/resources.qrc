@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/">
+    <file>resources/style.qss</file>
+    <file>resources/branch-closed.svg</file>
+    <file>resources/branch-open.svg</file>
+  </qresource>
+</RCC>
