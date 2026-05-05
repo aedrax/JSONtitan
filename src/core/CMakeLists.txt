@@ -12,6 +12,7 @@ add_library(jsontitan_core STATIC
     structural_scanner.cpp
     chunk_parser.cpp
     parse_orchestrator.cpp
+    token_emitter.cpp
 )
 
 target_include_directories(jsontitan_core

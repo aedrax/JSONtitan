@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 
+#include <cstring>
+
 #include "core/json_node.h"
 #include "core/union_engine.h"
 
