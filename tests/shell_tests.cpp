@@ -9,6 +9,7 @@
 #include "core/json_node.h"
 #include "core/search_engine.h"
 #include "core/xml_exporter.h"
+#include "shell/drop_validator.h"
 #include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
@@ -1160,6 +1161,125 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 1.2: Property test for extension-based acceptance (Property 1)
+// Feature: drag-drop-file-open
+// Validates: Requirements 1.2, 1.3
+// ---------------------------------------------------------------------------
+
+class DropValidatorExtensionPropertyTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void property1_extensionBasedAcceptance() {
+        rc::check("Feature: drag-drop-file-open, Property 1: Extension-based acceptance",
+            [](void) {
+                // Generate a random base filename (1-20 alphanumeric chars)
+                auto nameLen = *rc::gen::inRange(1, 21);
+                auto baseName = *rc::gen::container<std::string>(
+                    nameLen,
+                    rc::gen::oneOf(
+                        rc::gen::inRange<char>('a', 'z' + 1),
+                        rc::gen::inRange<char>('A', 'Z' + 1),
+                        rc::gen::inRange<char>('0', '9' + 1)
+                    )
+                );
+                // Ensure baseName is non-empty
+                RC_PRE(!baseName.empty());
+
+                // Generate a non-.json extension to use when testing rejection
+                auto otherExt = *rc::gen::element(
+                    std::string(".txt"), std::string(".xml"), std::string(".csv"),
+                    std::string(".yaml"), std::string(".html"), std::string(".js"),
+                    std::string(".jsonl"), std::string(".JSON5"), std::string("")
+                );
+
+                // Test acceptance: filename ending with .json (various cases)
+                {
+                    auto jsonSuffix = *rc::gen::element(
+                        std::string(".json"), std::string(".JSON"),
+                        std::string(".Json"), std::string(".jSoN")
+                    );
+                    QString filePath = QStringLiteral("/tmp/") +
+                        QString::fromStdString(baseName) +
+                        QString::fromStdString(jsonSuffix);
+
+                    QMimeData mimeData;
+                    mimeData.setUrls({QUrl::fromLocalFile(filePath)});
+
+                    auto result = DropValidator::validate(&mimeData);
+                    RC_ASSERT(result.accepted);
+                    RC_ASSERT(result.filePath == filePath);
+                }
+
+                // Test rejection: filename NOT ending with .json
+                {
+                    QString filePath = QStringLiteral("/tmp/") +
+                        QString::fromStdString(baseName) +
+                        QString::fromStdString(otherExt);
+
+                    // Ensure it doesn't accidentally end with .json
+                    if (filePath.endsWith(QLatin1String(".json"), Qt::CaseInsensitive)) {
+                        return; // Skip this iteration
+                    }
+
+                    QMimeData mimeData;
+                    mimeData.setUrls({QUrl::fromLocalFile(filePath)});
+
+                    auto result = DropValidator::validate(&mimeData);
+                    RC_ASSERT(!result.accepted);
+                }
+            });
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Task 1.3: Property test for multiple file rejection (Property 2)
+// Feature: drag-drop-file-open
+// Validates: Requirements 4.1
+// ---------------------------------------------------------------------------
+
+class DropValidatorMultiFilePropertyTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void property2_multipleFileRejection() {
+        rc::check("Feature: drag-drop-file-open, Property 2: Multiple file rejection",
+            [](void) {
+                // Generate 2-10 random filenames
+                auto fileCount = *rc::gen::inRange(2, 11);
+
+                QList<QUrl> urls;
+                for (int i = 0; i < fileCount; ++i) {
+                    // Randomly choose whether this file has .json extension
+                    auto useJson = *rc::gen::arbitrary<bool>();
+                    auto nameLen = *rc::gen::inRange(1, 16);
+                    auto baseName = *rc::gen::container<std::string>(
+                        nameLen,
+                        rc::gen::inRange<char>('a', 'z' + 1)
+                    );
+                    RC_PRE(!baseName.empty());
+
+                    QString fileName = QString::fromStdString(baseName);
+                    if (useJson) {
+                        fileName += QStringLiteral(".json");
+                    } else {
+                        fileName += QStringLiteral(".txt");
+                    }
+
+                    urls.append(QUrl::fromLocalFile(QStringLiteral("/tmp/") + fileName));
+                }
+
+                QMimeData mimeData;
+                mimeData.setUrls(urls);
+
+                auto result = DropValidator::validate(&mimeData);
+                // Multiple files must always be rejected regardless of extensions
+                RC_ASSERT(!result.accepted);
+            });
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -1180,6 +1300,12 @@ int main(int argc, char* argv[]) {
 
     MainWindowSmokeTest mainWindowTest;
     status |= QTest::qExec(&mainWindowTest, argc, argv);
+
+    DropValidatorExtensionPropertyTest dropExtTest;
+    status |= QTest::qExec(&dropExtTest, argc, argv);
+
+    DropValidatorMultiFilePropertyTest dropMultiTest;
+    status |= QTest::qExec(&dropMultiTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
