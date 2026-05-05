@@ -1,6 +1,7 @@
 #include "shell/main_window.h"
 
 #include <QApplication>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -51,6 +52,11 @@ void MainWindow::setupMenuBar() {
 
     m_unionAction = fileMenu->addAction(tr("&Union Files..."));
     connect(m_unionAction, &QAction::triggered, this, &MainWindow::onUnionFiles);
+
+    m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
+    m_recentFilesManager = new RecentFilesManager(m_recentMenu, this);
+    connect(m_recentFilesManager, &RecentFilesManager::recentFileSelected,
+            this, &MainWindow::onRecentFileSelected);
 
     fileMenu->addSeparator();
 
@@ -225,6 +231,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
     // Set current file name from the dropped file path
     m_currentFileName = QFileInfo(result.filePath).fileName();
+    m_currentFilePath = result.filePath;
 
     // Show progress bar and start parsing
     m_progressBar->setValue(0);
@@ -310,6 +317,7 @@ void MainWindow::onOpenFile() {
 
     m_isUnionMode = false;
     m_currentFileName = QFileInfo(filePath).fileName();
+    m_currentFilePath = filePath;
     m_progressBar->setValue(0);
     m_progressBar->show();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
@@ -341,6 +349,11 @@ void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode
     m_detailPanel->clear();
     m_searchBar->clear();
     m_searchErrorLabel->hide();
+
+    // Record file in recent files list
+    if (!m_currentFilePath.isEmpty()) {
+        m_recentFilesManager->fileOpened(m_currentFilePath);
+    }
 }
 
 void MainWindow::onParseError(QString errorMessage) {
@@ -350,6 +363,24 @@ void MainWindow::onParseError(QString errorMessage) {
     QMessageBox::critical(this, tr("Parse Error"),
                           tr("Failed to parse %1:\n\n%2")
                               .arg(m_currentFileName, errorMessage));
+}
+
+void MainWindow::onRecentFileSelected(const QString& filePath) {
+    if (!QFile::exists(filePath)) {
+        QMessageBox::warning(this, tr("File Not Found"),
+            tr("The file \"%1\" no longer exists and will be removed from the recent files list.")
+                .arg(filePath));
+        m_recentFilesManager->removeFile(filePath);
+        return;
+    }
+
+    m_isUnionMode = false;
+    m_currentFileName = QFileInfo(filePath).fileName();
+    m_currentFilePath = filePath;
+    m_progressBar->setValue(0);
+    m_progressBar->show();
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+    m_fileLoader->startParse(filePath);
 }
 
 // --- Task 16.3: Search bar wiring ---

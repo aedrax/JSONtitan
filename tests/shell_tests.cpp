@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
@@ -13,6 +14,7 @@
 #include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
+#include "shell/recent_files_manager.h"
 #include "shell/tree_model.h"
 
 using namespace jsontitan::core;
@@ -1551,6 +1553,197 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 4.4: Integration tests for RecentFilesManager
+// Feature: open-recent-menu
+// Requirements: 1.1, 4.1, 4.2, 6.1, 6.2, 6.3
+// ---------------------------------------------------------------------------
+
+class RecentFilesManagerIntegrationTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void init() {
+        // Isolate QSettings for testing
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTests");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void cleanup() {
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testMenuStructureOpenRecentBetweenUnionAndExport() {
+        // Requirement 1.1: "Open Recent" appears between "Union Files..." and export separator
+        MainWindow window;
+        QMenuBar* menuBar = window.menuBar();
+        QVERIFY(menuBar != nullptr);
+
+        // Find the File menu
+        QMenu* fileMenu = nullptr;
+        for (auto* action : menuBar->actions()) {
+            if (action->text().contains("File")) {
+                fileMenu = action->menu();
+                break;
+            }
+        }
+        QVERIFY(fileMenu != nullptr);
+
+        // Walk through File menu actions and find "Union Files...", "Open Recent", and export actions
+        QList<QAction*> actions = fileMenu->actions();
+        int unionIdx = -1;
+        int recentIdx = -1;
+        int exportCsvIdx = -1;
+
+        for (int i = 0; i < actions.size(); ++i) {
+            const QString text = actions[i]->text();
+            if (text.contains("Union")) {
+                unionIdx = i;
+            } else if (text.contains("Recent")) {
+                recentIdx = i;
+            } else if (text.contains("CSV")) {
+                exportCsvIdx = i;
+            }
+        }
+
+        QVERIFY2(unionIdx >= 0, "Union Files action not found in File menu");
+        QVERIFY2(recentIdx >= 0, "Open Recent submenu not found in File menu");
+        QVERIFY2(exportCsvIdx >= 0, "Export CSV action not found in File menu");
+
+        // "Open Recent" should appear after "Union Files..." and before export actions
+        QVERIFY2(recentIdx > unionIdx,
+                 "Open Recent should appear after Union Files...");
+        QVERIFY2(recentIdx < exportCsvIdx,
+                 "Open Recent should appear before Export CSV");
+    }
+
+    void testQSettingsRoundTrip() {
+        // Requirements 4.1, 4.2: save list, create new manager, verify loaded list matches
+        QStringList paths = {"/path/to/a.json", "/path/to/b.json", "/path/to/c.json"};
+
+        {
+            // Create a manager and add files
+            QMenu menu;
+            RecentFilesManager manager(&menu);
+            manager.fileOpened("/path/to/c.json");
+            manager.fileOpened("/path/to/b.json");
+            manager.fileOpened("/path/to/a.json");
+        }
+
+        // Create a new manager — should load from settings
+        {
+            QMenu menu;
+            RecentFilesManager manager(&menu);
+
+            // Menu should have the 3 file entries + separator + "Clear Recent Files"
+            QList<QAction*> actions = menu.actions();
+            QVERIFY(actions.size() >= 4); // 3 entries + separator + clear
+
+            // First 3 actions should be the file entries (most recent first)
+            QVERIFY(actions[0]->text().contains("a.json"));
+            QVERIFY(actions[1]->text().contains("b.json"));
+            QVERIFY(actions[2]->text().contains("c.json"));
+        }
+    }
+
+    void testClearRecentFilesClearsListAndShowsNoRecentFiles() {
+        // Requirements 6.1, 6.2: "Clear Recent Files" clears list and shows "No Recent Files"
+        QMenu menu;
+        RecentFilesManager manager(&menu);
+
+        // Add some files
+        manager.fileOpened("/path/to/file1.json");
+        manager.fileOpened("/path/to/file2.json");
+
+        // Find and trigger "Clear Recent Files" action
+        QAction* clearAction = nullptr;
+        for (auto* action : menu.actions()) {
+            if (action->text() == "Clear Recent Files") {
+                clearAction = action;
+                break;
+            }
+        }
+        QVERIFY2(clearAction != nullptr, "Clear Recent Files action not found");
+        QVERIFY(clearAction->isEnabled());
+
+        // Trigger clear
+        clearAction->trigger();
+
+        // After clearing, menu should show "No Recent Files" (disabled) + separator + "Clear Recent Files" (disabled)
+        QList<QAction*> actions = menu.actions();
+        QVERIFY(actions.size() >= 3);
+
+        // First action should be "No Recent Files" and disabled
+        QCOMPARE(actions[0]->text(), QString("No Recent Files"));
+        QVERIFY(!actions[0]->isEnabled());
+
+        // Verify settings are also cleared
+        QSettings settings;
+        QStringList stored = settings.value("recentFiles/paths").toStringList();
+        QVERIFY(stored.isEmpty());
+    }
+
+    void testClearRecentFilesDisabledWhenEmpty() {
+        // Requirement 6.3: "Clear Recent Files" is disabled when list is empty
+        QMenu menu;
+        RecentFilesManager manager(&menu);
+
+        // No files added — list is empty
+        QAction* clearAction = nullptr;
+        for (auto* action : menu.actions()) {
+            if (action->text() == "Clear Recent Files") {
+                clearAction = action;
+                break;
+            }
+        }
+        QVERIFY2(clearAction != nullptr, "Clear Recent Files action not found");
+        QVERIFY2(!clearAction->isEnabled(),
+                 "Clear Recent Files should be disabled when list is empty");
+    }
+
+    void testFileOpenedAddsEntryAndRebuildsMenu() {
+        // Requirements 1.1, 4.1, 4.2: fileOpened adds entry and rebuilds menu
+        QMenu menu;
+        RecentFilesManager manager(&menu);
+
+        // Initially empty — should show "No Recent Files"
+        QCOMPARE(menu.actions()[0]->text(), QString("No Recent Files"));
+        QVERIFY(!menu.actions()[0]->isEnabled());
+
+        // Open a file
+        manager.fileOpened("/home/user/data.json");
+
+        // Menu should now have the file entry
+        QList<QAction*> actions = menu.actions();
+        QVERIFY(actions.size() >= 3); // entry + separator + clear
+        QVERIFY(actions[0]->text().contains("data.json"));
+        QVERIFY(actions[0]->text().contains("/home/user"));
+        QVERIFY(actions[0]->isEnabled());
+
+        // "Clear Recent Files" should now be enabled
+        QAction* clearAction = nullptr;
+        for (auto* action : actions) {
+            if (action->text() == "Clear Recent Files") {
+                clearAction = action;
+                break;
+            }
+        }
+        QVERIFY(clearAction != nullptr);
+        QVERIFY(clearAction->isEnabled());
+
+        // Open another file — should appear at front
+        manager.fileOpened("/tmp/other.json");
+        actions = menu.actions();
+        QVERIFY(actions[0]->text().contains("other.json"));
+        QVERIFY(actions[1]->text().contains("data.json"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -1583,6 +1776,9 @@ int main(int argc, char* argv[]) {
 
     DropStateResetPropertyTest stateResetTest;
     status |= QTest::qExec(&stateResetTest, argc, argv);
+
+    RecentFilesManagerIntegrationTest recentFilesTest;
+    status |= QTest::qExec(&recentFilesTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);

@@ -12,6 +12,7 @@ int main(int argc, char* argv[]) {
         "std::shared_ptr<const jsontitan::core::JsonNode>");
 
     QApplication app(argc, argv);
+    app.setOrganizationName("JSONTitan");
     app.setApplicationName("JSONTitan");
     app.setApplicationVersion("0.1.0");
 
