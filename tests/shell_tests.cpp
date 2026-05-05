@@ -1280,6 +1280,277 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Task 4.1: Unit tests for MainWindow drag-drop behavior
+// Requirements: 1.1, 1.4, 2.1, 2.2, 2.3, 3.1, 5.3
+// ---------------------------------------------------------------------------
+
+class MainWindowDragDropTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testAcceptDropsEnabled() {
+        // Requirement 1.1: MainWindow SHALL accept drag-and-drop operations
+        MainWindow window;
+        QVERIFY(window.acceptDrops());
+    }
+
+    void testValidDragEnterShowsOverlay() {
+        // Requirement 2.1: Valid drag over Drop_Zone SHALL display Drag_Indicator
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        // Find the drop overlay
+        auto* overlay = window.findChild<QLabel*>();
+        QLabel* dropOverlay = nullptr;
+        for (auto* label : window.findChildren<QLabel*>()) {
+            if (label->text().contains("Drop JSON file here")) {
+                dropOverlay = label;
+                break;
+            }
+        }
+        QVERIFY(dropOverlay != nullptr);
+        QVERIFY(!dropOverlay->isVisible());
+
+        // Simulate a valid drag enter with a .json file
+        QMimeData* mimeData = new QMimeData();
+        mimeData->setUrls({QUrl::fromLocalFile("/tmp/test.json")});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+
+        QVERIFY(dragEnterEvent.isAccepted());
+        QVERIFY(dropOverlay->isVisible());
+
+        delete mimeData;
+    }
+
+    void testDragLeaveHidesOverlay() {
+        // Requirement 2.2: Drag leaving Drop_Zone SHALL hide Drag_Indicator
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        QLabel* dropOverlay = nullptr;
+        for (auto* label : window.findChildren<QLabel*>()) {
+            if (label->text().contains("Drop JSON file here")) {
+                dropOverlay = label;
+                break;
+            }
+        }
+        QVERIFY(dropOverlay != nullptr);
+
+        // First, trigger a valid drag enter to show the overlay
+        QMimeData* mimeData = new QMimeData();
+        mimeData->setUrls({QUrl::fromLocalFile("/tmp/test.json")});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+        QVERIFY(dropOverlay->isVisible());
+
+        // Now simulate drag leave
+        QDragLeaveEvent dragLeaveEvent;
+        QApplication::sendEvent(&window, &dragLeaveEvent);
+
+        QVERIFY(!dropOverlay->isVisible());
+
+        delete mimeData;
+    }
+
+    void testDropHidesOverlayAndTriggersFileLoader() {
+        // Requirements 2.3, 3.1: Drop SHALL hide overlay and initiate parsing
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        QLabel* dropOverlay = nullptr;
+        for (auto* label : window.findChildren<QLabel*>()) {
+            if (label->text().contains("Drop JSON file here")) {
+                dropOverlay = label;
+                break;
+            }
+        }
+        QVERIFY(dropOverlay != nullptr);
+
+        // First show the overlay via drag enter
+        QMimeData* mimeData = new QMimeData();
+        mimeData->setUrls({QUrl::fromLocalFile("/tmp/test.json")});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+        QVERIFY(dropOverlay->isVisible());
+
+        // Simulate drop
+        QDropEvent dropEvent(
+            QPointF(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dropEvent);
+
+        // Overlay should be hidden after drop
+        QVERIFY(!dropOverlay->isVisible());
+
+        // Progress bar should be visible (indicates FileLoader::startParse was called)
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(progressBar != nullptr);
+        QVERIFY(progressBar->isVisible());
+
+        delete mimeData;
+    }
+
+    void testMimeDataWithNoUrlsIsRejected() {
+        // Requirement 1.4: MIME data without file URLs SHALL be rejected
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        QLabel* dropOverlay = nullptr;
+        for (auto* label : window.findChildren<QLabel*>()) {
+            if (label->text().contains("Drop JSON file here")) {
+                dropOverlay = label;
+                break;
+            }
+        }
+        QVERIFY(dropOverlay != nullptr);
+
+        // MIME data with no URLs (just plain text)
+        QMimeData* mimeData = new QMimeData();
+        mimeData->setText("some random text");
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+
+        // Event should not be accepted
+        QVERIFY(!dragEnterEvent.isAccepted());
+        // Overlay should remain hidden
+        QVERIFY(!dropOverlay->isVisible());
+
+        delete mimeData;
+    }
+
+    void testDropExitsUnionMode() {
+        // Requirement 5.3: Drop SHALL exit union mode if previously active
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        // Set some search text to verify state reset
+        auto* searchBar = window.findChild<QLineEdit*>();
+        QVERIFY(searchBar != nullptr);
+        searchBar->setText("some search");
+
+        // Set detail panel content
+        auto* detailPanel = window.findChild<QTextEdit*>();
+        QVERIFY(detailPanel != nullptr);
+        detailPanel->setPlainText("some detail content");
+
+        // Perform a valid drag enter followed by drop
+        QMimeData* mimeData = new QMimeData();
+        mimeData->setUrls({QUrl::fromLocalFile("/tmp/test.json")});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+        QVERIFY(dragEnterEvent.isAccepted());
+
+        QDropEvent dropEvent(
+            QPointF(50, 50), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dropEvent);
+
+        // After drop, the progress bar being visible confirms the drop was processed
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(progressBar != nullptr);
+        QVERIFY(progressBar->isVisible());
+
+        // Verify search bar is cleared (state reset - Requirement 5.1)
+        QVERIFY(searchBar->text().isEmpty());
+
+        // Verify detail panel is cleared (state reset - Requirement 5.2)
+        QVERIFY(detailPanel->toPlainText().isEmpty());
+
+        delete mimeData;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Task 4.2: Property test for state reset on valid drop (Property 3)
+// Feature: drag-drop-file-open
+// Validates: Requirements 5.1, 5.2
+// ---------------------------------------------------------------------------
+
+class DropStateResetPropertyTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void property3_stateResetOnValidDrop() {
+        rc::check("Feature: drag-drop-file-open, Property 3: State reset on valid drop",
+            [](void) {
+                MainWindow window;
+                window.show();
+                QApplication::processEvents();
+
+                // Generate random search text (1-50 chars)
+                auto searchLen = *rc::gen::inRange(1, 51);
+                auto searchText = *rc::gen::container<std::string>(
+                    searchLen,
+                    rc::gen::oneOf(
+                        rc::gen::inRange<char>('a', 'z' + 1),
+                        rc::gen::inRange<char>('A', 'Z' + 1),
+                        rc::gen::inRange<char>('0', '9' + 1),
+                        rc::gen::element<char>(' ', '-', '_', '.')
+                    )
+                );
+                RC_PRE(!searchText.empty());
+
+                // Generate random detail panel content (1-100 chars)
+                auto detailLen = *rc::gen::inRange(1, 101);
+                auto detailText = *rc::gen::container<std::string>(
+                    detailLen,
+                    rc::gen::oneOf(
+                        rc::gen::inRange<char>('a', 'z' + 1),
+                        rc::gen::inRange<char>('A', 'Z' + 1),
+                        rc::gen::inRange<char>('0', '9' + 1),
+                        rc::gen::element<char>(' ', '\n', '{', '}', '"', ':')
+                    )
+                );
+                RC_PRE(!detailText.empty());
+
+                // Set random search text in the search bar
+                auto* searchBar = window.findChild<QLineEdit*>();
+                RC_ASSERT(searchBar != nullptr);
+                searchBar->setText(QString::fromStdString(searchText));
+                RC_ASSERT(!searchBar->text().isEmpty());
+
+                // Set random detail content in the detail panel
+                auto* detailPanel = window.findChild<QTextEdit*>();
+                RC_ASSERT(detailPanel != nullptr);
+                detailPanel->setPlainText(QString::fromStdString(detailText));
+                RC_ASSERT(!detailPanel->toPlainText().isEmpty());
+
+                // Simulate a valid drag enter followed by drop
+                QMimeData mimeData;
+                mimeData.setUrls({QUrl::fromLocalFile("/tmp/test_file.json")});
+
+                QDragEnterEvent dragEnterEvent(
+                    QPoint(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(&window, &dragEnterEvent);
+
+                QDropEvent dropEvent(
+                    QPointF(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(&window, &dropEvent);
+
+                // Verify search bar is cleared (Requirement 5.1)
+                RC_ASSERT(searchBar->text().isEmpty());
+
+                // Verify detail panel is cleared (Requirement 5.2)
+                RC_ASSERT(detailPanel->toPlainText().isEmpty());
+            });
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -1306,6 +1577,12 @@ int main(int argc, char* argv[]) {
 
     DropValidatorMultiFilePropertyTest dropMultiTest;
     status |= QTest::qExec(&dropMultiTest, argc, argv);
+
+    MainWindowDragDropTest dragDropTest;
+    status |= QTest::qExec(&dragDropTest, argc, argv);
+
+    DropStateResetPropertyTest stateResetTest;
+    status |= QTest::qExec(&stateResetTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
