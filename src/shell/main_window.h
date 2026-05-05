@@ -13,8 +13,11 @@
 #include <QProgressBar>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QThread>
+#include <QTimer>
 #include <QTreeView>
 
+#include <cstdint>
 #include <memory>
 
 #include "core/json_node.h"
@@ -22,12 +25,14 @@
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/recent_files_manager.h"
+#include "shell/search_worker.h"
 #include "shell/tree_model.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -46,6 +51,8 @@ private slots:
     void onTreeSelectionChanged();
     void onRemoveFromUnion();
     void onRecentFileSelected(const QString& filePath);
+    void executeSearch();
+    void onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation);
 
 private:
     void setupMenuBar();
@@ -87,6 +94,14 @@ private:
 
     // Background loader
     FileLoader* m_fileLoader = nullptr;
+
+    // Debounce timer for search
+    QTimer* m_debounceTimer = nullptr;
+    uint64_t m_searchGeneration = 0;
+
+    // Background search worker
+    SearchWorker* m_searchWorker = nullptr;
+    QThread* m_searchThread = nullptr;
 
     // Current data
     std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;

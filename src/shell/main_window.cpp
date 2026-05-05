@@ -28,6 +28,22 @@ MainWindow::MainWindow(QWidget* parent)
     m_filterProxy->setSourceModel(m_treeModel);
     m_fileLoader = new FileLoader(this);
 
+    // Initialize debounce timer (single-shot, 250ms)
+    m_debounceTimer = new QTimer(this);
+    m_debounceTimer->setSingleShot(true);
+    m_debounceTimer->setInterval(250);
+    connect(m_debounceTimer, &QTimer::timeout, this, &MainWindow::executeSearch);
+
+    // Initialize background search worker on dedicated thread
+    m_searchThread = new QThread(this);
+    m_searchWorker = new SearchWorker();
+    m_searchWorker->moveToThread(m_searchThread);
+
+    connect(m_searchWorker, &SearchWorker::searchComplete,
+            this, &MainWindow::onSearchComplete, Qt::QueuedConnection);
+
+    m_searchThread->start();
+
     setupMenuBar();
     setupCentralWidget();
     setupStatusBar();
@@ -41,6 +57,12 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onParseComplete);
     connect(m_fileLoader, &FileLoader::parseError,
             this, &MainWindow::onParseError);
+}
+
+MainWindow::~MainWindow() {
+    m_searchThread->quit();
+    m_searchThread->wait();
+    delete m_searchWorker;
 }
 
 void MainWindow::setupMenuBar() {
@@ -390,6 +412,8 @@ void MainWindow::onSearchTextChanged(const QString& text) {
     m_noResultsLabel->hide();
 
     if (text.isEmpty()) {
+        // Clear filter immediately — no debounce needed
+        m_debounceTimer->stop();
         m_filterProxy->clearFilter();
         m_treeView->show();
         return;
@@ -399,7 +423,20 @@ void MainWindow::onSearchTextChanged(const QString& text) {
         return;
     }
 
-    // Determine search mode: if text starts and ends with /, treat as regex
+    // Restart debounce timer — coalesces rapid keystrokes
+    m_debounceTimer->start();
+}
+
+void MainWindow::executeSearch() {
+    QString text = m_searchBar->text();
+    if (text.isEmpty() || !m_currentRoot) {
+        return;
+    }
+
+    // Increment generation counter to track this search request
+    ++m_searchGeneration;
+
+    // Build SearchQuery from current UI state
     jsontitan::core::SearchQuery query;
     if (text.startsWith('/') && text.endsWith('/') && text.length() > 2) {
         query.pattern = text.mid(1, text.length() - 2).toStdString();
@@ -410,7 +447,19 @@ void MainWindow::onSearchTextChanged(const QString& text) {
     }
     query.caseSensitive = false;
 
-    auto result = jsontitan::core::filter(*m_currentRoot, query);
+    // Dispatch search to background worker
+    QMetaObject::invokeMethod(m_searchWorker, "executeSearch",
+                              Qt::QueuedConnection,
+                              Q_ARG(jsontitan::core::SearchQuery, query),
+                              Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_currentRoot),
+                              Q_ARG(uint64_t, m_searchGeneration));
+}
+
+void MainWindow::onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation) {
+    // Discard stale results from previous searches
+    if (generation != m_searchGeneration) {
+        return;
+    }
 
     if (result.error) {
         m_searchErrorLabel->setText(

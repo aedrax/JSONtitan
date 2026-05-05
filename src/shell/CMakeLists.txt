@@ -7,6 +7,7 @@ set(SHELL_SOURCES
     file_loader.cpp
     export_handler.cpp
     recent_files_manager.cpp
+    search_worker.cpp
 )
 
 add_library(jsontitan_shell_lib OBJECT ${SHELL_SOURCES})

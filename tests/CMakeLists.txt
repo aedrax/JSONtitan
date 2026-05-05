@@ -46,6 +46,32 @@ target_link_libraries(shell_tests
 
 add_test(NAME shell_tests COMMAND shell_tests)
 
+# ── Search Performance Tests (Google Test + RapidCheck, no Qt) ───
+add_executable(search_perf_tests search_perf_tests.cpp)
+
+target_link_libraries(search_perf_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(search_perf_tests)
+
+# ── Search Preservation Tests (Google Test + RapidCheck, no Qt) ──
+add_executable(search_preservation_tests search_preservation_tests.cpp)
+
+target_link_libraries(search_preservation_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(search_preservation_tests)
+
 # ── FileLoader Tests (Qt Test + RapidCheck) ──────────────────────
 add_executable(file_loader_tests file_loader_tests.cpp)
 
@@ -60,3 +86,31 @@ target_link_libraries(file_loader_tests
 )
 
 add_test(NAME file_loader_tests COMMAND file_loader_tests)
+
+# ── SearchWorker Tests (Qt Test) ─────────────────────────────────
+add_executable(search_worker_tests search_worker_tests.cpp)
+
+target_link_libraries(search_worker_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+)
+
+add_test(NAME search_worker_tests COMMAND search_worker_tests)
+
+# ── Debounce Tests (Qt Test) ─────────────────────────────────────
+add_executable(debounce_tests debounce_tests.cpp)
+
+target_link_libraries(debounce_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+)
+
+add_test(NAME debounce_tests COMMAND debounce_tests)
