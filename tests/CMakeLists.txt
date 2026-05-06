@@ -256,3 +256,16 @@ target_link_libraries(parser_perf_pbt
 )
 
 gtest_discover_tests(parser_perf_pbt)
+
+# ── Parser Performance Preservation PBT (Google Test + RapidCheck, no Qt) ──
+add_executable(parser_perf_preservation_pbt parser_perf_preservation_pbt.cpp)
+
+target_link_libraries(parser_perf_preservation_pbt
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(parser_perf_preservation_pbt)
