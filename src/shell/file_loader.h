@@ -10,9 +10,11 @@
 
 namespace jsontitan::core {
 struct JsonNode;
+struct ArenaParseResult;
 }
 
 Q_DECLARE_METATYPE(std::shared_ptr<const jsontitan::core::JsonNode>)
+Q_DECLARE_METATYPE(std::shared_ptr<jsontitan::core::ArenaParseResult>)
 
 class FileLoaderWorker : public QObject {
     Q_OBJECT
@@ -26,6 +28,7 @@ public slots:
 signals:
     void progressUpdated(int percentage);
     void parseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
+    void arenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
     void parseError(QString errorMessage);
 
 private:
@@ -44,6 +47,7 @@ public:
 signals:
     void progressUpdated(int percentage);
     void parseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
+    void arenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
     void parseError(QString errorMessage);
 
 private:
