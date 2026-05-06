@@ -11,6 +11,8 @@
 #include <QSplitter>
 #include <QVBoxLayout>
 
+#include <filesystem>
+
 #include "core/parser.h"
 #include "core/pretty_printer.h"
 #include "core/search_engine.h"
@@ -65,6 +67,116 @@ MainWindow::~MainWindow() {
     m_searchThread->quit();
     m_searchThread->wait();
     delete m_searchWorker;
+}
+
+void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
+    if (filePaths.empty()) {
+        return;
+    }
+
+    // Validate all files exist and are readable before loading anything
+    for (const auto& path : filePaths) {
+        std::filesystem::path fsPath(path);
+        std::error_code ec;
+
+        if (!std::filesystem::exists(fsPath, ec)) {
+            QMessageBox::warning(this, tr("File Not Found"),
+                tr("The file \"%1\" does not exist.")
+                    .arg(QString::fromStdString(path)));
+            return;
+        }
+
+        // Check readability by attempting to open the file
+        QFile file(QString::fromStdString(path));
+        if (!file.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, tr("File Not Readable"),
+                tr("The file \"%1\" cannot be read: %2")
+                    .arg(QString::fromStdString(path), file.errorString()));
+            return;
+        }
+        file.close();
+    }
+
+    if (filePaths.size() == 1) {
+        // Single file: use the same mechanism as File > Open
+        QString qPath = QString::fromStdString(filePaths[0]);
+        m_isUnionMode = false;
+        m_currentFileName = QFileInfo(qPath).fileName();
+        m_currentFilePath = qPath;
+        m_progressBar->setValue(0);
+        m_progressBar->show();
+        m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+        m_fileLoader->startParse(qPath);
+    } else {
+        // Multiple files: use the same union logic as File > Union Files
+        std::vector<jsontitan::core::FileEntry> entries;
+
+        for (const auto& path : filePaths) {
+            QString qPath = QString::fromStdString(path);
+            QFile file(qPath);
+            if (!file.open(QIODevice::ReadOnly)) {
+                QMessageBox::warning(this, tr("File Error"),
+                    tr("Cannot open file: %1").arg(qPath));
+                return;
+            }
+
+            QByteArray data = file.readAll();
+            file.close();
+
+            auto state = jsontitan::core::makeParserState();
+            auto chunk = std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(data.constData()),
+                static_cast<std::size_t>(data.size()));
+
+            auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
+            if (chunkResult.error) {
+                QMessageBox::warning(this, tr("Parse Error"),
+                    tr("Failed to parse %1:\n\n%2")
+                        .arg(QFileInfo(qPath).fileName(),
+                             QString::fromStdString(chunkResult.error->description)));
+                return;
+            }
+
+            auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
+            if (parseResult.error) {
+                QMessageBox::warning(this, tr("Parse Error"),
+                    tr("Failed to parse %1:\n\n%2")
+                        .arg(QFileInfo(qPath).fileName(),
+                             QString::fromStdString(parseResult.error->description)));
+                return;
+            }
+
+            jsontitan::core::FileEntry entry;
+            entry.filename = QFileInfo(qPath).fileName().toStdString();
+            entry.root = parseResult.root;
+            entries.push_back(std::move(entry));
+        }
+
+        auto unionRoot = jsontitan::core::unionTrees(entries);
+
+        m_isUnionMode = true;
+        m_currentRoot = unionRoot;
+        m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
+
+        m_treeModel->setRootNode(unionRoot);
+        m_filterProxy->clearFilter();
+
+        m_welcomeLabel->hide();
+        m_treeView->show();
+        m_noResultsLabel->hide();
+
+        int nodeCount = unionRoot ? countNodes(*unionRoot) : 0;
+        updateStatusBar(m_currentFileName, nodeCount);
+
+        m_detailPanel->clear();
+        m_searchBar->clear();
+        m_searchErrorLabel->hide();
+
+        // Record all files in recent files list
+        for (const auto& path : filePaths) {
+            m_recentFilesManager->fileOpened(QString::fromStdString(path));
+        }
+    }
 }
 
 void MainWindow::setupMenuBar() {
