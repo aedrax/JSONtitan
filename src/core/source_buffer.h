@@ -8,6 +8,9 @@
 
 namespace jsontitan::core {
 
+// Number of zero-padded bytes appended after logical data for SIMD safety.
+inline constexpr std::size_t kSimdjsonPadding = 64;
+
 // A reference to a string within the SourceBuffer or arena.
 // For strings without escapes: points into the raw source buffer (ownsData == false).
 // For strings with escapes: points to a resolved copy in the arena (ownsData == true).
@@ -40,14 +43,24 @@ struct StringRef {
 
 // An immutable contiguous buffer holding the raw JSON input bytes.
 // String references point into this buffer for zero-copy access.
+// The buffer is padded with kSimdjsonPadding zero bytes after the logical data
+// so that simdjson can parse directly without copying.
 class SourceBuffer {
 public:
-    // Take ownership of a string buffer.
-    explicit SourceBuffer(std::string data) : m_data(std::move(data)) {}
+    // Take ownership of a string buffer, appending SIMDJSON_PADDING zero bytes.
+    explicit SourceBuffer(std::string data)
+        : m_logicalSize(data.size()) {
+        // Append padding bytes (all zeros) after the logical data.
+        data.resize(data.size() + kSimdjsonPadding, '\0');
+        m_data = std::move(data);
+    }
 
-    // Take ownership of a byte vector (converted to string internally).
+    // Take ownership of a byte vector (converted to string internally, with padding).
     explicit SourceBuffer(std::vector<std::byte> data)
-        : m_data(reinterpret_cast<const char*>(data.data()), data.size()) {}
+        : m_logicalSize(data.size()),
+          m_data(reinterpret_cast<const char*>(data.data()), data.size()) {
+        m_data.resize(m_data.size() + kSimdjsonPadding, '\0');
+    }
 
     // Non-copyable.
     SourceBuffer(const SourceBuffer&) = delete;
@@ -62,15 +75,25 @@ public:
         return m_data.data();
     }
 
-    // Size in bytes.
+    // Logical size in bytes (excluding padding).
     [[nodiscard]] auto size() const noexcept -> std::size_t {
-        return m_data.size();
+        return m_logicalSize;
     }
 
-    // View as a span of bytes.
+    // Total size including padding bytes, for callers that need padded capacity.
+    [[nodiscard]] auto paddedSize() const noexcept -> std::size_t {
+        return m_logicalSize + kSimdjsonPadding;
+    }
+
+    // Whether this buffer has SIMDJSON_PADDING bytes after the logical data.
+    [[nodiscard]] static constexpr auto hasPadding() noexcept -> bool {
+        return true;
+    }
+
+    // View as a span of bytes (logical size only, excluding padding).
     [[nodiscard]] auto span() const noexcept -> std::span<const std::byte> {
         return std::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(m_data.data()), m_data.size());
+            reinterpret_cast<const std::byte*>(m_data.data()), m_logicalSize);
     }
 
     // Create a StringRef pointing into this buffer.
@@ -81,6 +104,7 @@ public:
     }
 
 private:
+    std::size_t m_logicalSize = 0;
     std::string m_data;
 };
 
