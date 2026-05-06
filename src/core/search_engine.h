@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "core/arena_json_node.h"
 #include "core/json_node.h"
 
 namespace jsontitan::core {
@@ -31,5 +32,9 @@ struct FilterResult {
 };
 
 auto filter(const JsonNode& root, const SearchQuery& query) -> FilterResult;
+
+// Arena-aware overload: walks ArenaJsonNode trees directly without deep-copy.
+// Matching nodes are converted to JsonNode on-demand (only the matched node, not the full tree).
+auto filter(const ArenaJsonNode& root, const SearchQuery& query) -> FilterResult;
 
 } // namespace jsontitan::core

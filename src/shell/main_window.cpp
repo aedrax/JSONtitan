@@ -594,7 +594,7 @@ void MainWindow::onSearchTextChanged(const QString& text) {
         return;
     }
 
-    if (!m_currentRoot) {
+    if (!m_currentRoot && !m_arenaResult) {
         return;
     }
 
@@ -604,7 +604,7 @@ void MainWindow::onSearchTextChanged(const QString& text) {
 
 void MainWindow::executeSearch() {
     QString text = m_searchBar->text();
-    if (text.isEmpty() || !m_currentRoot) {
+    if (text.isEmpty() || (!m_currentRoot && !m_arenaResult)) {
         return;
     }
 
@@ -629,12 +629,20 @@ void MainWindow::executeSearch() {
         query.mode = jsontitan::core::SearchMode::Substring;
     }
 
-    // Dispatch search to background worker
-    QMetaObject::invokeMethod(m_searchWorker, "executeSearch",
-                              Qt::QueuedConnection,
-                              Q_ARG(jsontitan::core::SearchQuery, query),
-                              Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_currentRoot),
-                              Q_ARG(uint64_t, m_searchGeneration));
+    // Dispatch search to background worker — use arena path when available
+    if (m_arenaResult) {
+        QMetaObject::invokeMethod(m_searchWorker, "executeArenaSearch",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(jsontitan::core::SearchQuery, query),
+                                  Q_ARG(std::shared_ptr<jsontitan::core::ArenaParseResult>, m_arenaResult),
+                                  Q_ARG(uint64_t, m_searchGeneration));
+    } else {
+        QMetaObject::invokeMethod(m_searchWorker, "executeSearch",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(jsontitan::core::SearchQuery, query),
+                                  Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_currentRoot),
+                                  Q_ARG(uint64_t, m_searchGeneration));
+    }
 }
 
 void MainWindow::onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation) {
