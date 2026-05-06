@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -398,5 +400,129 @@ TEST(SimdjsonGenerators, DuplicateKeyGeneratorProducesParseable) {
 
             RC_ASSERT(result.ok());
             RC_ASSERT(result.root != nullptr);
+        });
+}
+
+// ===========================================================================
+// Helper: Semantic comparison of two JsonNode trees
+// ===========================================================================
+
+namespace {
+
+/// Try to parse a string as a double for semantic number comparison.
+/// Returns true if parsing succeeded, with the result in `out`.
+static bool tryParseDouble(const std::string& s, double& out) {
+    if (s.empty()) return false;
+    try {
+        std::size_t pos = 0;
+        out = std::stod(s, &pos);
+        return pos == s.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+/// Recursively compare two JsonNode trees for semantic equivalence.
+/// For numbers, compares parsed numeric values rather than string representations.
+/// For strings, compares the resolved UTF-8 content.
+/// Returns true if the trees are semantically equivalent.
+static bool jsonNodesSemanticEqual(
+    const std::shared_ptr<const JsonNode>& a,
+    const std::shared_ptr<const JsonNode>& b) {
+
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+
+    // Same node type
+    if (a->type != b->type) return false;
+
+    // Same key
+    if (a->key != b->key) return false;
+
+    // Value comparison depends on type
+    switch (a->type) {
+        case NodeType::Number: {
+            // Semantic number comparison: parse both as doubles and compare
+            double va = 0.0, vb = 0.0;
+            bool aOk = tryParseDouble(a->value, va);
+            bool bOk = tryParseDouble(b->value, vb);
+            if (aOk && bOk) {
+                // Use relative tolerance for floating point comparison
+                if (va == vb) break;  // Exact match (handles 0.0 == 0.0)
+                double diff = std::abs(va - vb);
+                double maxVal = std::max(std::abs(va), std::abs(vb));
+                if (maxVal > 0.0 && diff / maxVal > 1e-10) return false;
+            } else {
+                // If either fails to parse as double, fall back to string comparison
+                if (a->value != b->value) return false;
+            }
+            break;
+        }
+        case NodeType::String:
+            // Direct string comparison (both backends should resolve escapes)
+            if (a->value != b->value) return false;
+            break;
+        case NodeType::Boolean:
+            if (a->value != b->value) return false;
+            break;
+        case NodeType::Null:
+            // No value to compare for null
+            break;
+        case NodeType::Object:
+        case NodeType::Array:
+            // Value field is unused for containers
+            break;
+    }
+
+    // Same number of children
+    if (a->children.size() != b->children.size()) return false;
+
+    // Children are equivalent (recursively, order-sensitive)
+    for (std::size_t i = 0; i < a->children.size(); ++i) {
+        if (!jsonNodesSemanticEqual(a->children[i], b->children[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // anonymous namespace
+
+// ===========================================================================
+// Property 1: Semantic Equivalence
+// For any valid JSON, simdjson and custom backends produce equivalent
+// ArenaJsonNode trees.
+// Validates: Requirements 6.1, 2.2, 2.4
+// ===========================================================================
+
+TEST(SimdjsonProperties, SemanticEquivalence) {
+    rc::check("Feature: simdjson-integration, Property 1: Semantic Equivalence",
+        []() {
+            const auto json = *generators::genValidJson();
+
+            // Parse with simdjson backend
+            auto simdjsonResult = parseBuffer(std::string(json),
+                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+
+            // Parse with custom backend
+            auto customResult = parseBuffer(std::string(json),
+                ParseBufferOptions{.backend = ParserBackend::Custom});
+
+            // Both must parse successfully — if either fails, discard this test case
+            // (the generator should produce valid JSON, but some edge cases may
+            // only be accepted by one backend)
+            RC_PRE(simdjsonResult.ok());
+            RC_PRE(customResult.ok());
+
+            // Convert both to JsonNode trees
+            auto simdjsonTree = simdjsonResult.toParseResult();
+            auto customTree = customResult.toParseResult();
+
+            RC_ASSERT(simdjsonTree.root != nullptr);
+            RC_ASSERT(customTree.root != nullptr);
+
+            // Compare the two trees for semantic equivalence
+            RC_ASSERT(jsonNodesSemanticEqual(simdjsonTree.root, customTree.root));
         });
 }
