@@ -259,11 +259,9 @@ auto simdjsonParse(const SourceBuffer& source,
     simdjson::dom::parser parser;
 
     // Parse the input. simdjson requires a padded_string_view for safety.
-    // SourceBuffer stores a std::string which is null-terminated, providing
-    // the required padding for simdjson (SIMDJSON_PADDING bytes after data).
-    // However, std::string only guarantees 1 byte of null termination.
-    // Use padded_string to be safe.
-    simdjson::padded_string paddedInput(source.data(), source.size());
+    // SourceBuffer appends kSimdjsonPadding (64) zero bytes at construction time,
+    // so we can use padded_string_view directly without copying the buffer.
+    simdjson::padded_string_view paddedInput(source.data(), source.size(), source.paddedSize());
 
     simdjson::dom::element doc;
     auto error = parser.parse(paddedInput).get(doc);
