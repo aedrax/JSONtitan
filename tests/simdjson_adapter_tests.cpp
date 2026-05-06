@@ -526,3 +526,46 @@ TEST(SimdjsonProperties, SemanticEquivalence) {
             RC_ASSERT(jsonNodesSemanticEqual(simdjsonTree.root, customTree.root));
         });
 }
+
+// ===========================================================================
+// Property 2: Parse–Print Round-Trip
+// For any valid JSON, parse → pretty-print → parse produces structurally
+// equivalent tree.
+// Validates: Requirements 6.2
+// ===========================================================================
+
+TEST(SimdjsonProperties, ParsePrintRoundTrip) {
+    rc::check("Feature: simdjson-integration, Property 2: Parse-Print Round-Trip",
+        []() {
+            const auto json = *generators::genValidJson();
+
+            // Step 1: Parse with simdjson backend to get tree1
+            auto result1 = parseBuffer(std::string(json),
+                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+
+            // Must parse successfully
+            RC_PRE(result1.ok());
+
+            // Convert to JsonNode tree
+            auto tree1 = result1.toParseResult();
+            RC_ASSERT(tree1.root != nullptr);
+
+            // Step 2: Pretty-print tree1
+            auto printed = prettyPrint(*tree1.root);
+            RC_ASSERT(!printed.empty());
+
+            // Step 3: Parse the pretty-printed output again with simdjson
+            auto result2 = parseBuffer(std::string(printed),
+                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+
+            // The pretty-printed output must also parse successfully
+            RC_ASSERT(result2.ok());
+
+            // Convert to JsonNode tree
+            auto tree2 = result2.toParseResult();
+            RC_ASSERT(tree2.root != nullptr);
+
+            // Step 4: Assert structural/semantic equivalence
+            RC_ASSERT(jsonNodesSemanticEqual(tree1.root, tree2.root));
+        });
+}
