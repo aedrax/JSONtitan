@@ -24,6 +24,7 @@ add_library(jsontitan_core STATIC
     chunk_parser.cpp
     parse_orchestrator.cpp
     token_emitter.cpp
+    simdjson_adapter.cpp
 )
 
 target_include_directories(jsontitan_core
