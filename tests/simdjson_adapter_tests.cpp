@@ -778,3 +778,113 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
             }
         });
 }
+
+// ===========================================================================
+// Property 7: Arena Allocation Integrity
+// For any valid JSON, all StringRef pointers in the tree point within
+// ArenaAllocator memory (ownsData == true) and NOT into simdjson's internal
+// buffers (which are freed after parse).
+// Validates: Requirements 8.1, 8.4
+// ===========================================================================
+
+namespace {
+
+/// Recursively walk an ArenaJsonNode tree and verify that all non-empty
+/// StringRef values have ownsData == true (arena-allocated) and that their
+/// data pointers are non-null. For the simdjson backend, ALL strings must
+/// be arena-owned since simdjson's internal buffers are released after parse.
+///
+/// Additionally verifies that no StringRef data pointer falls within the
+/// SourceBuffer's memory range — for the simdjson path, strings should be
+/// copied into the arena, not referencing the source buffer.
+///
+/// @param node The current node to check.
+/// @param sourceStart Start of the SourceBuffer's memory.
+/// @param sourceEnd End of the SourceBuffer's memory (exclusive).
+/// @param nodeCount Output: incremented for each node visited.
+/// @param stringRefCount Output: incremented for each non-empty StringRef checked.
+/// @return true if all checks pass, false otherwise.
+static bool verifyArenaIntegrity(const ArenaJsonNode* node,
+                                 const char* sourceStart,
+                                 const char* sourceEnd,
+                                 std::size_t& nodeCount,
+                                 std::size_t& stringRefCount) {
+    if (!node) return false;
+    nodeCount++;
+
+    // Check the key StringRef
+    if (node->key.data != nullptr && node->key.length > 0) {
+        stringRefCount++;
+        // For simdjson backend: all strings must be arena-owned
+        if (!node->key.ownsData) return false;
+        // Pointer must not be within the source buffer
+        // (simdjson copies all strings to arena, not source)
+        if (node->key.data >= sourceStart && node->key.data < sourceEnd) return false;
+    }
+
+    // Check the value StringRef
+    if (node->value.data != nullptr && node->value.length > 0) {
+        stringRefCount++;
+        // For simdjson backend: all strings must be arena-owned
+        if (!node->value.ownsData) return false;
+        // Pointer must not be within the source buffer
+        if (node->value.data >= sourceStart && node->value.data < sourceEnd) return false;
+    }
+
+    // Recursively check all children
+    for (std::size_t i = 0; i < node->childCount; ++i) {
+        if (!verifyArenaIntegrity(node->children[i], sourceStart, sourceEnd,
+                                  nodeCount, stringRefCount)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // anonymous namespace
+
+TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
+    rc::check("Feature: simdjson-integration, Property 7: Arena Allocation Integrity",
+        []() {
+            const auto json = *generators::genValidJson();
+
+            // Parse using the SourceBuffer overload so we have access to both
+            // the arena and the source buffer memory ranges.
+            auto source = std::make_unique<SourceBuffer>(std::string(json));
+            const char* sourceStart = source->data();
+            const char* sourceEnd = source->data() + source->size();
+
+            auto result = parseBuffer(std::move(source),
+                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+
+            // Must parse successfully
+            RC_PRE(result.ok());
+            RC_ASSERT(result.root != nullptr);
+
+            // Walk the entire tree and verify all StringRef pointers
+            std::size_t nodeCount = 0;
+            std::size_t stringRefCount = 0;
+
+            // Get source buffer range from the result (source was moved in)
+            const char* resultSourceStart = result.source->data();
+            const char* resultSourceEnd = result.source->data() + result.source->size();
+
+            bool allValid = verifyArenaIntegrity(
+                result.root, resultSourceStart, resultSourceEnd,
+                nodeCount, stringRefCount);
+
+            // All StringRef pointers must be arena-owned and not in source buffer
+            RC_ASSERT(allValid);
+
+            // Sanity check: we actually visited nodes
+            RC_ASSERT(nodeCount >= 1);
+
+            // For JSON documents that contain non-empty string content
+            // (keys or non-empty string values), we should have checked at
+            // least one StringRef. However, documents like "", "null", "true",
+            // "false", numbers, empty objects {}, and empty arrays [] may have
+            // zero non-empty StringRefs, which is valid.
+            // This is a sanity check — the real assertion is allValid above.
+        });
+}
