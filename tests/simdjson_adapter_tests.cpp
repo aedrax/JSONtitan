@@ -728,3 +728,53 @@ TEST(SimdjsonProperties, ErrorMappingValidity) {
             RC_ASSERT(!result.error->description.empty());
         });
 }
+
+// ===========================================================================
+// Property 5: Progress Callback Bounds
+// For any valid JSON with callback, values include 0.0 and 1.0, all in
+// [0.0, 1.0], and values are monotonically non-decreasing.
+// Validates: Requirements 5.1
+// ===========================================================================
+
+TEST(SimdjsonProperties, ProgressCallbackBounds) {
+    rc::check("Feature: simdjson-integration, Property 5: Progress Callback Bounds",
+        []() {
+            const auto json = *generators::genValidJson();
+
+            // Collect all progress values reported by the callback
+            std::vector<float> progressValues;
+            auto callback = [&progressValues](float value) {
+                progressValues.push_back(value);
+            };
+
+            // Parse with simdjson backend and progress callback
+            auto result = parseBuffer(std::string(json),
+                ParseBufferOptions{
+                    .backend = ParserBackend::Simdjson,
+                    .progressCallback = callback
+                });
+
+            // Must parse successfully
+            RC_PRE(result.ok());
+
+            // The callback must have been invoked at least twice (0.0 and 1.0)
+            RC_ASSERT(progressValues.size() >= 2);
+
+            // The first reported value must be 0.0
+            RC_ASSERT(progressValues.front() == 0.0f);
+
+            // The last reported value must be 1.0
+            RC_ASSERT(progressValues.back() == 1.0f);
+
+            // All reported values must be in the range [0.0, 1.0]
+            for (float v : progressValues) {
+                RC_ASSERT(v >= 0.0f);
+                RC_ASSERT(v <= 1.0f);
+            }
+
+            // Values must be monotonically non-decreasing
+            for (std::size_t i = 1; i < progressValues.size(); ++i) {
+                RC_ASSERT(progressValues[i] >= progressValues[i - 1]);
+            }
+        });
+}
