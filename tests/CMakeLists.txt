@@ -243,3 +243,16 @@ target_link_libraries(simdjson_integration_tests
 )
 
 gtest_discover_tests(simdjson_integration_tests)
+
+# ── Parser Performance Bug Condition PBT (Google Test + RapidCheck, no Qt) ──
+add_executable(parser_perf_pbt parser_perf_pbt.cpp)
+
+target_link_libraries(parser_perf_pbt
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(parser_perf_pbt)
