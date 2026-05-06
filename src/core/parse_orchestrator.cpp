@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/chunk_parser.h"
+#include "core/simdjson_adapter.h"
 #include "core/structural_scanner.h"
 
 namespace jsontitan::core {
@@ -148,6 +149,14 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
             nullptr,
             ParseError{0, "Empty input"}
         };
+    }
+
+    // Route to simdjson backend when selected
+    if (options.backend == ParserBackend::Simdjson) {
+        SimdjsonParseOptions sjOpts{.progressCallback = options.progressCallback};
+        auto result = simdjsonParse(*source, *arena, sjOpts);
+        return ArenaParseResult{std::move(arena), std::move(source),
+                                result.root, result.error};
     }
 
     // Single-threaded fast path for small inputs
