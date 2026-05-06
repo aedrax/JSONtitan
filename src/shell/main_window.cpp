@@ -791,6 +791,39 @@ void MainWindow::onRemoveFromUnion() {
 // --- Task 16.5: Export actions and detail panel ---
 
 void MainWindow::onExportCsv() {
+    // Check for arena-backed case first
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    QModelIndex sourceIndex = proxyIndex.isValid()
+        ? m_filterProxy->mapToSource(proxyIndex)
+        : QModelIndex();
+
+    const jsontitan::core::ArenaJsonNode* arenaNode = nullptr;
+    if (sourceIndex.isValid()) {
+        arenaNode = m_treeModel->arenaNodeForIndex(sourceIndex);
+    } else if (m_arenaResult && m_arenaResult->root) {
+        arenaNode = m_arenaResult->root;
+    }
+
+    if (arenaNode) {
+        // Arena-backed path: convert only the selected subtree on-demand
+        QString filePath = QFileDialog::getSaveFileName(
+            this, tr("Export CSV"), QString(),
+            tr("CSV Files (*.csv);;All Files (*)"));
+
+        if (filePath.isEmpty()) {
+            return;
+        }
+
+        QString error = ExportHandler::exportCsvToFile(*arenaNode, filePath);
+        if (!error.isEmpty()) {
+            QMessageBox::critical(this, tr("Export Error"), error);
+        } else {
+            m_statusLabel->setText(tr("Exported CSV to %1").arg(QFileInfo(filePath).fileName()));
+        }
+        return;
+    }
+
+    // Legacy JsonNode path
     auto node = getSelectedNode();
     if (!node) {
         QMessageBox::information(this, tr("Export CSV"),
@@ -815,6 +848,39 @@ void MainWindow::onExportCsv() {
 }
 
 void MainWindow::onExportXml() {
+    // Check for arena-backed case first
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    QModelIndex sourceIndex = proxyIndex.isValid()
+        ? m_filterProxy->mapToSource(proxyIndex)
+        : QModelIndex();
+
+    const jsontitan::core::ArenaJsonNode* arenaNode = nullptr;
+    if (sourceIndex.isValid()) {
+        arenaNode = m_treeModel->arenaNodeForIndex(sourceIndex);
+    } else if (m_arenaResult && m_arenaResult->root) {
+        arenaNode = m_arenaResult->root;
+    }
+
+    if (arenaNode) {
+        // Arena-backed path: convert only the selected subtree on-demand
+        QString filePath = QFileDialog::getSaveFileName(
+            this, tr("Export XML"), QString(),
+            tr("XML Files (*.xml);;All Files (*)"));
+
+        if (filePath.isEmpty()) {
+            return;
+        }
+
+        QString error = ExportHandler::exportXmlToFile(*arenaNode, filePath);
+        if (!error.isEmpty()) {
+            QMessageBox::critical(this, tr("Export Error"), error);
+        } else {
+            m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
+        }
+        return;
+    }
+
+    // Legacy JsonNode path
     auto node = getSelectedNode();
     if (!node) {
         QMessageBox::information(this, tr("Export XML"),

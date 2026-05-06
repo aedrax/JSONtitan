@@ -1,5 +1,6 @@
 #include "shell/export_handler.h"
 
+#include "core/arena_json_node.h"
 #include "core/csv_exporter.h"
 #include "core/xml_exporter.h"
 
@@ -58,4 +59,21 @@ auto ExportHandler::exportXmlToFile(const jsontitan::core::JsonNode& node,
 
     file.close();
     return {};
+}
+
+auto ExportHandler::exportCsvToFile(const jsontitan::core::ArenaJsonNode& node,
+                                    const QString& filePath) -> QString {
+    // Convert only the selected subtree on-demand (not the full tree).
+    // This is acceptable because exports are user-initiated on small selections.
+    auto jsonNode = node.toJsonNode();
+    return exportCsvToFile(*jsonNode, filePath);
+}
+
+auto ExportHandler::exportXmlToFile(const jsontitan::core::ArenaJsonNode& node,
+                                    const QString& filePath,
+                                    const std::string& rootElementName) -> QString {
+    // Convert only the selected subtree on-demand (not the full tree).
+    // This is acceptable because exports are user-initiated on small selections.
+    auto jsonNode = node.toJsonNode();
+    return exportXmlToFile(*jsonNode, filePath, rootElementName);
 }
