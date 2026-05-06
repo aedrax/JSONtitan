@@ -1,4 +1,5 @@
 add_library(jsontitan_core STATIC
+    cli_parser.cpp
     json_node.cpp
     parser.cpp
     pretty_printer.cpp
