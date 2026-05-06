@@ -30,11 +30,18 @@ struct ArenaParseResult {
     }
 };
 
-// Options controlling the parallel parse pipeline.
+// Selects which parsing backend to use.
+enum class ParserBackend {
+    Simdjson,  // Default: use simdjson DOM API
+    Custom     // Existing parallel pipeline (simd_scanner → structural_scanner → chunk_parser)
+};
+
+// Options controlling the parse pipeline.
 struct ParseBufferOptions {
-    std::size_t parallelThreshold = 1024 * 1024;  // 1 MB
-    unsigned maxThreads = 0;  // 0 = use hardware_concurrency()
-    SimdLevel simdLevel = detectSimdLevel();
+    ParserBackend backend = ParserBackend::Simdjson;
+    std::size_t parallelThreshold = 1024 * 1024;  // 1 MB (custom backend only)
+    unsigned maxThreads = 0;  // 0 = use hardware_concurrency() (custom backend only)
+    SimdLevel simdLevel = detectSimdLevel();       // custom backend only
     std::function<void(float)> progressCallback = nullptr;  // Optional progress reporting (0.0–1.0)
 };
 
