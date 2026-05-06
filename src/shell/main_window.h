@@ -23,7 +23,9 @@
 #include <string>
 #include <vector>
 
+#include "core/arena_json_node.h"
 #include "core/json_node.h"
+#include "core/parse_orchestrator.h"
 #include "shell/export_handler.h"
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
@@ -60,6 +62,7 @@ private slots:
     void onRecentFileSelected(const QString& filePath);
     void executeSearch();
     void onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation);
+    void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
 
 private:
     void setupMenuBar();
@@ -71,6 +74,7 @@ private:
     void showWelcomeMessage();
     void updateStatusBar(const QString& fileName, int nodeCount);
     int countNodes(const jsontitan::core::JsonNode& node) const;
+    int countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const;
     std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
 
     // UI elements
@@ -117,6 +121,7 @@ private:
 
     // Current data
     std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;
+    std::shared_ptr<jsontitan::core::ArenaParseResult> m_arenaResult;
     QString m_currentFileName;
     QString m_currentFilePath;
     bool m_isUnionMode = false;
