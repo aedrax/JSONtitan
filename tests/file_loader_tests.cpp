@@ -9,6 +9,7 @@
 #include <set>
 
 #include "core/json_node.h"
+#include "core/parse_orchestrator.h"
 #include "shell/file_loader.h"
 
 using namespace jsontitan::core;
@@ -44,7 +45,7 @@ private slots:
 
         FileLoader loader;
 
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
         QSignalSpy errorSpy(&loader, &FileLoader::parseError);
 
         loader.startParse(filePath);
@@ -56,10 +57,11 @@ private slots:
         QCOMPARE(errorSpy.count(), 0);
 
         // Verify the parsed tree
-        auto root = completeSpy.at(0).at(0).value<std::shared_ptr<const JsonNode>>();
-        QVERIFY(root != nullptr);
-        QCOMPARE(root->type, NodeType::Object);
-        QCOMPARE(root->children.size(), std::size_t(3));
+        auto result = completeSpy.at(0).at(0).value<std::shared_ptr<ArenaParseResult>>();
+        QVERIFY(result != nullptr);
+        QVERIFY(result->root != nullptr);
+        QCOMPARE(result->root->type, NodeType::Object);
+        QCOMPARE(result->root->childCount, std::size_t(3));
     }
 
     void testProgressSignalEmission() {
@@ -79,7 +81,7 @@ private slots:
         FileLoader loader;
 
         QSignalSpy progressSpy(&loader, &FileLoader::progressUpdated);
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
 
         loader.startParse(filePath);
 
@@ -118,7 +120,7 @@ private slots:
 
         FileLoader loader;
 
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
         QSignalSpy errorSpy(&loader, &FileLoader::parseError);
 
         loader.startParse(filePath);
@@ -147,7 +149,7 @@ private slots:
 
         FileLoader loader;
 
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
         QSignalSpy errorSpy(&loader, &FileLoader::parseError);
 
         loader.startParse(filePath);
@@ -167,7 +169,7 @@ private slots:
         // Test that a non-existent file path produces a parseError signal
         FileLoader loader;
 
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
         QSignalSpy errorSpy(&loader, &FileLoader::parseError);
 
         loader.startParse(QStringLiteral("/tmp/nonexistent_jsontitan_test_file_12345.json"));
@@ -201,7 +203,7 @@ private slots:
 
         FileLoader loader;
 
-        QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
         QSignalSpy errorSpy(&loader, &FileLoader::parseError);
 
         loader.startParse(filePath);
@@ -211,16 +213,18 @@ private slots:
         QCOMPARE(completeSpy.count(), 1);
         QCOMPARE(errorSpy.count(), 0);
 
-        auto root = completeSpy.at(0).at(0).value<std::shared_ptr<const JsonNode>>();
-        QVERIFY(root != nullptr);
-        QCOMPARE(root->type, NodeType::Object);
-        QCOMPARE(root->children.size(), std::size_t(2));
+        auto result = completeSpy.at(0).at(0).value<std::shared_ptr<ArenaParseResult>>();
+        QVERIFY(result != nullptr);
+        QVERIFY(result->root != nullptr);
+        QCOMPARE(result->root->type, NodeType::Object);
+        QCOMPARE(result->root->childCount, std::size_t(2));
 
         // Verify "users" array
-        auto users = root->children[0];
-        QCOMPARE(users->key, std::string("users"));
+        auto* users = result->root->childAt(0);
+        QVERIFY(users != nullptr);
+        QCOMPARE(users->keyView(), std::string_view("users"));
         QCOMPARE(users->type, NodeType::Array);
-        QCOMPARE(users->children.size(), std::size_t(2));
+        QCOMPARE(users->childCount, std::size_t(2));
     }
 
     void testMultipleSequentialParses() {
@@ -236,26 +240,28 @@ private slots:
 
         // First parse
         {
-            QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+            QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
             loader.startParse(filePath1);
             QVERIFY(completeSpy.wait(5000));
 
-            auto root = completeSpy.at(0).at(0).value<std::shared_ptr<const JsonNode>>();
-            QVERIFY(root != nullptr);
-            QCOMPARE(root->children.size(), std::size_t(1));
-            QCOMPARE(root->children[0]->key, std::string("first"));
+            auto result = completeSpy.at(0).at(0).value<std::shared_ptr<ArenaParseResult>>();
+            QVERIFY(result != nullptr);
+            QVERIFY(result->root != nullptr);
+            QCOMPARE(result->root->childCount, std::size_t(1));
+            QCOMPARE(result->root->childAt(0)->keyView(), std::string_view("first"));
         }
 
         // Second parse
         {
-            QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+            QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
             loader.startParse(filePath2);
             QVERIFY(completeSpy.wait(5000));
 
-            auto root = completeSpy.at(0).at(0).value<std::shared_ptr<const JsonNode>>();
-            QVERIFY(root != nullptr);
-            QCOMPARE(root->children.size(), std::size_t(1));
-            QCOMPARE(root->children[0]->key, std::string("second"));
+            auto result = completeSpy.at(0).at(0).value<std::shared_ptr<ArenaParseResult>>();
+            QVERIFY(result != nullptr);
+            QVERIFY(result->root != nullptr);
+            QCOMPARE(result->root->childCount, std::size_t(1));
+            QCOMPARE(result->root->childAt(0)->keyView(), std::string_view("second"));
         }
     }
 };
@@ -397,7 +403,7 @@ private slots:
 
                 FileLoaderWorker worker;
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-                QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+                QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
                 QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
 
                 worker.process(qpath);
@@ -434,7 +440,7 @@ private slots:
 
                 FileLoaderWorker worker;
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-                QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+                QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
                 QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
 
                 worker.process(filePath);
@@ -473,7 +479,7 @@ private slots:
 
                 FileLoaderWorker worker;
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-                QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+                QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
 
                 worker.process(filePath);
 
@@ -533,7 +539,7 @@ private slots:
 
             FileLoaderWorker worker;
             QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-            QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+            QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
 
             // Cancel before processing
             worker.cancel();
@@ -561,7 +567,7 @@ private slots:
 
             FileLoader loader;
             QSignalSpy errorSpy(&loader, &FileLoader::parseError);
-            QSignalSpy completeSpy(&loader, &FileLoader::parseComplete);
+            QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
 
             loader.startParse(filePath);
 
@@ -627,22 +633,19 @@ private slots:
 
                 FileLoaderWorker worker;
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
-                QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+                QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
 
                 worker.process(filePath);
 
-                // Must emit parseComplete with no error
+                // Must emit arenaParseComplete with no error
                 RC_ASSERT(completeSpy.count() == 1);
                 RC_ASSERT(errorSpy.count() == 0);
 
                 // Root must be non-null
-                auto root = completeSpy.at(0).at(0)
-                    .value<std::shared_ptr<const jsontitan::core::JsonNode>>();
-                RC_ASSERT(root != nullptr);
-
-                // Root must be an object or array (valid top-level JSON)
-                RC_ASSERT(root->type == jsontitan::core::NodeType::Object ||
-                          root->type == jsontitan::core::NodeType::Array);
+                auto result = completeSpy.at(0).at(0)
+                    .value<std::shared_ptr<jsontitan::core::ArenaParseResult>>();
+                RC_ASSERT(result != nullptr);
+                RC_ASSERT(result->root != nullptr);
             });
 
         QVERIFY2(result, "Successful parse preservation property failed");
@@ -759,7 +762,7 @@ private slots:
                 FileLoaderWorker worker;
 
                 QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
-                QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+                QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
                 QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
 
                 worker.process(filePath);
@@ -859,7 +862,7 @@ private slots:
 
         FileLoaderWorker worker;
         QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
-        QSignalSpy completeSpy(&worker, &FileLoaderWorker::parseComplete);
+        QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
         QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
 
         worker.process(filePath);
@@ -916,8 +919,9 @@ private slots:
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    // Register metatype for cross-thread signal/slot
+    // Register metatypes for cross-thread signal/slot
     qRegisterMetaType<std::shared_ptr<const jsontitan::core::JsonNode>>();
+    qRegisterMetaType<std::shared_ptr<jsontitan::core::ArenaParseResult>>();
 
     int status = 0;
 

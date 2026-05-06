@@ -170,7 +170,7 @@ private slots:
         auto* fileLoader = window.findChild<FileLoader*>();
         QVERIFY(fileLoader != nullptr);
 
-        QSignalSpy completeSpy(fileLoader, &FileLoader::parseComplete);
+        QSignalSpy completeSpy(fileLoader, &FileLoader::arenaParseComplete);
 
         std::vector<std::string> paths = {filePath.toStdString()};
         window.openFromCliArgs(paths);
