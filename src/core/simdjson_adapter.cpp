@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 #include <simdjson.h>
@@ -10,6 +11,31 @@
 namespace jsontitan::core {
 
 namespace {
+
+// Map a simdjson error code to a human-readable ParseError.
+// Byte offset is included where simdjson provides location information.
+auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
+    switch (error) {
+        case simdjson::EMPTY:
+            return ParseError{0, "Empty input"};
+        case simdjson::UNCLOSED_STRING:
+            return ParseError{0, "Unterminated string"};
+        case simdjson::TAPE_ERROR:
+            return ParseError{0, "Structural error at byte 0"};
+        case simdjson::DEPTH_ERROR:
+            return ParseError{0, "Document exceeds maximum nesting depth"};
+        case simdjson::CAPACITY:
+            return ParseError{0, "Document exceeds maximum size (4 GB)"};
+        case simdjson::MEMALLOC:
+            return ParseError{0, "Memory allocation failed during parsing"};
+        case simdjson::UTF8_ERROR:
+            return ParseError{0, "Invalid UTF-8 encoding at byte 0"};
+        case simdjson::TRAILING_CONTENT:
+            return ParseError{0, "Unexpected trailing content after JSON value"};
+        default:
+            return ParseError{0, std::string("Parse error: ") + simdjson::error_message(error)};
+    }
+}
 
 // Convert a simdjson DOM element into an ArenaJsonNode tree, recursively.
 // All string data is copied into the arena so that the resulting tree
@@ -201,8 +227,7 @@ auto simdjsonParse(const SourceBuffer& source,
     simdjson::dom::element doc;
     auto error = parser.parse(paddedInput).get(doc);
     if (error != simdjson::SUCCESS) {
-        // Basic error mapping — detailed mapping is Task 2.3.
-        return SimdjsonResult{nullptr, ParseError{0, simdjson::error_message(error)}};
+        return SimdjsonResult{nullptr, mapSimdjsonError(error)};
     }
 
     // Walk the DOM tree and convert to ArenaJsonNode.
