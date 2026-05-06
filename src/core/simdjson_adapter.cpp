@@ -37,17 +37,53 @@ auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
     }
 }
 
+// Threshold above which intermediate progress is reported during tree-building.
+constexpr std::size_t kProgressReportingThreshold = 10 * 1024 * 1024; // 10 MB
+
+// Approximate bytes per node used to estimate total node count from document size.
+constexpr std::size_t kEstimatedBytesPerNode = 50;
+
+// How often (in nodes) to report intermediate progress.
+constexpr std::size_t kProgressReportInterval = 1000;
+
+// Context passed through the recursive tree-building to track progress.
+struct ProgressContext {
+    std::function<void(float)> callback;
+    std::size_t estimatedTotalNodes = 0;
+    std::size_t nodesCreated = 0;
+};
+
 // Convert a simdjson DOM element into an ArenaJsonNode tree, recursively.
 // All string data is copied into the arena so that the resulting tree
 // outlives the simdjson parser's internal buffers.
 auto convertElement(simdjson::dom::element elem,
                     StringRef key,
-                    ArenaAllocator& arena) -> ArenaJsonNode* {
+                    ArenaAllocator& arena,
+                    ProgressContext* progress) -> ArenaJsonNode* {
     auto* node = arena.construct<ArenaJsonNode>();
     if (!node) {
         return nullptr;
     }
     node->key = key;
+
+    // Track progress if context is provided.
+    if (progress && progress->callback && progress->estimatedTotalNodes > 0) {
+        progress->nodesCreated++;
+        if (progress->nodesCreated % kProgressReportInterval == 0) {
+            // Progress during tree-building is mapped to [0.5, 1.0) range
+            // since simdjson parse (first half) is already done.
+            float treeBuildFraction = static_cast<float>(progress->nodesCreated) /
+                                     static_cast<float>(progress->estimatedTotalNodes);
+            if (treeBuildFraction > 1.0F) {
+                treeBuildFraction = 1.0F;
+            }
+            float overallProgress = 0.5F + (treeBuildFraction * 0.5F);
+            if (overallProgress > 0.99F) {
+                overallProgress = 0.99F; // Reserve 1.0 for completion
+            }
+            progress->callback(overallProgress);
+        }
+    }
 
     switch (elem.type()) {
         case simdjson::dom::element_type::OBJECT: {
@@ -72,7 +108,7 @@ auto convertElement(simdjson::dom::element elem,
                     auto keyCopy = arena.copyString(k);
                     StringRef childKey{keyCopy.data(), keyCopy.size(), true};
 
-                    auto* child = convertElement(v, childKey, arena);
+                    auto* child = convertElement(v, childKey, arena, progress);
                     if (!child) {
                         return nullptr;
                     }
@@ -103,7 +139,7 @@ auto convertElement(simdjson::dom::element elem,
                 std::size_t idx = 0;
                 for (auto v : arr) {
                     StringRef emptyKey{};
-                    auto* child = convertElement(v, emptyKey, arena);
+                    auto* child = convertElement(v, emptyKey, arena, progress);
                     if (!child) {
                         return nullptr;
                     }
@@ -207,10 +243,15 @@ auto convertElement(simdjson::dom::element elem,
 
 auto simdjsonParse(const SourceBuffer& source,
                    ArenaAllocator& arena,
-                   SimdjsonParseOptions /*options*/) -> SimdjsonResult {
+                   SimdjsonParseOptions options) -> SimdjsonResult {
     // Empty input check.
     if (source.size() == 0) {
         return SimdjsonResult{nullptr, ParseError{0, "Empty input"}};
+    }
+
+    // Report initial progress (0.0) if callback is provided.
+    if (options.progressCallback) {
+        options.progressCallback(0.0F);
     }
 
     // Create the simdjson parser on the stack — RAII ensures its internal
@@ -230,11 +271,31 @@ auto simdjsonParse(const SourceBuffer& source,
         return SimdjsonResult{nullptr, mapSimdjsonError(error)};
     }
 
+    // After simdjson parse completes, report 0.5 progress (parsing is ~half the work).
+    if (options.progressCallback) {
+        options.progressCallback(0.5F);
+    }
+
+    // Set up progress tracking for tree-building phase on large documents.
+    ProgressContext progressCtx;
+    ProgressContext* progressPtr = nullptr;
+    if (options.progressCallback && source.size() > kProgressReportingThreshold) {
+        progressCtx.callback = options.progressCallback;
+        progressCtx.estimatedTotalNodes = source.size() / kEstimatedBytesPerNode;
+        progressCtx.nodesCreated = 0;
+        progressPtr = &progressCtx;
+    }
+
     // Walk the DOM tree and convert to ArenaJsonNode.
     StringRef rootKey{}; // Root node has no key.
-    auto* root = convertElement(doc, rootKey, arena);
+    auto* root = convertElement(doc, rootKey, arena, progressPtr);
     if (!root) {
         return SimdjsonResult{nullptr, ParseError{0, "Memory allocation failed during tree construction"}};
+    }
+
+    // Report completion progress (1.0).
+    if (options.progressCallback) {
+        options.progressCallback(1.0F);
     }
 
     // At this point, the simdjson parser (and its internal buffers) will be
