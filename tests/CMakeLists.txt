@@ -188,6 +188,21 @@ target_link_libraries(cli_parser_pbt
 
 gtest_discover_tests(cli_parser_pbt)
 
+# ── CLI Parser Unit + Integration Tests (Google Test + Qt Test) ──
+add_executable(cli_parser_tests cli_parser_tests.cpp)
+
+target_link_libraries(cli_parser_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+)
+
+add_test(NAME cli_parser_tests COMMAND cli_parser_tests)
+
 # ── Syntax Highlighter Tests (Google Test + Qt for QTextEdit) ────
 add_executable(syntax_highlighter_tests syntax_highlighter_tests.cpp)
 
