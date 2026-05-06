@@ -175,6 +175,19 @@ target_link_libraries(token_emitter_tests
 
 gtest_discover_tests(token_emitter_tests)
 
+# ── CLI Parser Property-Based Tests (Google Test + RapidCheck, no Qt) ────
+add_executable(cli_parser_pbt cli_parser_pbt.cpp)
+
+target_link_libraries(cli_parser_pbt
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(cli_parser_pbt)
+
 # ── Syntax Highlighter Tests (Google Test + Qt for QTextEdit) ────
 add_executable(syntax_highlighter_tests syntax_highlighter_tests.cpp)
 
