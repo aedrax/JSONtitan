@@ -9,6 +9,8 @@ SearchWorker::SearchWorker(QObject* parent)
     qRegisterMetaType<jsontitan::core::FilterResult>("jsontitan::core::FilterResult");
     qRegisterMetaType<std::shared_ptr<const jsontitan::core::JsonNode>>(
         "std::shared_ptr<const jsontitan::core::JsonNode>");
+    qRegisterMetaType<std::shared_ptr<jsontitan::core::ArenaParseResult>>(
+        "std::shared_ptr<jsontitan::core::ArenaParseResult>");
     qRegisterMetaType<uint64_t>("uint64_t");
 }
 
@@ -23,4 +25,17 @@ void SearchWorker::executeSearch(jsontitan::core::SearchQuery query,
 
     auto result = jsontitan::core::filter(*root, query);
     emit searchComplete(std::move(result), generation);
+}
+
+void SearchWorker::executeArenaSearch(jsontitan::core::SearchQuery query,
+                                      std::shared_ptr<jsontitan::core::ArenaParseResult> result,
+                                      uint64_t generation) {
+    if (!result || !result->root) {
+        emit searchComplete(jsontitan::core::FilterResult{.matches = {}, .error = std::nullopt},
+                            generation);
+        return;
+    }
+
+    auto filterResult = jsontitan::core::filter(*result->root, query);
+    emit searchComplete(std::move(filterResult), generation);
 }
