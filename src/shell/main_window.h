@@ -20,6 +20,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "core/json_node.h"
 #include "shell/export_handler.h"
@@ -35,6 +37,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
+    // Open file(s) from CLI-provided paths (single file or union mode)
+    void openFromCliArgs(const std::vector<std::string>& filePaths);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
