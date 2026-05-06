@@ -101,8 +101,8 @@ void FileLoaderWorker::process(const QString& filePath) {
         return;
     }
 
-    // Phase 3: Convert to public type
-    auto result = arenaResult.toParseResult();
+    // Phase 3: Wrap in shared_ptr and emit directly (no deep-copy)
+    auto sharedResult = std::make_shared<ArenaParseResult>(std::move(arenaResult));
 
     // Cancellation check after parse
     if (m_cancelled.load(std::memory_order_relaxed)) {
@@ -110,7 +110,7 @@ void FileLoaderWorker::process(const QString& filePath) {
     }
 
     emit progressUpdated(100);
-    emit parseComplete(std::move(result.root));
+    emit arenaParseComplete(std::move(sharedResult));
 }
 
 void FileLoaderWorker::cancel() {
@@ -125,6 +125,9 @@ FileLoader::FileLoader(QObject* parent)
     : QObject(parent)
     , m_workerThread(new QThread(this))
     , m_worker(new FileLoaderWorker()) {
+    // Register metatype for cross-thread signal/slot
+    qRegisterMetaType<std::shared_ptr<jsontitan::core::ArenaParseResult>>();
+
     // Move worker to the background thread
     m_worker->moveToThread(m_workerThread);
 
@@ -133,6 +136,8 @@ FileLoader::FileLoader(QObject* parent)
             this, &FileLoader::progressUpdated, Qt::QueuedConnection);
     connect(m_worker, &FileLoaderWorker::parseComplete,
             this, &FileLoader::parseComplete, Qt::QueuedConnection);
+    connect(m_worker, &FileLoaderWorker::arenaParseComplete,
+            this, &FileLoader::arenaParseComplete, Qt::QueuedConnection);
     connect(m_worker, &FileLoaderWorker::parseError,
             this, &FileLoader::parseError, Qt::QueuedConnection);
 
