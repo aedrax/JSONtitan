@@ -569,3 +569,131 @@ TEST(SimdjsonProperties, ParsePrintRoundTrip) {
             RC_ASSERT(jsonNodesSemanticEqual(tree1.root, tree2.root));
         });
 }
+
+// ===========================================================================
+// Property 3: Duplicate Key Order Preservation
+// For any JSON object with duplicate keys, child node order matches input order.
+// Validates: Requirements 6.3
+// ===========================================================================
+
+TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
+    rc::check("Feature: simdjson-integration, Property 3: Duplicate Key Order Preservation",
+        []() {
+            const auto json = *generators::genJsonWithDuplicateKeys();
+
+            // Parse with simdjson backend
+            auto result = parseBuffer(std::string(json),
+                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+
+            // Must parse successfully
+            RC_PRE(result.ok());
+            RC_ASSERT(result.root != nullptr);
+
+            // The root must be an Object
+            RC_ASSERT(result.root->type == NodeType::Object);
+
+            // Extract the expected values from the generated JSON.
+            // The generator produces: {"dup":v1,"dup":v2,...,"dup":vN}
+            // We need to extract the values in order from the input string.
+            std::vector<std::string> expectedValues;
+            {
+                // Simple extraction: split by "\"dup\":" to get values
+                // The format is {"dup":val1,"dup":val2,...}
+                std::string_view sv(json);
+                const std::string needle = "\"dup\":";
+                std::size_t pos = 0;
+                while ((pos = sv.find(needle, pos)) != std::string_view::npos) {
+                    pos += needle.size();
+                    // Find the end of this value (next comma or closing brace)
+                    std::size_t end = pos;
+                    if (end < sv.size() && sv[end] == '"') {
+                        // String value: find closing quote (handle escapes)
+                        end++;
+                        while (end < sv.size() && sv[end] != '"') {
+                            if (sv[end] == '\\') end++; // skip escaped char
+                            end++;
+                        }
+                        end++; // past closing quote
+                    } else {
+                        // Non-string value: find next comma or closing brace
+                        while (end < sv.size() && sv[end] != ',' && sv[end] != '}') {
+                            end++;
+                        }
+                    }
+                    expectedValues.emplace_back(sv.substr(pos, end - pos));
+                }
+            }
+
+            // The number of children must match the number of entries
+            RC_ASSERT(result.root->childCount == expectedValues.size());
+
+            // All children must have key "dup"
+            for (std::size_t i = 0; i < result.root->childCount; ++i) {
+                auto* child = result.root->children[i];
+                RC_ASSERT(child->key.view() == "dup");
+            }
+
+            // Verify order: each child's value should correspond to the
+            // expected value at the same position.
+            // Convert to JsonNode for easier value comparison.
+            auto parseResult = result.toParseResult();
+            RC_ASSERT(parseResult.root != nullptr);
+            RC_ASSERT(parseResult.root->children.size() == expectedValues.size());
+
+            for (std::size_t i = 0; i < parseResult.root->children.size(); ++i) {
+                const auto& child = parseResult.root->children[i];
+                RC_ASSERT(child->key == "dup");
+
+                // Verify the value matches the expected order.
+                // For scalars, compare the parsed value against what we expect.
+                switch (child->type) {
+                    case NodeType::Null:
+                        RC_ASSERT(expectedValues[i] == "null");
+                        break;
+                    case NodeType::Boolean:
+                        RC_ASSERT(expectedValues[i] == child->value);
+                        break;
+                    case NodeType::Number: {
+                        // Numeric values may differ in representation (e.g. 1e2 vs 100)
+                        // so compare semantically
+                        double expected = 0.0, actual = 0.0;
+                        try {
+                            expected = std::stod(expectedValues[i]);
+                            actual = std::stod(child->value);
+                        } catch (...) {
+                            RC_FAIL("Failed to parse number for comparison");
+                        }
+                        RC_ASSERT(std::abs(expected - actual) < 1e-10 ||
+                                  (expected != 0.0 && std::abs((expected - actual) / expected) < 1e-10));
+                        break;
+                    }
+                    case NodeType::String: {
+                        // The expected value includes quotes, the child->value does not
+                        // Strip quotes from expected for comparison
+                        std::string expectedStr = expectedValues[i];
+                        if (expectedStr.size() >= 2 && expectedStr.front() == '"' && expectedStr.back() == '"') {
+                            expectedStr = expectedStr.substr(1, expectedStr.size() - 2);
+                        }
+                        // simdjson resolves escape sequences, so we need to compare
+                        // the resolved value. For simple strings without escapes, direct compare works.
+                        // For strings with escapes, we parse the expected string to resolve them.
+                        // Since genJsonScalar generates strings that simdjson will resolve,
+                        // we can re-parse the expected value to get the resolved form.
+                        std::string expectedJson = "[" + expectedValues[i] + "]";
+                        auto expectedResult = parseBuffer(std::string(expectedJson),
+                            ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                        if (expectedResult.ok() && expectedResult.root->childCount > 0) {
+                            auto expectedTree = expectedResult.toParseResult();
+                            if (expectedTree.root && !expectedTree.root->children.empty()) {
+                                RC_ASSERT(child->value == expectedTree.root->children[0]->value);
+                            }
+                        }
+                        break;
+                    }
+                    default:
+                        // Object/Array shouldn't appear from genJsonScalar
+                        break;
+                }
+            }
+        });
+}
