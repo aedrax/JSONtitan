@@ -19,6 +19,24 @@ struct ArenaJsonNode {
     ArenaJsonNode** children = nullptr;
     std::size_t childCount = 0;
 
+    // Bounds-checked child access. Returns nullptr if index is out of range.
+    [[nodiscard]] auto childAt(std::size_t index) const -> ArenaJsonNode* {
+        if (index >= childCount) {
+            return nullptr;
+        }
+        return children[index];
+    }
+
+    // Returns the key as a string_view without copying.
+    [[nodiscard]] auto keyView() const -> std::string_view {
+        return key.view();
+    }
+
+    // Returns the value as a string_view without copying.
+    [[nodiscard]] auto valueView() const -> std::string_view {
+        return value.view();
+    }
+
     // Convert this subtree to the public JsonNode type (deep copy).
     // Materializes all StringRef values into owned std::string instances.
     [[nodiscard]] auto toJsonNode() const -> std::shared_ptr<const JsonNode> {
