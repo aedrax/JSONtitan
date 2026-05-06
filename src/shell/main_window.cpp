@@ -14,6 +14,7 @@
 #include <filesystem>
 
 #include "core/parser.h"
+#include "core/parse_orchestrator.h"
 #include "core/pretty_printer.h"
 #include "core/search_engine.h"
 #include "core/token_emitter.h"
@@ -59,6 +60,8 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onProgressUpdated);
     connect(m_fileLoader, &FileLoader::parseComplete,
             this, &MainWindow::onParseComplete);
+    connect(m_fileLoader, &FileLoader::arenaParseComplete,
+            this, &MainWindow::onArenaParseComplete);
     connect(m_fileLoader, &FileLoader::parseError,
             this, &MainWindow::onParseError);
 }
@@ -417,6 +420,14 @@ int MainWindow::countNodes(const jsontitan::core::JsonNode& node) const {
     return count;
 }
 
+int MainWindow::countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const {
+    int count = 1;
+    for (std::size_t i = 0; i < node.childCount; ++i) {
+        count += countArenaNodes(*node.children[i]);
+    }
+    return count;
+}
+
 std::shared_ptr<const jsontitan::core::JsonNode> MainWindow::getSelectedNode() const {
     QModelIndex proxyIndex = m_treeView->currentIndex();
     if (!proxyIndex.isValid()) {
@@ -489,6 +500,7 @@ void MainWindow::onProgressUpdated(int percentage) {
 void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root) {
     m_progressBar->hide();
     m_currentRoot = root;
+    m_arenaResult.reset();  // Clear arena result when using union/legacy path
 
     m_treeModel->setRootNode(root);
     m_filterProxy->clearFilter();
@@ -500,6 +512,34 @@ void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode
 
     // Update status bar
     int nodeCount = root ? countNodes(*root) : 0;
+    updateStatusBar(m_currentFileName, nodeCount);
+
+    // Clear detail panel and search
+    m_detailPanel->clear();
+    m_searchBar->clear();
+    m_searchErrorLabel->hide();
+
+    // Record file in recent files list
+    if (!m_currentFilePath.isEmpty()) {
+        m_recentFilesManager->fileOpened(m_currentFilePath);
+    }
+}
+
+void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
+    m_progressBar->hide();
+    m_arenaResult = result;
+    m_currentRoot.reset();  // Clear legacy root when using arena path
+
+    m_treeModel->setArenaRoot(result);
+    m_filterProxy->clearFilter();
+
+    // Show tree, hide welcome
+    m_welcomeLabel->hide();
+    m_treeView->show();
+    m_noResultsLabel->hide();
+
+    // Update status bar
+    int nodeCount = result && result->root ? countArenaNodes(*result->root) : 0;
     updateStatusBar(m_currentFileName, nodeCount);
 
     // Clear detail panel and search
