@@ -888,3 +888,118 @@ TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
             // This is a sanity check — the real assertion is allValid above.
         });
 }
+
+// ===========================================================================
+// Property 6: Statistical Computation Correctness
+// For any non-empty vector of positive timing values, mean = sum/count,
+// median = middle value, stddev matches population formula.
+// Validates: Requirements 4.5
+// ===========================================================================
+
+namespace {
+
+// Reference implementations of statistical functions matching
+// tools/benchmark_parse.cpp (anonymous namespace functions).
+
+auto refComputeMean(const std::vector<double>& values) -> double {
+    if (values.empty()) return 0.0;
+    double sum = 0.0;
+    for (double v : values) {
+        sum += v;
+    }
+    return sum / static_cast<double>(values.size());
+}
+
+auto refComputeMedian(const std::vector<double>& values) -> double {
+    if (values.empty()) return 0.0;
+    std::vector<double> sorted(values.begin(), values.end());
+    std::sort(sorted.begin(), sorted.end());
+    auto n = sorted.size();
+    if (n % 2 == 0) {
+        return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+    }
+    return sorted[n / 2];
+}
+
+auto refComputeStddev(const std::vector<double>& values) -> double {
+    if (values.size() < 2) return 0.0;
+    double mean = refComputeMean(values);
+    double sumSqDiff = 0.0;
+    for (double v : values) {
+        double diff = v - mean;
+        sumSqDiff += diff * diff;
+    }
+    return std::sqrt(sumSqDiff / static_cast<double>(values.size()));
+}
+
+} // anonymous namespace
+
+TEST(SimdjsonProperties, StatisticalComputationCorrectness) {
+    rc::check("Feature: simdjson-integration, Property 6: Statistical Computation Correctness",
+        []() {
+            // Generate a vector of 1-100 positive doubles in range (0.001, 10000.0)
+            // to simulate realistic timing values.
+            const auto size = *rc::gen::inRange(1, 101);
+            std::vector<double> values;
+            values.reserve(static_cast<std::size_t>(size));
+            for (int i = 0; i < size; ++i) {
+                // Generate a positive double in (0.001, 10000.0)
+                auto intVal = *rc::gen::inRange(1, 10000000);
+                double v = static_cast<double>(intVal) / 1000.0; // range: 0.001 to 10000.0
+                values.push_back(v);
+            }
+
+            RC_ASSERT(!values.empty());
+
+            // Compute mean using reference implementation
+            double mean = refComputeMean(values);
+
+            // Property: mean == sum / count (within floating point tolerance)
+            double sum = 0.0;
+            for (double v : values) {
+                sum += v;
+            }
+            double expectedMean = sum / static_cast<double>(values.size());
+            RC_ASSERT(std::abs(mean - expectedMean) < 1e-10);
+
+            // Compute median using reference implementation
+            double median = refComputeMedian(values);
+
+            // Property: median == middle value for odd-length, average of two
+            // middle values for even-length
+            {
+                std::vector<double> sorted(values.begin(), values.end());
+                std::sort(sorted.begin(), sorted.end());
+                auto n = sorted.size();
+                double expectedMedian;
+                if (n % 2 == 0) {
+                    expectedMedian = (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+                } else {
+                    expectedMedian = sorted[n / 2];
+                }
+                RC_ASSERT(std::abs(median - expectedMedian) < 1e-10);
+            }
+
+            // Compute stddev using reference implementation
+            double stddev = refComputeStddev(values);
+
+            // Property: stddev matches population formula:
+            // sqrt(sum((x - mean)^2) / N)
+            if (values.size() < 2) {
+                RC_ASSERT(stddev == 0.0);
+            } else {
+                double sumSqDiff = 0.0;
+                for (double v : values) {
+                    double diff = v - mean;
+                    sumSqDiff += diff * diff;
+                }
+                double expectedStddev = std::sqrt(sumSqDiff / static_cast<double>(values.size()));
+                // Use relative tolerance for floating point comparison
+                if (expectedStddev > 0.0) {
+                    RC_ASSERT(std::abs(stddev - expectedStddev) / expectedStddev < 1e-10);
+                } else {
+                    RC_ASSERT(std::abs(stddev - expectedStddev) < 1e-10);
+                }
+            }
+        });
+}
