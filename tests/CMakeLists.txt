@@ -269,3 +269,20 @@ target_link_libraries(parser_perf_preservation_pbt
 )
 
 gtest_discover_tests(parser_perf_preservation_pbt)
+
+# ── Pretty-Print Arena Bug Condition PBT (Google Test + RapidCheck + Qt) ──
+add_executable(pretty_print_arena_pbt pretty_print_arena_pbt.cpp)
+
+target_link_libraries(pretty_print_arena_pbt
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(pretty_print_arena_pbt)
