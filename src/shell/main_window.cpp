@@ -906,15 +906,35 @@ void MainWindow::onExportXml() {
 
 void MainWindow::onTreeSelectionChanged() {
     auto node = getSelectedNode();
-    if (!node) {
-        m_detailPanel->clear();
+    if (node) {
+        // Legacy path (unchanged)
+        jsontitan::core::PrettyPrintOptions opts;
+        opts.maxOutputSize = 65536;  // 64 KB limit
+
+        auto tokenResult = jsontitan::core::emitTokens(*node, opts);
+        jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
         return;
     }
 
-    // Emit tokens with bounded output to avoid UI hangs
-    jsontitan::core::PrettyPrintOptions opts;
-    opts.maxOutputSize = 65536;  // 64 KB limit
+    // Arena fallback path
+    if (m_arenaResult) {
+        QModelIndex proxyIndex = m_treeView->currentIndex();
+        if (proxyIndex.isValid()) {
+            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+            const jsontitan::core::ArenaJsonNode* arenaNode =
+                m_treeModel->arenaNodeForIndex(sourceIndex);
+            if (arenaNode) {
+                auto jsonNode = arenaNode->toJsonNode();
+                jsontitan::core::PrettyPrintOptions opts;
+                opts.maxOutputSize = 65536;  // 64 KB limit
 
-    auto tokenResult = jsontitan::core::emitTokens(*node, opts);
-    jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
+                auto tokenResult = jsontitan::core::emitTokens(*jsonNode, opts);
+                jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
+                return;
+            }
+        }
+    }
+
+    // No node resolved from either path
+    m_detailPanel->clear();
 }
