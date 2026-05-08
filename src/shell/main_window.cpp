@@ -336,6 +336,7 @@ void MainWindow::setupStatusBar() {
     m_progressBar = new QProgressBar(this);
     m_progressBar->setMaximumWidth(200);
     m_progressBar->setRange(0, 100);
+    m_progressBar->setFormat("%p%");
     m_progressBar->hide();
     statusBar()->addPermanentWidget(m_progressBar);
 }
