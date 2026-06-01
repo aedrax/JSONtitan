@@ -1,10 +1,12 @@
 #include "shell/main_window.h"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
@@ -13,6 +15,7 @@
 
 #include <filesystem>
 
+#include "core/deletion_engine.h"
 #include "core/parser.h"
 #include "core/parse_orchestrator.h"
 #include "core/pretty_printer.h"
@@ -20,6 +23,7 @@
 #include "core/token_emitter.h"
 #include "core/union_engine.h"
 #include "shell/drop_validator.h"
+#include "shell/save_handler.h"
 #include "shell/syntax_highlighter.h"
 
 MainWindow::MainWindow(QWidget* parent)
@@ -986,18 +990,192 @@ void MainWindow::setModified(bool modified) {
     setWindowTitle(title);
 }
 
-// --- Task 6.1: Delete node stub ---
+// --- Task 6.2: Delete node implementation ---
 
 void MainWindow::onDeleteNode() {
-    // TODO: Implement deletion logic using DeletionEngine
+    // Guard: no-op if no current root (nothing loaded)
+    if (!m_currentRoot) {
+        return;
+    }
+
+    // Guard: no-op if no selection
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    if (!proxyIndex.isValid()) {
+        return;
+    }
+
+    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    if (!sourceIndex.isValid()) {
+        return;
+    }
+
+    // Guard: no-op if root is selected (no parent in source model)
+    if (!sourceIndex.parent().isValid()) {
+        return;
+    }
+
+    // Get the raw JsonNode pointer from the TreeModel
+    const jsontitan::core::JsonNode* rawPtr = m_treeModel->jsonNodeForIndex(sourceIndex);
+    if (!rawPtr) {
+        return;
+    }
+
+    // Compute the path from root to the selected node
+    auto maybePath = jsontitan::core::computePath(m_currentRoot, rawPtr);
+    if (!maybePath.has_value()) {
+        return;
+    }
+
+    const auto& path = maybePath.value();
+
+    // Confirmation dialog if node has >10 direct children
+    if (rawPtr->children.size() > 10) {
+        std::size_t descendantCount = jsontitan::core::countDescendants(*rawPtr);
+        auto reply = QMessageBox::question(
+            this, tr("Confirm Deletion"),
+            tr("This node has %1 descendants. Are you sure you want to delete it?")
+                .arg(descendantCount),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    // Remember the current position for selection restoration
+    int deletedRow = sourceIndex.row();
+    QModelIndex parentSourceIndex = sourceIndex.parent();
+
+    // Perform the deletion
+    auto newTree = jsontitan::core::deleteNode(m_currentRoot, path);
+    m_currentRoot = newTree;
+    m_treeModel->setRootNode(newTree);
+    m_filterProxy->clearFilter();
+
+    // Set modified flag
+    setModified(true);
+
+    // Restore selection: try next sibling, then previous sibling, then parent
+    int parentRowCount = m_treeModel->rowCount(parentSourceIndex);
+    QModelIndex newSourceIndex;
+    if (deletedRow < parentRowCount) {
+        // Next sibling (same row, since items shifted down)
+        newSourceIndex = m_treeModel->index(deletedRow, 0, parentSourceIndex);
+    } else if (deletedRow > 0) {
+        // Previous sibling
+        newSourceIndex = m_treeModel->index(deletedRow - 1, 0, parentSourceIndex);
+    } else {
+        // Parent
+        newSourceIndex = parentSourceIndex;
+    }
+
+    if (newSourceIndex.isValid()) {
+        QModelIndex newProxyIndex = m_filterProxy->mapFromSource(newSourceIndex);
+        if (newProxyIndex.isValid()) {
+            m_treeView->setCurrentIndex(newProxyIndex);
+        }
+    }
 }
 
-// --- Task 8.1: Save / Save As stubs ---
+// --- Task 6.3: Key press event override ---
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Delete) {
+        onDeleteNode();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
+// --- Task 7.2: Close event override ---
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (m_modified) {
+        auto reply = QMessageBox::question(
+            this, tr("Unsaved Changes"),
+            tr("The document has been modified.\nDo you want to save your changes?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+
+        if (reply == QMessageBox::Save) {
+            onSave();
+            // If still modified after save attempt (e.g., user cancelled save-as dialog),
+            // don't close
+            if (m_modified) {
+                event->ignore();
+                return;
+            }
+            event->accept();
+        } else if (reply == QMessageBox::Discard) {
+            event->accept();
+        } else {
+            // Cancel
+            event->ignore();
+        }
+    } else {
+        event->accept();
+    }
+}
+
+// --- Task 8.2: Save implementation ---
 
 void MainWindow::onSave() {
-    // TODO: Implement save logic using SaveHandler
+    if (!m_currentRoot) {
+        return;
+    }
+
+    // If in union mode or no current file path, delegate to Save As
+    if (m_isUnionMode || m_currentFilePath.isEmpty()) {
+        onSaveAs();
+        return;
+    }
+
+    QString error = SaveHandler::saveToFile(*m_currentRoot, m_currentFilePath);
+    if (error.isEmpty()) {
+        setModified(false);
+    } else {
+        QMessageBox::critical(this, tr("Save Error"),
+            tr("Failed to save to %1:\n\n%2")
+                .arg(m_currentFilePath, error));
+    }
 }
 
+// --- Task 8.3: Save As implementation ---
+
 void MainWindow::onSaveAs() {
-    // TODO: Implement save-as logic using SaveHandler
+    if (!m_currentRoot) {
+        return;
+    }
+
+    QString chosenPath = QFileDialog::getSaveFileName(
+        this, tr("Save As"), QString(),
+        tr("JSON Files (*.json)"));
+
+    if (chosenPath.isEmpty()) {
+        return;
+    }
+
+    // If file exists, prompt for overwrite confirmation
+    if (QFile::exists(chosenPath)) {
+        auto reply = QMessageBox::question(
+            this, tr("Overwrite File"),
+            tr("The file \"%1\" already exists.\nDo you want to overwrite it?")
+                .arg(QFileInfo(chosenPath).fileName()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    QString error = SaveHandler::saveToFile(*m_currentRoot, chosenPath);
+    if (error.isEmpty()) {
+        m_currentFilePath = chosenPath;
+        m_currentFileName = QFileInfo(chosenPath).fileName();
+        setModified(false);
+    } else {
+        QMessageBox::critical(this, tr("Save Error"),
+            tr("Failed to save to %1:\n\n%2")
+                .arg(chosenPath, error));
+    }
 }
