@@ -286,3 +286,29 @@ target_link_libraries(pretty_print_arena_pbt
 )
 
 gtest_discover_tests(pretty_print_arena_pbt)
+
+# ── JSON Exporter Property-Based Tests (Google Test + RapidCheck, no Qt) ──
+add_executable(json_exporter_pbt json_exporter_pbt.cpp)
+
+target_link_libraries(json_exporter_pbt
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(json_exporter_pbt)
+
+# ── Deletion Engine PBT (Google Test + RapidCheck, no Qt) ────────
+add_executable(deletion_engine_pbt deletion_engine_pbt.cpp)
+
+target_link_libraries(deletion_engine_pbt
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(deletion_engine_pbt)

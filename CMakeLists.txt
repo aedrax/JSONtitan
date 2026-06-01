@@ -17,5 +17,5 @@ add_subdirectory(src/shell)
 # add_subdirectory(tools)
 
 # Testing
-# enable_testing()
-# add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)
