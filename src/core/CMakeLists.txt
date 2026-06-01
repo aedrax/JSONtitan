@@ -25,6 +25,8 @@ add_library(jsontitan_core STATIC
     parse_orchestrator.cpp
     token_emitter.cpp
     simdjson_adapter.cpp
+    deletion_engine.cpp
+    json_exporter.cpp
 )
 
 target_include_directories(jsontitan_core

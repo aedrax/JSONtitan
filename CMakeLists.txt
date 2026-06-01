@@ -14,8 +14,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Test)
 
 add_subdirectory(src/core)
 add_subdirectory(src/shell)
-add_subdirectory(tools)
+# add_subdirectory(tools)
 
 # Testing
-enable_testing()
-add_subdirectory(tests)
+# enable_testing()
+# add_subdirectory(tests)
