@@ -300,6 +300,22 @@ target_link_libraries(json_exporter_pbt
 
 gtest_discover_tests(json_exporter_pbt)
 
+# ── Deletion Shell Tests (Google Test + Qt Test) ─────────────────
+add_executable(deletion_shell_tests deletion_shell_tests.cpp)
+
+target_link_libraries(deletion_shell_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(deletion_shell_tests)
+
 # ── Deletion Engine PBT (Google Test + RapidCheck, no Qt) ────────
 add_executable(deletion_engine_pbt deletion_engine_pbt.cpp)
 
