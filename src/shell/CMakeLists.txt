@@ -7,6 +7,7 @@ set(SHELL_SOURCES
     file_loader.cpp
     export_handler.cpp
     recent_files_manager.cpp
+    save_handler.cpp
     search_worker.cpp
     syntax_highlighter.cpp
 )
