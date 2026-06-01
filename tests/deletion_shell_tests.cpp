@@ -1,13 +1,120 @@
 #include <gtest/gtest.h>
 
-// Placeholder test for deletion shell integration tests.
-// Real tests will exercise the shell-level deletion UI interactions.
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 
-TEST(DeletionShellTests, Placeholder) {
-    EXPECT_TRUE(true);
+#include "core/json_node.h"
+#include "shell/save_handler.h"
+
+using namespace jsontitan::core;
+
+// ---------------------------------------------------------------------------
+// Task 5.3: Unit tests for Save Handler
+// Requirements: 5.2, 5.3
+// ---------------------------------------------------------------------------
+
+// Helper: build a simple JSON tree: {"name": "Alice", "age": 30}
+static auto makeSimpleTree() -> std::shared_ptr<const JsonNode> {
+    std::vector<std::shared_ptr<const JsonNode>> children;
+    children.push_back(JsonNode::makeString("name", "Alice"));
+    children.push_back(JsonNode::makeNumber("age", "30"));
+    return JsonNode::makeObject("", std::move(children));
 }
 
-int main(int argc, char **argv) {
+// Test 1: Successful atomic write — file is created with valid JSON content
+TEST(SaveHandler, SuccessfulWrite) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    QString filePath = tempDir.path() + "/output.json";
+    auto tree = makeSimpleTree();
+
+    QString error = SaveHandler::saveToFile(*tree, filePath);
+    EXPECT_TRUE(error.isEmpty()) << error.toStdString();
+
+    // Verify the file exists
+    EXPECT_TRUE(QFile::exists(filePath));
+
+    // Verify the file contains valid JSON with expected content
+    QFile file(filePath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    QByteArray content = file.readAll();
+    file.close();
+
+    // Should contain the key "name" and value "Alice"
+    EXPECT_TRUE(content.contains("\"name\""));
+    EXPECT_TRUE(content.contains("\"Alice\""));
+    EXPECT_TRUE(content.contains("\"age\""));
+    EXPECT_TRUE(content.contains("30"));
+
+    // Should end with a newline (trailing newline option is true by default)
+    EXPECT_TRUE(content.endsWith('\n'));
+}
+
+// Test 2: Read-only directory — save should fail with an error
+TEST(SaveHandler, ReadOnlyDirectory) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    // Create a subdirectory and make it read-only
+    QString roDir = tempDir.path() + "/readonly";
+    ASSERT_TRUE(QDir().mkpath(roDir));
+    ASSERT_TRUE(QFile::setPermissions(roDir, QFileDevice::ReadUser | QFileDevice::ExeUser));
+
+    QString filePath = roDir + "/output.json";
+    auto tree = makeSimpleTree();
+
+    QString error = SaveHandler::saveToFile(*tree, filePath);
+    EXPECT_FALSE(error.isEmpty()) << "Expected an error for read-only directory";
+
+    // File should not exist
+    EXPECT_FALSE(QFile::exists(filePath));
+
+    // Restore permissions for cleanup
+    QFile::setPermissions(roDir, QFileDevice::ReadUser | QFileDevice::WriteUser | QFileDevice::ExeUser);
+}
+
+// Test 3: Original file unchanged on failure — write an initial file, make dir
+// read-only, attempt overwrite, verify original content is preserved
+TEST(SaveHandler, OriginalUnchangedOnFailure) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    QString filePath = tempDir.path() + "/data.json";
+
+    // Write an initial file with known content
+    {
+        QFile file(filePath);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        file.write("{\"original\": true}\n");
+        file.close();
+    }
+
+    // Make the directory read-only so the save (temp file creation) fails
+    ASSERT_TRUE(QFile::setPermissions(tempDir.path(),
+        QFileDevice::ReadUser | QFileDevice::ExeUser));
+
+    auto tree = makeSimpleTree();
+    QString error = SaveHandler::saveToFile(*tree, filePath);
+    EXPECT_FALSE(error.isEmpty()) << "Expected an error when directory is read-only";
+
+    // Restore permissions before reading
+    QFile::setPermissions(tempDir.path(),
+        QFileDevice::ReadUser | QFileDevice::WriteUser | QFileDevice::ExeUser);
+
+    // Verify original content is preserved
+    QFile file(filePath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    QByteArray content = file.readAll();
+    file.close();
+
+    EXPECT_EQ(content, QByteArray("{\"original\": true}\n"));
+}
+
+int main(int argc, char** argv) {
+    QCoreApplication app(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

@@ -199,6 +199,16 @@ void MainWindow::setupMenuBar() {
 
     fileMenu->addSeparator();
 
+    m_saveAction = fileMenu->addAction(tr("&Save"));
+    m_saveAction->setShortcut(QKeySequence(tr("Ctrl+S")));
+    connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
+
+    m_saveAsAction = fileMenu->addAction(tr("Save &As..."));
+    m_saveAsAction->setShortcut(QKeySequence(tr("Ctrl+Shift+S")));
+    connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
+
+    fileMenu->addSeparator();
+
     m_exportCsvAction = fileMenu->addAction(tr("Export &CSV..."));
     connect(m_exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
 
@@ -282,6 +292,22 @@ void MainWindow::setupCentralWidget() {
         connect(exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
         auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
         connect(exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
+
+        menu->addSeparator();
+        auto* deleteAction = menu->addAction(tr("Delete"));
+        // Disable Delete when root node is selected (no parent index)
+        QModelIndex proxyIndex = m_treeView->indexAt(pos);
+        if (proxyIndex.isValid()) {
+            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+            if (!sourceIndex.parent().isValid()) {
+                // This is the root node — disable delete
+                deleteAction->setEnabled(false);
+            }
+        } else {
+            deleteAction->setEnabled(false);
+        }
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteNode);
+
         if (m_isUnionMode) {
             menu->addSeparator();
             auto* removeAction = menu->addAction(tr("Remove from Union"));
@@ -520,6 +546,9 @@ void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode
     m_searchBar->clear();
     m_searchErrorLabel->hide();
 
+    // Clear modified flag on file open
+    setModified(false);
+
     // Record file in recent files list
     if (!m_currentFilePath.isEmpty()) {
         m_recentFilesManager->fileOpened(m_currentFilePath);
@@ -547,6 +576,9 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     m_detailPanel->clear();
     m_searchBar->clear();
     m_searchErrorLabel->hide();
+
+    // Clear modified flag on file open
+    setModified(false);
 
     // Record file in recent files list
     if (!m_currentFilePath.isEmpty()) {
@@ -938,4 +970,34 @@ void MainWindow::onTreeSelectionChanged() {
 
     // No node resolved from either path
     m_detailPanel->clear();
+}
+
+// --- Task 7.1: Modified flag and title management ---
+
+void MainWindow::setModified(bool modified) {
+    m_modified = modified;
+    QString title = QStringLiteral("JSONTitan");
+    if (!m_currentFileName.isEmpty()) {
+        title = m_currentFileName + QStringLiteral(" — JSONTitan");
+    }
+    if (m_modified) {
+        title = QStringLiteral("*") + title;
+    }
+    setWindowTitle(title);
+}
+
+// --- Task 6.1: Delete node stub ---
+
+void MainWindow::onDeleteNode() {
+    // TODO: Implement deletion logic using DeletionEngine
+}
+
+// --- Task 8.1: Save / Save As stubs ---
+
+void MainWindow::onSave() {
+    // TODO: Implement save logic using SaveHandler
+}
+
+void MainWindow::onSaveAs() {
+    // TODO: Implement save-as logic using SaveHandler
 }

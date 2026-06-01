@@ -63,6 +63,9 @@ private slots:
     void executeSearch();
     void onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
+    void onDeleteNode();
+    void onSave();
+    void onSaveAs();
 
 private:
     void setupMenuBar();
@@ -76,6 +79,7 @@ private:
     int countNodes(const jsontitan::core::JsonNode& node) const;
     int countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const;
     std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
+    void setModified(bool modified);
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
@@ -97,6 +101,8 @@ private:
     QAction* m_exportCsvAction = nullptr;
     QAction* m_exportXmlAction = nullptr;
     QAction* m_exitAction = nullptr;
+    QAction* m_saveAction = nullptr;
+    QAction* m_saveAsAction = nullptr;
 
     // Recent files
     RecentFilesManager* m_recentFilesManager = nullptr;
@@ -125,4 +131,5 @@ private:
     QString m_currentFileName;
     QString m_currentFilePath;
     bool m_isUnionMode = false;
+    bool m_modified = false;
 };
