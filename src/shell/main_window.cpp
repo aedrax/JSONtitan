@@ -976,6 +976,28 @@ void MainWindow::onTreeSelectionChanged() {
     m_detailPanel->clear();
 }
 
+// --- Helper: Convert arena tree to editable JsonNode tree ---
+
+bool MainWindow::ensureEditableRoot() {
+    if (m_currentRoot) {
+        return true;  // Already have an editable root
+    }
+
+    if (!m_arenaResult || !m_arenaResult->root) {
+        return false;  // Nothing to convert
+    }
+
+    // Convert the arena tree to a JsonNode tree (deep copy)
+    m_currentRoot = m_arenaResult->root->toJsonNode();
+    m_arenaResult.reset();
+
+    // Switch the tree model to use the JsonNode path
+    m_treeModel->setRootNode(m_currentRoot);
+    m_filterProxy->clearFilter();
+
+    return true;
+}
+
 // --- Task 7.1: Modified flag and title management ---
 
 void MainWindow::setModified(bool modified) {
@@ -993,8 +1015,13 @@ void MainWindow::setModified(bool modified) {
 // --- Task 6.2: Delete node implementation ---
 
 void MainWindow::onDeleteNode() {
-    // Guard: no-op if no current root (nothing loaded)
-    if (!m_currentRoot) {
+    // Guard: no-op if nothing loaded at all
+    if (!m_currentRoot && !m_arenaResult) {
+        return;
+    }
+
+    // Convert arena tree to editable JsonNode tree if needed
+    if (!ensureEditableRoot()) {
         return;
     }
 
@@ -1120,7 +1147,12 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 // --- Task 8.2: Save implementation ---
 
 void MainWindow::onSave() {
-    if (!m_currentRoot) {
+    if (!m_currentRoot && !m_arenaResult) {
+        return;
+    }
+
+    // Convert arena tree to editable JsonNode tree if needed
+    if (!ensureEditableRoot()) {
         return;
     }
 
@@ -1143,7 +1175,12 @@ void MainWindow::onSave() {
 // --- Task 8.3: Save As implementation ---
 
 void MainWindow::onSaveAs() {
-    if (!m_currentRoot) {
+    if (!m_currentRoot && !m_arenaResult) {
+        return;
+    }
+
+    // Convert arena tree to editable JsonNode tree if needed
+    if (!ensureEditableRoot()) {
         return;
     }
 

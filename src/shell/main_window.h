@@ -84,6 +84,7 @@ private:
     int countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const;
     std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
     void setModified(bool modified);
+    bool ensureEditableRoot();
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
