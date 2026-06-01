@@ -988,12 +988,10 @@ bool MainWindow::ensureEditableRoot() {
     }
 
     // Convert the arena tree to a JsonNode tree (deep copy)
+    // Do NOT reset the tree model here — callers that modify the tree
+    // will call setRootNode() themselves with the new tree.
     m_currentRoot = m_arenaResult->root->toJsonNode();
     m_arenaResult.reset();
-
-    // Switch the tree model to use the JsonNode path
-    m_treeModel->setRootNode(m_currentRoot);
-    m_filterProxy->clearFilter();
 
     return true;
 }
@@ -1020,11 +1018,6 @@ void MainWindow::onDeleteNode() {
         return;
     }
 
-    // Convert arena tree to editable JsonNode tree if needed
-    if (!ensureEditableRoot()) {
-        return;
-    }
-
     // Guard: no-op if no selection
     QModelIndex proxyIndex = m_treeView->currentIndex();
     if (!proxyIndex.isValid()) {
@@ -1041,23 +1034,58 @@ void MainWindow::onDeleteNode() {
         return;
     }
 
-    // Get the raw JsonNode pointer from the TreeModel
-    const jsontitan::core::JsonNode* rawPtr = m_treeModel->jsonNodeForIndex(sourceIndex);
-    if (!rawPtr) {
+    // Compute the NodePath by walking up the QModelIndex parent chain.
+    // This works regardless of whether the model is arena-backed or JsonNode-backed.
+    jsontitan::core::NodePath path;
+    QModelIndex walkIndex = sourceIndex;
+    while (walkIndex.isValid() && walkIndex.parent().isValid()) {
+        QModelIndex parentIndex = walkIndex.parent();
+        // Determine if the parent is an Object or Array
+        jsontitan::core::NodeType parentType = jsontitan::core::NodeType::Object;
+        if (auto* jn = m_treeModel->jsonNodeForIndex(parentIndex)) {
+            parentType = jn->type;
+        } else if (auto* an = m_treeModel->arenaNodeForIndex(parentIndex)) {
+            parentType = an->type;
+        }
+
+        if (parentType == jsontitan::core::NodeType::Array) {
+            path.insert(path.begin(), static_cast<std::size_t>(walkIndex.row()));
+        } else {
+            // Object: get the key from the child node
+            std::string key;
+            if (auto* jn = m_treeModel->jsonNodeForIndex(walkIndex)) {
+                key = jn->key;
+            } else if (auto* an = m_treeModel->arenaNodeForIndex(walkIndex)) {
+                key = std::string(an->keyView());
+            }
+            path.insert(path.begin(), key);
+        }
+        walkIndex = parentIndex;
+    }
+
+    if (path.empty()) {
         return;
     }
 
-    // Compute the path from root to the selected node
-    auto maybePath = jsontitan::core::computePath(m_currentRoot, rawPtr);
-    if (!maybePath.has_value()) {
-        return;
+    // Get child count for confirmation dialog (before conversion)
+    std::size_t directChildCount = 0;
+    std::size_t descendantCount = 0;
+    if (auto* jn = m_treeModel->jsonNodeForIndex(sourceIndex)) {
+        directChildCount = jn->children.size();
+        if (directChildCount > 10) {
+            descendantCount = jsontitan::core::countDescendants(*jn);
+        }
+    } else if (auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
+        directChildCount = an->childCount;
+        if (directChildCount > 10) {
+            // Convert to JsonNode just to count (or count arena nodes directly)
+            auto tempNode = an->toJsonNode();
+            descendantCount = jsontitan::core::countDescendants(*tempNode);
+        }
     }
-
-    const auto& path = maybePath.value();
 
     // Confirmation dialog if node has >10 direct children
-    if (rawPtr->children.size() > 10) {
-        std::size_t descendantCount = jsontitan::core::countDescendants(*rawPtr);
+    if (directChildCount > 10) {
         auto reply = QMessageBox::question(
             this, tr("Confirm Deletion"),
             tr("This node has %1 descendants. Are you sure you want to delete it?")
@@ -1073,8 +1101,16 @@ void MainWindow::onDeleteNode() {
     int deletedRow = sourceIndex.row();
     QModelIndex parentSourceIndex = sourceIndex.parent();
 
+    // Convert arena tree to editable JsonNode tree if needed
+    if (!ensureEditableRoot()) {
+        return;
+    }
+
     // Perform the deletion
     auto newTree = jsontitan::core::deleteNode(m_currentRoot, path);
+    if (!newTree) {
+        return;  // Shouldn't happen since we guard against root deletion
+    }
     m_currentRoot = newTree;
     m_treeModel->setRootNode(newTree);
     m_filterProxy->clearFilter();
@@ -1083,17 +1119,52 @@ void MainWindow::onDeleteNode() {
     setModified(true);
 
     // Restore selection: try next sibling, then previous sibling, then parent
-    int parentRowCount = m_treeModel->rowCount(parentSourceIndex);
+    // After model reset, we need to re-resolve the parent index
+    // The parent path is everything except the last segment
+    QModelIndex newParentIndex;  // invalid = root
+    // Walk down from root to find the parent
+    QModelIndex current;  // starts as invalid (root)
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        int row = -1;
+        if (auto* idx = std::get_if<std::size_t>(&path[i])) {
+            row = static_cast<int>(*idx);
+        } else {
+            // Find the row by key
+            auto* keyStr = std::get_if<std::string>(&path[i]);
+            int rowCount = m_treeModel->rowCount(current);
+            for (int r = 0; r < rowCount; ++r) {
+                QModelIndex childIdx = m_treeModel->index(r, 0, current);
+                if (auto* jn = m_treeModel->jsonNodeForIndex(childIdx)) {
+                    if (jn->key == *keyStr) {
+                        row = r;
+                        break;
+                    }
+                }
+            }
+        }
+        if (row < 0) break;
+        // Ensure rows are fetched
+        while (m_treeModel->canFetchMore(current)) {
+            m_treeModel->fetchMore(current);
+        }
+        current = m_treeModel->index(row, 0, current);
+        if (!current.isValid()) break;
+    }
+    newParentIndex = current;
+
+    // Ensure parent's children are fetched
+    while (m_treeModel->canFetchMore(newParentIndex)) {
+        m_treeModel->fetchMore(newParentIndex);
+    }
+
+    int parentRowCount = m_treeModel->rowCount(newParentIndex);
     QModelIndex newSourceIndex;
     if (deletedRow < parentRowCount) {
-        // Next sibling (same row, since items shifted down)
-        newSourceIndex = m_treeModel->index(deletedRow, 0, parentSourceIndex);
+        newSourceIndex = m_treeModel->index(deletedRow, 0, newParentIndex);
     } else if (deletedRow > 0) {
-        // Previous sibling
-        newSourceIndex = m_treeModel->index(deletedRow - 1, 0, parentSourceIndex);
+        newSourceIndex = m_treeModel->index(deletedRow - 1, 0, newParentIndex);
     } else {
-        // Parent
-        newSourceIndex = parentSourceIndex;
+        newSourceIndex = newParentIndex;
     }
 
     if (newSourceIndex.isValid()) {
