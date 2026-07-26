@@ -150,7 +150,7 @@ TEST_F(QtAppFixture, BugCondition_ArenaNodeSelectionProducesEmptyDetailPanel) {
 
             // Step 1: Parse via simdjson backend to get an ArenaParseResult
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
             RC_PRE(arenaResult.root->childCount > 0);
@@ -624,7 +624,7 @@ TEST_F(QtAppFixture, ConcreteCase_ArenaRootSelectionClearsPanel) {
     std::string json = R"({"name": "Alice", "age": 30, "active": true})";
 
     auto arenaResult = parseBuffer(std::string(json),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
     ASSERT_TRUE(arenaResult.ok());
     ASSERT_NE(arenaResult.root, nullptr);
     ASSERT_GT(arenaResult.root->childCount, 0u);

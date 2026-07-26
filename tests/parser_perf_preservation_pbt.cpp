@@ -384,7 +384,7 @@ TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence) {
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
@@ -405,7 +405,7 @@ TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence_LargerInput
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
@@ -435,7 +435,7 @@ TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence) {
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
@@ -456,7 +456,7 @@ TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence_LargerInputs) {
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
@@ -486,7 +486,7 @@ TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence) {
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);
@@ -507,7 +507,7 @@ TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence_LargerInputs) {
 
             // Parse via simdjson backend
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_PRE(arenaResult.ok());
             RC_PRE(arenaResult.root != nullptr);

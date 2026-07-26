@@ -44,14 +44,14 @@ auto parseChunk(const ParserState& state, std::span<const std::byte> chunk)
 
 auto finalizeParse(const ParserState& state) -> ParseResult;
 
-// --- New API: parallel/optimized parse entry points ---
+// --- New API: whole-buffer parse entry points (simdjson-backed) ---
 
-// Forward declarations for the optimized pipeline types.
+// Forward declarations for the arena-based pipeline types.
 struct ArenaParseResult;
 struct ParseBufferOptions;
 class SourceBuffer;
 
-// Parse a complete buffer using the optimized parallel pipeline.
+// Parse a complete buffer via simdjson.
 // See parse_orchestrator.h for full type definitions and default options.
 auto parseBuffer(std::string input,
                  ParseBufferOptions options) -> ArenaParseResult;

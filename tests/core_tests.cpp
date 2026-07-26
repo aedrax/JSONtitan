@@ -4261,1266 +4261,6 @@ TEST(SourceBuffer, DataReturnsConstPointer) {
         "SourceBuffer::data() must return const char*");
 }
 
-// ===========================================================================
-// Task 3.4: Property 3 — SIMD/scalar scanner equivalence
-// Validates: Requirements 3.4, 3.5
-// ===========================================================================
-
-#include "core/simd_scanner.h"
-
-// ---------------------------------------------------------------------------
-// Property 3: For any byte sequence, the SIMD scanner produces identical
-// ScanBlock results to the scalar reference implementation.
-// ---------------------------------------------------------------------------
-
-TEST(ScannerProperty, SimdScalarEquivalence) {
-    rc::check("Property 3: SIMD/scalar scanner equivalence",
-        [](void) {
-            // Generate random byte sequence with varying length (0..300)
-            auto length = *rc::gen::inRange(0, 300);
-            auto bytes = *rc::gen::container<std::vector<char>>(
-                length, rc::gen::arbitrary<char>());
-
-            auto scalarResult = scalarScan(bytes.data(), bytes.size());
-            auto simdResult = simdScan(bytes.data(), bytes.size(), SimdLevel::SSE2);
-
-            RC_ASSERT(scalarResult.size() == simdResult.size());
-            for (size_t i = 0; i < scalarResult.size(); ++i) {
-                RC_ASSERT(scalarResult[i].structuralBits == simdResult[i].structuralBits);
-                RC_ASSERT(scalarResult[i].whitespaceBits == simdResult[i].whitespaceBits);
-                RC_ASSERT(scalarResult[i].quoteBits == simdResult[i].quoteBits);
-                RC_ASSERT(scalarResult[i].stringMask == simdResult[i].stringMask);
-            }
-        });
-}
-
-TEST(ScannerProperty, SimdScalarEquivalenceAVX2) {
-    rc::check("Property 3: SIMD/scalar scanner equivalence (AVX2 level)",
-        [](void) {
-            auto length = *rc::gen::inRange(0, 300);
-            auto bytes = *rc::gen::container<std::vector<char>>(
-                length, rc::gen::arbitrary<char>());
-
-            auto scalarResult = scalarScan(bytes.data(), bytes.size());
-            auto simdResult = simdScan(bytes.data(), bytes.size(), SimdLevel::AVX2);
-
-            RC_ASSERT(scalarResult.size() == simdResult.size());
-            for (size_t i = 0; i < scalarResult.size(); ++i) {
-                RC_ASSERT(scalarResult[i].structuralBits == simdResult[i].structuralBits);
-                RC_ASSERT(scalarResult[i].whitespaceBits == simdResult[i].whitespaceBits);
-                RC_ASSERT(scalarResult[i].quoteBits == simdResult[i].quoteBits);
-                RC_ASSERT(scalarResult[i].stringMask == simdResult[i].stringMask);
-            }
-        });
-}
-
-// ---------------------------------------------------------------------------
-// Boundary variant: test lengths at SIMD register boundaries
-// (multiples of 16 ± 1, multiples of 64 ± 1)
-// ---------------------------------------------------------------------------
-
-TEST(ScannerProperty, SimdScalarEquivalenceAtRegisterBoundaries) {
-    rc::check("Property 3: SIMD/scalar equivalence at register boundaries",
-        [](void) {
-            // Build a set of interesting boundary lengths
-            static const std::vector<int> boundaryLengths = {
-                0, 1,
-                15, 16, 17,
-                31, 32, 33,
-                47, 48, 49,
-                63, 64, 65,
-                79, 80, 81,
-                95, 96, 97,
-                127, 128, 129,
-                191, 192, 193,
-                255, 256, 257
-            };
-
-            auto idx = *rc::gen::inRange(std::size_t{0}, boundaryLengths.size());
-            auto length = boundaryLengths[idx];
-            auto bytes = *rc::gen::container<std::vector<char>>(
-                length, rc::gen::arbitrary<char>());
-
-            auto scalarResult = scalarScan(bytes.data(), bytes.size());
-            auto simdResultSSE2 = simdScan(bytes.data(), bytes.size(), SimdLevel::SSE2);
-            auto simdResultAVX2 = simdScan(bytes.data(), bytes.size(), SimdLevel::AVX2);
-
-            RC_ASSERT(scalarResult.size() == simdResultSSE2.size());
-            RC_ASSERT(scalarResult.size() == simdResultAVX2.size());
-            for (size_t i = 0; i < scalarResult.size(); ++i) {
-                // SSE2 equivalence
-                RC_ASSERT(scalarResult[i].structuralBits == simdResultSSE2[i].structuralBits);
-                RC_ASSERT(scalarResult[i].whitespaceBits == simdResultSSE2[i].whitespaceBits);
-                RC_ASSERT(scalarResult[i].quoteBits == simdResultSSE2[i].quoteBits);
-                RC_ASSERT(scalarResult[i].stringMask == simdResultSSE2[i].stringMask);
-                // AVX2 equivalence
-                RC_ASSERT(scalarResult[i].structuralBits == simdResultAVX2[i].structuralBits);
-                RC_ASSERT(scalarResult[i].whitespaceBits == simdResultAVX2[i].whitespaceBits);
-                RC_ASSERT(scalarResult[i].quoteBits == simdResultAVX2[i].quoteBits);
-                RC_ASSERT(scalarResult[i].stringMask == simdResultAVX2[i].stringMask);
-            }
-        });
-}
-
-// ---------------------------------------------------------------------------
-// Task 3.5: Property 4 — Structural Index Correctness
-// Validates: Requirements 3.1, 3.2, 3.3, 3.6
-// ---------------------------------------------------------------------------
-
-#include "core/structural_scanner.h"
-
-// Helper: determine if a character is a JSON structural character
-static bool isStructuralChar(char c) {
-    return c == '{' || c == '}' || c == '[' || c == ']' || c == ',' || c == ':';
-}
-
-// Helper: manually collect all structural character positions outside strings
-// by walking the input and tracking string state (with escape handling).
-static std::vector<std::size_t> collectExpectedStructuralPositions(
-    const std::string& json) {
-    std::vector<std::size_t> positions;
-    bool inString = false;
-
-    for (std::size_t i = 0; i < json.size(); ++i) {
-        char c = json[i];
-        if (inString) {
-            if (c == '\\') {
-                ++i; // skip escaped character
-            } else if (c == '"') {
-                inString = false;
-            }
-        } else {
-            if (c == '"') {
-                inString = true;
-            } else if (isStructuralChar(c)) {
-                positions.push_back(i);
-            }
-        }
-    }
-    return positions;
-}
-
-TEST(StructuralIndexProperty, StructuralIndexCorrectness) {
-    rc::check("Property 4: Structural index correctness",
-        [](void) {
-            // Generate a random valid JSON document
-            auto seed = *rc::gen::arbitrary<uint32_t>();
-            std::mt19937 rng(seed);
-            std::uniform_int_distribution<int> depthDist(0, 3);
-            std::string json = generateJsonValue(depthDist(rng), rng);
-
-            // Run scalarScan to get ScanBlocks
-            auto scanBlocks = scalarScan(json.data(), json.size());
-
-            // Build structural index
-            auto index = buildStructuralIndex(json.data(), json.size(), scanBlocks);
-
-            // (a) Every entry in the index corresponds to an actual structural
-            //     character at that byte offset in the input
-            for (const auto& entry : index.entries) {
-                RC_ASSERT(entry.offset < json.size());
-                RC_ASSERT(json[entry.offset] == entry.character);
-                RC_ASSERT(isStructuralChar(entry.character));
-            }
-
-            // (b) No structural characters outside of string literals are
-            //     missing from the index
-            auto expected = collectExpectedStructuralPositions(json);
-            std::vector<std::size_t> actualOffsets;
-            actualOffsets.reserve(index.entries.size());
-            for (const auto& entry : index.entries) {
-                actualOffsets.push_back(entry.offset);
-            }
-            RC_ASSERT(actualOffsets.size() == expected.size());
-            RC_ASSERT(actualOffsets == expected);
-
-            // (c) Nesting depths are correct:
-            //     - All depths are non-negative
-            //     - Opening brackets record depth before increment
-            //     - Closing brackets record depth after decrement
-            int depth = 0;
-            for (const auto& entry : index.entries) {
-                RC_ASSERT(entry.depth >= 0);
-                if (entry.character == '{' || entry.character == '[') {
-                    RC_ASSERT(entry.depth == depth);
-                    ++depth;
-                } else if (entry.character == '}' || entry.character == ']') {
-                    --depth;
-                    RC_ASSERT(entry.depth == depth);
-                } else {
-                    // comma or colon — at current depth
-                    RC_ASSERT(entry.depth == depth);
-                }
-            }
-
-            // (d) Entries are ordered by offset (ascending)
-            for (std::size_t i = 1; i < index.entries.size(); ++i) {
-                RC_ASSERT(index.entries[i].offset > index.entries[i - 1].offset);
-            }
-
-            // (e) Depth returns to 0 at the end for valid JSON
-            RC_ASSERT(depth == 0);
-        });
-}
-
-// ---------------------------------------------------------------------------
-// Task 3.6: Property 5 — Partition Boundary Validity
-// Validates: Requirements 4.1
-// ---------------------------------------------------------------------------
-
-TEST(PartitionProperty, PartitionBoundaryValidity) {
-    rc::check("Property 5: Partition boundary validity",
-        [](void) {
-            // Generate a random valid JSON document
-            auto seed = *rc::gen::arbitrary<uint32_t>();
-            std::mt19937 rng(seed);
-            std::uniform_int_distribution<int> depthDist(0, 3);
-            std::string json = generateJsonValue(depthDist(rng), rng);
-
-            // Run scalarScan to get ScanBlocks
-            auto scanBlocks = scalarScan(json.data(), json.size());
-
-            // Build structural index
-            auto index = buildStructuralIndex(json.data(), json.size(), scanBlocks);
-
-            // Find partition points
-            auto partitionPoints = index.findPartitionPoints();
-
-            // (a) Partition points are in ascending order
-            for (std::size_t i = 1; i < partitionPoints.size(); ++i) {
-                RC_ASSERT(partitionPoints[i] > partitionPoints[i - 1]);
-            }
-
-            // (b) Each partition point is within bounds (> 0 and <= input length)
-            for (auto pp : partitionPoints) {
-                RC_ASSERT(pp > 0);
-                RC_ASSERT(pp <= json.size());
-            }
-
-            // (c) The byte at partitionPoint - 1 is either '}' or ']'
-            for (auto pp : partitionPoints) {
-                char preceding = json[pp - 1];
-                RC_ASSERT(preceding == '}' || preceding == ']');
-            }
-
-            // (d) That closing bracket is at depth 0 in the structural index
-            //     Verify by finding the entry for offset (pp - 1) and checking depth == 0
-            for (auto pp : partitionPoints) {
-                std::size_t bracketOffset = pp - 1;
-                bool foundEntry = false;
-                for (const auto& entry : index.entries) {
-                    if (entry.offset == bracketOffset) {
-                        RC_ASSERT(entry.depth == 0);
-                        RC_ASSERT(entry.character == '}' || entry.character == ']');
-                        foundEntry = true;
-                        break;
-                    }
-                }
-                RC_ASSERT(foundEntry);
-            }
-
-            // (e) Completeness: every depth-0 closing bracket in the index
-            //     should produce a partition point
-            std::vector<std::size_t> expectedPoints;
-            for (const auto& entry : index.entries) {
-                if ((entry.character == '}' || entry.character == ']') &&
-                    entry.depth == 0) {
-                    expectedPoints.push_back(entry.offset + 1);
-                }
-            }
-            RC_ASSERT(partitionPoints.size() == expectedPoints.size());
-            RC_ASSERT(partitionPoints == expectedPoints);
-        });
-}
-
-// ---------------------------------------------------------------------------
-// Task 3.7: Unit tests for SimdScanner and StructuralScanner
-// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
-// ---------------------------------------------------------------------------
-
-// ===========================================================================
-// SimdScanner unit tests
-// ===========================================================================
-
-// 1. Empty input: scalarScan and simdScan return empty vectors
-TEST(SimdScanner, EmptyInputScalarScan) {
-    auto result = scalarScan(nullptr, 0);
-    EXPECT_TRUE(result.empty());
-}
-
-TEST(SimdScanner, EmptyInputSimdScan) {
-    auto result = simdScan(nullptr, 0, SimdLevel::SSE2);
-    EXPECT_TRUE(result.empty());
-}
-
-TEST(SimdScanner, EmptyInputSimdScanScalarLevel) {
-    auto result = simdScan(nullptr, 0, SimdLevel::Scalar);
-    EXPECT_TRUE(result.empty());
-}
-
-// 2. All structural characters detected
-TEST(SimdScanner, AllStructuralCharactersDetected) {
-    const std::string input = "{}[],:" ;
-    auto blocks = scalarScan(input.data(), input.size());
-    ASSERT_EQ(blocks.size(), 1u);
-
-    // Each of the 6 characters should have its bit set
-    for (std::size_t i = 0; i < input.size(); ++i) {
-        uint64_t bit = uint64_t{1} << i;
-        EXPECT_NE(blocks[0].structuralBits & bit, 0u)
-            << "Structural bit not set for character '" << input[i]
-            << "' at position " << i;
-    }
-}
-
-// 3. Whitespace correctly classified
-TEST(SimdScanner, WhitespaceCorrectlyClassified) {
-    const std::string input = " \t\n\r";
-    auto blocks = scalarScan(input.data(), input.size());
-    ASSERT_EQ(blocks.size(), 1u);
-
-    for (std::size_t i = 0; i < input.size(); ++i) {
-        uint64_t bit = uint64_t{1} << i;
-        EXPECT_NE(blocks[0].whitespaceBits & bit, 0u)
-            << "Whitespace bit not set for byte 0x"
-            << std::hex << static_cast<int>(static_cast<unsigned char>(input[i]))
-            << " at position " << std::dec << i;
-    }
-}
-
-// 4. Escaped quotes not counted
-TEST(SimdScanner, EscapedQuotesNotCounted) {
-    // JSON string: "\"hello\""
-    // Raw bytes (11): " \ " h e l l o \ " "
-    //                  0 1 2 3 4 5 6 7 8 9 10
-    // The \" sequences are escaped quotes and should NOT appear in quoteBits.
-    // Only the outer unescaped " at positions 0 and 10 should be in quoteBits.
-    const std::string input = R"("\"hello\"")";
-    ASSERT_EQ(input.size(), 11u);
-    auto blocks = scalarScan(input.data(), input.size());
-    ASSERT_EQ(blocks.size(), 1u);
-
-    // Position 0: opening " (unescaped)
-    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 0), 0u)
-        << "Opening quote should be in quoteBits";
-
-    // Position 2: escaped " (preceded by backslash at position 1)
-    EXPECT_EQ(blocks[0].quoteBits & (uint64_t{1} << 2), 0u)
-        << "Escaped quote at position 2 should NOT be in quoteBits";
-
-    // Position 9: escaped " (preceded by backslash at position 8)
-    EXPECT_EQ(blocks[0].quoteBits & (uint64_t{1} << 9), 0u)
-        << "Escaped quote at position 9 should NOT be in quoteBits";
-
-    // Position 10: closing " (unescaped)
-    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 10), 0u)
-        << "Closing quote should be in quoteBits";
-}
-
-// 5. Backslash-escaped quote handling: \\\\" inside a JSON string
-//    means escaped backslash followed by an unescaped closing quote.
-TEST(SimdScanner, EscapedBackslashFollowedByQuote) {
-    // JSON string: "\\"  — raw bytes: " \ \ "
-    //                                  0 1 2 3
-    // The two backslashes form an escaped backslash pair.
-    // Position 0: opening " (unescaped quote)
-    // Position 1: backslash
-    // Position 2: backslash (escaped by position 1)
-    // Position 3: closing " (unescaped quote — the \\ pair is consumed)
-    const std::string input = R"("\\")";
-    ASSERT_EQ(input.size(), 4u);
-    auto blocks = scalarScan(input.data(), input.size());
-    ASSERT_EQ(blocks.size(), 1u);
-
-    // Position 0: opening " (unescaped)
-    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 0), 0u)
-        << "Opening quote should be in quoteBits";
-
-    // Position 3: closing " (unescaped — after escaped backslash pair)
-    EXPECT_NE(blocks[0].quoteBits & (uint64_t{1} << 3), 0u)
-        << "Quote after escaped backslash pair should be unescaped";
-
-    // Verify exactly 2 unescaped quotes total
-    int quoteCount = __builtin_popcountll(blocks[0].quoteBits);
-    EXPECT_EQ(quoteCount, 2) << "Should have exactly 2 unescaped quotes";
-}
-
-// 6. String mask correctness
-TEST(SimdScanner, StringMaskCorrectness) {
-    // Input: "hello"  — positions: 0=" 1=h 2=e 3=l 4=l 5=o 6="
-    const std::string input = R"("hello")";
-    auto blocks = scalarScan(input.data(), input.size());
-    ASSERT_EQ(blocks.size(), 1u);
-
-    // Bits 1-5 (inside the string, between the quotes) should be set in stringMask
-    for (std::size_t i = 1; i <= 5; ++i) {
-        uint64_t bit = uint64_t{1} << i;
-        EXPECT_NE(blocks[0].stringMask & bit, 0u)
-            << "stringMask bit should be set for position " << i
-            << " (inside string)";
-    }
-
-    // Bit 0 (opening quote) — the prefix-XOR toggles at the quote, so position 0
-    // is the quote itself. Per the prefix-XOR algorithm, the quote position bit
-    // IS set (the string state starts at the quote byte).
-    // Bit 6 (closing quote) — after the closing quote, string state toggles off.
-    // The closing quote position itself should NOT have the string bit set
-    // (the XOR toggles it off at that position).
-    EXPECT_EQ(blocks[0].stringMask & (uint64_t{1} << 6), 0u)
-        << "stringMask bit should NOT be set at closing quote position";
-}
-
-// 7. Tail handling for non-aligned lengths
-TEST(SimdScanner, TailHandlingNonAlignedLength) {
-    // 17 bytes — not a multiple of 16, so SIMD path must handle a 1-byte tail
-    const std::string input = R"({"key":"value"}  )";
-    ASSERT_EQ(input.size(), 17u);
-
-    auto scalarResult = scalarScan(input.data(), input.size());
-    auto simdResult = simdScan(input.data(), input.size(), SimdLevel::SSE2);
-
-    ASSERT_EQ(scalarResult.size(), simdResult.size());
-    for (std::size_t i = 0; i < scalarResult.size(); ++i) {
-        EXPECT_EQ(scalarResult[i].structuralBits, simdResult[i].structuralBits)
-            << "structuralBits mismatch in block " << i;
-        EXPECT_EQ(scalarResult[i].whitespaceBits, simdResult[i].whitespaceBits)
-            << "whitespaceBits mismatch in block " << i;
-        EXPECT_EQ(scalarResult[i].quoteBits, simdResult[i].quoteBits)
-            << "quoteBits mismatch in block " << i;
-        EXPECT_EQ(scalarResult[i].stringMask, simdResult[i].stringMask)
-            << "stringMask mismatch in block " << i;
-    }
-}
-
-// 8. Single byte input
-TEST(SimdScanner, SingleByteInput) {
-    const char input[] = "{";
-    auto blocks = scalarScan(input, 1);
-    ASSERT_EQ(blocks.size(), 1u);
-    EXPECT_NE(blocks[0].structuralBits & 1u, 0u)
-        << "Structural bit should be set for '{'";
-}
-
-// 9. Input exactly 64 bytes produces exactly 1 ScanBlock
-TEST(SimdScanner, Exactly64BytesProducesOneScanBlock) {
-    std::string input(64, 'a');
-    auto blocks = scalarScan(input.data(), input.size());
-    EXPECT_EQ(blocks.size(), 1u);
-
-    auto simdBlocks = simdScan(input.data(), input.size(), SimdLevel::SSE2);
-    EXPECT_EQ(simdBlocks.size(), 1u);
-}
-
-// 10. Input 65 bytes produces exactly 2 ScanBlocks
-TEST(SimdScanner, Input65BytesProducesTwoScanBlocks) {
-    std::string input(65, 'a');
-    auto blocks = scalarScan(input.data(), input.size());
-    EXPECT_EQ(blocks.size(), 2u);
-
-    auto simdBlocks = simdScan(input.data(), input.size(), SimdLevel::SSE2);
-    EXPECT_EQ(simdBlocks.size(), 2u);
-}
-
-// 11. detectSimdLevel returns a valid level
-TEST(SimdScanner, DetectSimdLevelReturnsValidLevel) {
-    auto level = detectSimdLevel();
-    EXPECT_TRUE(level == SimdLevel::Scalar ||
-                level == SimdLevel::SSE2 ||
-                level == SimdLevel::AVX2);
-}
-
-// ===========================================================================
-// StructuralScanner unit tests
-// ===========================================================================
-
-// 1. Empty input: buildStructuralIndex with empty scan blocks returns empty entries
-TEST(StructuralScanner, EmptyInputReturnsEmptyIndex) {
-    std::vector<ScanBlock> emptyBlocks;
-    auto index = buildStructuralIndex(nullptr, 0, emptyBlocks);
-    EXPECT_TRUE(index.entries.empty());
-}
-
-// 2. Single value (number): no structural characters, empty index
-TEST(StructuralScanner, SingleNumberValueEmptyIndex) {
-    const std::string input = "42";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-    EXPECT_TRUE(index.entries.empty());
-}
-
-// 3. Simple object: verify entries for { : } with correct depths
-TEST(StructuralScanner, SimpleObjectDepths) {
-    const std::string input = R"({"a":1})";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-
-    // Expected structural chars: { at 0, : at 4, } at 6
-    ASSERT_EQ(index.entries.size(), 3u);
-
-    EXPECT_EQ(index.entries[0].character, '{');
-    EXPECT_EQ(index.entries[0].offset, 0u);
-    EXPECT_EQ(index.entries[0].depth, 0);  // opening: depth before increment
-
-    EXPECT_EQ(index.entries[1].character, ':');
-    EXPECT_EQ(index.entries[1].offset, 4u);
-    EXPECT_EQ(index.entries[1].depth, 1);  // inside the object
-
-    EXPECT_EQ(index.entries[2].character, '}');
-    EXPECT_EQ(index.entries[2].offset, 6u);
-    EXPECT_EQ(index.entries[2].depth, 0);  // closing: depth after decrement
-}
-
-// 4. Simple array: verify entries for [ , , ] with correct depths
-TEST(StructuralScanner, SimpleArrayDepths) {
-    const std::string input = "[1,2,3]";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-
-    // Expected: [ at 0, , at 2, , at 4, ] at 6
-    ASSERT_EQ(index.entries.size(), 4u);
-
-    EXPECT_EQ(index.entries[0].character, '[');
-    EXPECT_EQ(index.entries[0].depth, 0);
-
-    EXPECT_EQ(index.entries[1].character, ',');
-    EXPECT_EQ(index.entries[1].depth, 1);
-
-    EXPECT_EQ(index.entries[2].character, ',');
-    EXPECT_EQ(index.entries[2].depth, 1);
-
-    EXPECT_EQ(index.entries[3].character, ']');
-    EXPECT_EQ(index.entries[3].depth, 0);
-}
-
-// 5. Nested objects: verify depth tracking
-TEST(StructuralScanner, NestedObjectDepths) {
-    const std::string input = R"({"a":{"b":1}})";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-
-    // Expected structural chars: { : { : } }
-    ASSERT_EQ(index.entries.size(), 6u);
-
-    // Outer {
-    EXPECT_EQ(index.entries[0].character, '{');
-    EXPECT_EQ(index.entries[0].depth, 0);
-
-    // Outer :
-    EXPECT_EQ(index.entries[1].character, ':');
-    EXPECT_EQ(index.entries[1].depth, 1);
-
-    // Inner {
-    EXPECT_EQ(index.entries[2].character, '{');
-    EXPECT_EQ(index.entries[2].depth, 1);
-
-    // Inner :
-    EXPECT_EQ(index.entries[3].character, ':');
-    EXPECT_EQ(index.entries[3].depth, 2);
-
-    // Inner }
-    EXPECT_EQ(index.entries[4].character, '}');
-    EXPECT_EQ(index.entries[4].depth, 1);
-
-    // Outer }
-    EXPECT_EQ(index.entries[5].character, '}');
-    EXPECT_EQ(index.entries[5].depth, 0);
-}
-
-// 6. Nested arrays: verify depth tracking
-TEST(StructuralScanner, NestedArrayDepths) {
-    const std::string input = "[[1],[2]]";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-
-    // Expected: [ [ ] , [ ] ]
-    ASSERT_EQ(index.entries.size(), 7u);
-
-    EXPECT_EQ(index.entries[0].character, '[');
-    EXPECT_EQ(index.entries[0].depth, 0);
-
-    EXPECT_EQ(index.entries[1].character, '[');
-    EXPECT_EQ(index.entries[1].depth, 1);
-
-    EXPECT_EQ(index.entries[2].character, ']');
-    EXPECT_EQ(index.entries[2].depth, 1);
-
-    EXPECT_EQ(index.entries[3].character, ',');
-    EXPECT_EQ(index.entries[3].depth, 1);
-
-    EXPECT_EQ(index.entries[4].character, '[');
-    EXPECT_EQ(index.entries[4].depth, 1);
-
-    EXPECT_EQ(index.entries[5].character, ']');
-    EXPECT_EQ(index.entries[5].depth, 1);
-
-    EXPECT_EQ(index.entries[6].character, ']');
-    EXPECT_EQ(index.entries[6].depth, 0);
-}
-
-// 7. Strings containing structural characters: chars inside strings NOT in index
-TEST(StructuralScanner, StringsContainingStructuralCharsExcluded) {
-    const std::string input = R"({"key":"{not,structural}"})";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-
-    // Only the outer { : } should be in the index.
-    // The { , } inside the string value should be excluded.
-    ASSERT_EQ(index.entries.size(), 3u);
-
-    EXPECT_EQ(index.entries[0].character, '{');
-    EXPECT_EQ(index.entries[0].depth, 0);
-
-    EXPECT_EQ(index.entries[1].character, ':');
-    EXPECT_EQ(index.entries[1].depth, 1);
-
-    EXPECT_EQ(index.entries[2].character, '}');
-    EXPECT_EQ(index.entries[2].depth, 0);
-}
-
-// 8. findPartitionPoints on simple object: partition point after closing }
-TEST(StructuralScanner, FindPartitionPointsSimpleObject) {
-    const std::string input = "{}";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-    auto points = index.findPartitionPoints();
-
-    ASSERT_EQ(points.size(), 1u);
-    EXPECT_EQ(points[0], 2u);  // offset 1 (}) + 1 = 2
-}
-
-// 9. findPartitionPoints on nested: single partition point after closing }
-TEST(StructuralScanner, FindPartitionPointsNested) {
-    const std::string input = R"({"a":[1,2]})";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-    auto points = index.findPartitionPoints();
-
-    // Only the outermost } at depth 0 produces a partition point
-    ASSERT_EQ(points.size(), 1u);
-    EXPECT_EQ(points[0], input.size());  // right after the final }
-}
-
-// 10. findPartitionPoints with no depth-0 closers: just a number
-TEST(StructuralScanner, FindPartitionPointsNoDepthZeroClosers) {
-    const std::string input = "42";
-    auto scanBlocks = scalarScan(input.data(), input.size());
-    auto index = buildStructuralIndex(input.data(), input.size(), scanBlocks);
-    auto points = index.findPartitionPoints();
-
-    EXPECT_TRUE(points.empty());
-}
-
-// ---------------------------------------------------------------------------
-// Task 5.3: Unit tests for ChunkParser
-// Requirements: 2.1, 2.2, 6.1, 6.4
-// ---------------------------------------------------------------------------
-
-#include "core/chunk_parser.h"
-
-// Helper: parse a JSON string using the ChunkParser
-static auto chunkParseAll(const std::string& json) -> ChunkParseResult {
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    return parseChunkRange(source, 0, source.size(), arena);
-}
-
-// Helper: parse and convert to JsonNode for comparison with existing parser
-static auto chunkParseToJsonNode(const std::string& json)
-    -> std::pair<std::shared_ptr<const JsonNode>, std::optional<ParseError>>
-{
-    // We need the arena and source to outlive the ArenaJsonNode usage,
-    // but toJsonNode() deep-copies, so we can do it in one scope.
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    auto result = parseChunkRange(source, 0, source.size(), arena);
-    if (result.error) {
-        return {nullptr, result.error};
-    }
-    return {result.root->toJsonNode(), std::nullopt};
-}
-
-// === Basic value types =====================================================
-
-TEST(ChunkParser, ParseEmptyObject) {
-    auto [node, err] = chunkParseToJsonNode("{}");
-    ASSERT_NE(node, nullptr);
-    EXPECT_FALSE(err.has_value());
-    EXPECT_EQ(node->type, NodeType::Object);
-    EXPECT_TRUE(node->children.empty());
-}
-
-TEST(ChunkParser, ParseEmptyArray) {
-    auto [node, err] = chunkParseToJsonNode("[]");
-    ASSERT_NE(node, nullptr);
-    EXPECT_FALSE(err.has_value());
-    EXPECT_EQ(node->type, NodeType::Array);
-    EXPECT_TRUE(node->children.empty());
-}
-
-TEST(ChunkParser, ParseStringValue) {
-    auto [node, err] = chunkParseToJsonNode(R"("hello world")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::String);
-    EXPECT_EQ(node->value, "hello world");
-}
-
-TEST(ChunkParser, ParseEmptyString) {
-    auto [node, err] = chunkParseToJsonNode(R"("")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::String);
-    EXPECT_EQ(node->value, "");
-}
-
-TEST(ChunkParser, ParseIntegerNumber) {
-    auto [node, err] = chunkParseToJsonNode("42");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "42");
-}
-
-TEST(ChunkParser, ParseNegativeNumber) {
-    auto [node, err] = chunkParseToJsonNode("-123");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "-123");
-}
-
-TEST(ChunkParser, ParseDecimalNumber) {
-    auto [node, err] = chunkParseToJsonNode("3.14");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "3.14");
-}
-
-TEST(ChunkParser, ParseScientificNotation) {
-    auto [node, err] = chunkParseToJsonNode("1.5e10");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "1.5e10");
-}
-
-TEST(ChunkParser, ParseScientificNotationNegativeExponent) {
-    auto [node, err] = chunkParseToJsonNode("2.99E-8");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "2.99E-8");
-}
-
-TEST(ChunkParser, ParseBoolTrue) {
-    auto [node, err] = chunkParseToJsonNode("true");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Boolean);
-    EXPECT_EQ(node->value, "true");
-}
-
-TEST(ChunkParser, ParseBoolFalse) {
-    auto [node, err] = chunkParseToJsonNode("false");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Boolean);
-    EXPECT_EQ(node->value, "false");
-}
-
-TEST(ChunkParser, ParseNull) {
-    auto [node, err] = chunkParseToJsonNode("null");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Null);
-    EXPECT_EQ(node->value, "null");
-}
-
-TEST(ChunkParser, ParseZero) {
-    auto [node, err] = chunkParseToJsonNode("0");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Number);
-    EXPECT_EQ(node->value, "0");
-}
-
-// === String escape sequences ===============================================
-
-TEST(ChunkParser, ParseStringNoEscapesIsZeroCopy) {
-    std::string json = R"("hello")";
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    auto result = parseChunkRange(source, 0, source.size(), arena);
-    ASSERT_NE(result.root, nullptr);
-    EXPECT_FALSE(result.error.has_value());
-    // Zero-copy: the StringRef should point into the source buffer
-    EXPECT_FALSE(result.root->value.ownsData);
-    EXPECT_EQ(result.root->value.view(), "hello");
-    // Verify pointer is within source buffer range
-    EXPECT_GE(result.root->value.data, source.data());
-    EXPECT_LT(result.root->value.data, source.data() + source.size());
-}
-
-TEST(ChunkParser, ParseStringWithEscapesIsOwnedCopy) {
-    std::string json = R"("hello\nworld")";
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    auto result = parseChunkRange(source, 0, source.size(), arena);
-    ASSERT_NE(result.root, nullptr);
-    EXPECT_FALSE(result.error.has_value());
-    // Owned copy: the StringRef should own its data (arena-allocated)
-    EXPECT_TRUE(result.root->value.ownsData);
-    EXPECT_EQ(result.root->value.view(), "hello\nworld");
-}
-
-TEST(ChunkParser, ParseStringWithAllEscapes) {
-    auto [node, err] = chunkParseToJsonNode(R"("\"\\\/\b\f\n\r\t")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "\"\\/\b\f\n\r\t");
-}
-
-TEST(ChunkParser, ParseStringWithUnicodeEscape) {
-    // \u0041 = 'A'
-    auto [node, err] = chunkParseToJsonNode(R"("\u0041")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "A");
-}
-
-TEST(ChunkParser, ParseStringWithUnicodeTwoByteChar) {
-    // \u00E9 = 'é' (2-byte UTF-8)
-    auto [node, err] = chunkParseToJsonNode(R"("\u00E9")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "\xC3\xA9");
-}
-
-TEST(ChunkParser, ParseStringWithUnicodeThreeByteChar) {
-    // \u4E16 = '世' (3-byte UTF-8)
-    auto [node, err] = chunkParseToJsonNode(R"("\u4E16")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "\xE4\xB8\x96");
-}
-
-TEST(ChunkParser, ParseStringWithSurrogatePair) {
-    // U+1F600 (😀) = \uD83D\uDE00
-    auto [node, err] = chunkParseToJsonNode(R"("\uD83D\uDE00")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value.size(), 4u);
-    EXPECT_EQ(node->value, "\xF0\x9F\x98\x80");
-}
-
-TEST(ChunkParser, ParseStringWithSurrogatePairMusicalSymbol) {
-    // U+1D11E (𝄞 Musical Symbol G Clef) = \uD834\uDD1E
-    auto [node, err] = chunkParseToJsonNode(R"("\uD834\uDD1E")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "\xF0\x9D\x84\x9E");
-}
-
-TEST(ChunkParser, ParseStringWithMixedEscapesAndPlainText) {
-    auto [node, err] = chunkParseToJsonNode(R"("hello\tworld\n!")");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->value, "hello\tworld\n!");
-}
-
-// === Objects ===============================================================
-
-TEST(ChunkParser, ParseSimpleObject) {
-    auto [node, err] = chunkParseToJsonNode(R"({"name": "Alice", "age": 30})");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Object);
-    ASSERT_EQ(node->children.size(), 2u);
-    EXPECT_EQ(node->children[0]->key, "name");
-    EXPECT_EQ(node->children[0]->value, "Alice");
-    EXPECT_EQ(node->children[1]->key, "age");
-    EXPECT_EQ(node->children[1]->value, "30");
-}
-
-TEST(ChunkParser, ParseNestedObject) {
-    auto [node, err] = chunkParseToJsonNode(R"({"outer": {"inner": "value"}})");
-    ASSERT_NE(node, nullptr);
-    ASSERT_EQ(node->children.size(), 1u);
-    auto& outer = node->children[0];
-    EXPECT_EQ(outer->key, "outer");
-    EXPECT_EQ(outer->type, NodeType::Object);
-    ASSERT_EQ(outer->children.size(), 1u);
-    EXPECT_EQ(outer->children[0]->key, "inner");
-    EXPECT_EQ(outer->children[0]->value, "value");
-}
-
-TEST(ChunkParser, ParseObjectWithAllValueTypes) {
-    auto [node, err] = chunkParseToJsonNode(
-        R"({"s":"text","n":42,"b":true,"f":false,"x":null,"a":[1],"o":{}})");
-    ASSERT_NE(node, nullptr);
-    ASSERT_EQ(node->children.size(), 7u);
-    EXPECT_EQ(node->children[0]->type, NodeType::String);
-    EXPECT_EQ(node->children[1]->type, NodeType::Number);
-    EXPECT_EQ(node->children[2]->type, NodeType::Boolean);
-    EXPECT_EQ(node->children[3]->type, NodeType::Boolean);
-    EXPECT_EQ(node->children[4]->type, NodeType::Null);
-    EXPECT_EQ(node->children[5]->type, NodeType::Array);
-    EXPECT_EQ(node->children[6]->type, NodeType::Object);
-}
-
-// === Arrays ================================================================
-
-TEST(ChunkParser, ParseSimpleArray) {
-    auto [node, err] = chunkParseToJsonNode(R"([1, 2, 3])");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Array);
-    ASSERT_EQ(node->children.size(), 3u);
-    EXPECT_EQ(node->children[0]->value, "1");
-    EXPECT_EQ(node->children[1]->value, "2");
-    EXPECT_EQ(node->children[2]->value, "3");
-}
-
-TEST(ChunkParser, ParseMixedArray) {
-    auto [node, err] = chunkParseToJsonNode(R"(["hello", 42, true, null])");
-    ASSERT_NE(node, nullptr);
-    ASSERT_EQ(node->children.size(), 4u);
-    EXPECT_EQ(node->children[0]->type, NodeType::String);
-    EXPECT_EQ(node->children[1]->type, NodeType::Number);
-    EXPECT_EQ(node->children[2]->type, NodeType::Boolean);
-    EXPECT_EQ(node->children[3]->type, NodeType::Null);
-}
-
-TEST(ChunkParser, ParseNestedArray) {
-    auto [node, err] = chunkParseToJsonNode(R"([[1, 2], [3, 4]])");
-    ASSERT_NE(node, nullptr);
-    ASSERT_EQ(node->children.size(), 2u);
-    ASSERT_EQ(node->children[0]->children.size(), 2u);
-    ASSERT_EQ(node->children[1]->children.size(), 2u);
-}
-
-TEST(ChunkParser, ArrayElementsHaveEmptyKeys) {
-    auto [node, err] = chunkParseToJsonNode(R"([1, "two"])");
-    ASSERT_NE(node, nullptr);
-    for (const auto& child : node->children) {
-        EXPECT_TRUE(child->key.empty());
-    }
-}
-
-// === Deeply nested =========================================================
-
-TEST(ChunkParser, ParseDeeplyNested) {
-    auto [node, err] = chunkParseToJsonNode(R"({"a":{"b":{"c":{"d":"deep"}}}})");
-    ASSERT_NE(node, nullptr);
-    auto n = node;
-    ASSERT_EQ(n->children.size(), 1u);
-    n = n->children[0]; // a
-    ASSERT_EQ(n->children.size(), 1u);
-    n = n->children[0]; // b
-    ASSERT_EQ(n->children.size(), 1u);
-    n = n->children[0]; // c
-    ASSERT_EQ(n->children.size(), 1u);
-    EXPECT_EQ(n->children[0]->key, "d");
-    EXPECT_EQ(n->children[0]->value, "deep");
-}
-
-// === Whitespace handling ===================================================
-
-TEST(ChunkParser, ParseWithExtraWhitespace) {
-    auto [node, err] = chunkParseToJsonNode("  {  \"key\"  :  \"value\"  }  ");
-    ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Object);
-    ASSERT_EQ(node->children.size(), 1u);
-    EXPECT_EQ(node->children[0]->value, "value");
-}
-
-// === Byte range parsing ====================================================
-
-TEST(ChunkParser, ParseSubRange) {
-    // Parse only a portion of the source buffer
-    std::string json = "   {\"key\": \"value\"}   ";
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    // The actual JSON starts at offset 3 and ends at offset 19
-    auto result = parseChunkRange(source, 3, 19, arena);
-    ASSERT_NE(result.root, nullptr);
-    EXPECT_FALSE(result.error.has_value());
-    auto node = result.root->toJsonNode();
-    EXPECT_EQ(node->type, NodeType::Object);
-    ASSERT_EQ(node->children.size(), 1u);
-    EXPECT_EQ(node->children[0]->key, "key");
-    EXPECT_EQ(node->children[0]->value, "value");
-}
-
-TEST(ChunkParser, ParseWithKey) {
-    std::string json = R"({"inner": 42})";
-    SourceBuffer source{std::string{json}};
-    ArenaAllocator arena;
-    // Provide a key name
-    std::string keyStr = "myKey";
-    StringRef namedKey{keyStr.data(), keyStr.size(), false};
-    auto result = parseChunkRange(source, 0, source.size(), arena, namedKey);
-    ASSERT_NE(result.root, nullptr);
-    EXPECT_EQ(result.root->key.view(), "myKey");
-}
-
-// === Error cases ===========================================================
-
-TEST(ChunkParser, ErrorOnEmptyInput) {
-    auto result = chunkParseAll("");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnTruncatedObject) {
-    auto result = chunkParseAll(R"({"key": "val)");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnInvalidToken) {
-    auto result = chunkParseAll("xyz");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-    EXPECT_GT(result.error->description.size(), 0u);
-}
-
-TEST(ChunkParser, ErrorOnMismatchedBrackets) {
-    auto result = chunkParseAll(R"({"key": "value"])");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnTrailingCommaInObject) {
-    auto result = chunkParseAll(R"({"key": "value",})");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnTrailingCommaInArray) {
-    auto result = chunkParseAll(R"([1, 2, 3,])");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnMultipleTopLevelValues) {
-    auto result = chunkParseAll(R"({}[])");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorByteOffsetIsReasonable) {
-    auto result = chunkParseAll(R"({"key": })");
-    ASSERT_TRUE(result.error.has_value());
-    EXPECT_GE(result.error->byteOffset, 0u);
-    EXPECT_FALSE(result.error->description.empty());
-}
-
-TEST(ChunkParser, ErrorOnInvalidEscapeSequence) {
-    auto result = chunkParseAll(R"("\q")");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnIncompleteUnicodeEscape) {
-    auto result = chunkParseAll(R"("\u00")");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnInvalidSurrogate) {
-    // High surrogate without low surrogate
-    auto result = chunkParseAll(R"("\uD83D")");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnInvalidLowSurrogate) {
-    // High surrogate followed by non-surrogate
-    auto result = chunkParseAll(R"("\uD83D\u0041")");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnInvalidNumberLeadingZeros) {
-    // "01" is not valid JSON (leading zeros not allowed)
-    auto result = chunkParseAll("01");
-    // The parser will parse "0" then find trailing "1"
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-TEST(ChunkParser, ErrorOnTruncatedNumber) {
-    auto result = chunkParseAll("1.e");
-    EXPECT_EQ(result.root, nullptr);
-    EXPECT_TRUE(result.error.has_value());
-}
-
-// === Semantic equivalence with existing parser =============================
-
-TEST(ChunkParser, EquivalenceSimpleObject) {
-    std::string json = R"({"name": "Alice", "age": 30})";
-    auto ref = parseAll(json);
-    auto [node, err] = chunkParseToJsonNode(json);
-    ASSERT_NE(ref.root, nullptr);
-    ASSERT_NE(node, nullptr);
-    EXPECT_TRUE(nodesEqual(ref.root, node));
-}
-
-TEST(ChunkParser, EquivalenceComplexDocument) {
-    std::string json = R"({
-        "name": "JSONTitan",
-        "version": "0.1.0",
-        "features": ["parsing", "search", "export"],
-        "config": {
-            "maxDepth": 100,
-            "streaming": true,
-            "encoding": null
-        },
-        "stats": {
-            "precision": 1.7976931348623157e+308,
-            "negative": -42,
-            "zero": 0
-        }
-    })";
-    auto ref = parseAll(json);
-    auto [node, err] = chunkParseToJsonNode(json);
-    ASSERT_NE(ref.root, nullptr);
-    ASSERT_NE(node, nullptr);
-    EXPECT_TRUE(nodesEqual(ref.root, node));
-}
-
-TEST(ChunkParser, EquivalenceEscapeSequences) {
-    std::string json = R"({"escaped": "line1\nline2\ttab\"quote\\backslash\uD83D\uDE00"})";
-    auto ref = parseAll(json);
-    auto [node, err] = chunkParseToJsonNode(json);
-    ASSERT_NE(ref.root, nullptr);
-    ASSERT_NE(node, nullptr);
-    EXPECT_TRUE(nodesEqual(ref.root, node));
-}
-
-TEST(ChunkParser, EquivalenceDeeplyNested) {
-    std::string json = R"({"a":{"b":{"c":{"d":{"e":[1,2,{"f":"deep"}]}}}}})";
-    auto ref = parseAll(json);
-    auto [node, err] = chunkParseToJsonNode(json);
-    ASSERT_NE(ref.root, nullptr);
-    ASSERT_NE(node, nullptr);
-    EXPECT_TRUE(nodesEqual(ref.root, node));
-}
-
-// ---------------------------------------------------------------------------
-// Task 5.4: Property test -- Error reporting for invalid JSON
-// Property 8: For any byte sequence that is not valid JSON, the optimized
-// parser returns a ParseError with byte offset >= 0 and a non-empty
-// description, and does not return a non-null root node.
-// Validates: Requirements 6.3
-// ---------------------------------------------------------------------------
-
-TEST(ChunkParserProperty, ErrorReportingForInvalidJson) {
-    rc::check("Property 8: Error reporting for invalid JSON",
-        [](void) {
-            // Strategy: generate valid JSON, then inject a syntax error
-            auto seed = *rc::gen::arbitrary<uint32_t>();
-            std::mt19937 rng(seed);
-
-            // Generate a random valid JSON document
-            std::uniform_int_distribution<int> depthDist(0, 3);
-            std::string json = generateJsonValue(depthDist(rng), rng);
-
-            // Verify the original is valid
-            {
-                SourceBuffer source{std::string{json}};
-                ArenaAllocator arena;
-                auto result = parseChunkRange(source, 0, source.size(), arena);
-                RC_PRE(result.root != nullptr && !result.error.has_value());
-            }
-
-            // Choose an error injection strategy
-            auto strategy = *rc::gen::inRange(0, 5);
-            std::string corrupted = json;
-
-            switch (strategy) {
-                case 0: {
-                    // Insert a random invalid character at a random position
-                    if (corrupted.empty()) break;
-                    auto pos = *rc::gen::inRange(
-                        std::size_t{0}, corrupted.size());
-                    // Characters that are always invalid in JSON context
-                    auto invalidChars = std::string("@#$%^&!~`");
-                    auto charIdx = *rc::gen::inRange(
-                        std::size_t{0}, invalidChars.size());
-                    corrupted.insert(pos, 1, invalidChars[charIdx]);
-                    break;
-                }
-                case 1: {
-                    // Delete a random character
-                    if (corrupted.size() <= 1) break;
-                    auto pos = *rc::gen::inRange(
-                        std::size_t{0}, corrupted.size());
-                    corrupted.erase(pos, 1);
-                    break;
-                }
-                case 2: {
-                    // Replace a structural character with a wrong one
-                    std::vector<std::size_t> structPositions;
-                    for (std::size_t i = 0; i < corrupted.size(); ++i) {
-                        char c = corrupted[i];
-                        if (c == '{' || c == '}' || c == '[' || c == ']' ||
-                            c == ',' || c == ':') {
-                            structPositions.push_back(i);
-                        }
-                    }
-                    if (structPositions.empty()) break;
-                    auto idx = *rc::gen::inRange(
-                        std::size_t{0}, structPositions.size());
-                    // Replace with a mismatched structural char
-                    char replacements[] = {'{', '}', '[', ']', ',', ':'};
-                    auto repIdx = *rc::gen::inRange(0, 6);
-                    char original = corrupted[structPositions[idx]];
-                    char replacement = replacements[repIdx];
-                    if (replacement != original) {
-                        corrupted[structPositions[idx]] = replacement;
-                    } else {
-                        // Just use a different one
-                        corrupted[structPositions[idx]] = '@';
-                    }
-                    break;
-                }
-                case 3: {
-                    // Truncate the input at a random position (not at the end)
-                    if (corrupted.size() <= 2) break;
-                    auto truncPos = *rc::gen::inRange(
-                        std::size_t{1}, corrupted.size() - 1);
-                    corrupted = corrupted.substr(0, truncPos);
-                    break;
-                }
-                case 4: {
-                    // Append garbage after valid JSON
-                    corrupted += " garbage_after";
-                    break;
-                }
-            }
-
-            // Skip if corruption didn't actually change anything
-            RC_PRE(corrupted != json);
-
-            // Also skip if the corrupted version happens to be valid JSON
-            // (unlikely but possible with some mutations).
-            // Use try/catch because the existing parser may throw on
-            // certain malformed inputs (e.g., null pointer in string ctor).
-            {
-                bool isInvalidForReference = false;
-                try {
-                    auto refResult = parseAll(corrupted);
-                    isInvalidForReference =
-                        (refResult.root == nullptr || refResult.error.has_value());
-                } catch (...) {
-                    // If the reference parser throws, the input is definitely
-                    // invalid — that's fine for our purposes.
-                    isInvalidForReference = true;
-                }
-                RC_PRE(isInvalidForReference);
-            }
-
-            // Now verify the ChunkParser error reporting.
-            // The chunk parser must never throw — it should return an error.
-            SourceBuffer source{std::string{corrupted}};
-            ArenaAllocator arena;
-            auto result = parseChunkRange(source, 0, source.size(), arena);
-
-            // Property assertions:
-            // 1. Root must be null for invalid JSON
-            RC_ASSERT(result.root == nullptr);
-            // 2. Error must be present
-            RC_ASSERT(result.error.has_value());
-            // 3. Byte offset must be within bounds
-            RC_ASSERT(result.error->byteOffset <= corrupted.size());
-            // 4. Description must be non-empty
-            RC_ASSERT(!result.error->description.empty());
-        });
-}
-
 // ---------------------------------------------------------------------------
 // Task 7.5: Property 6 — Semantic Equivalence (optimized vs. current parser)
 // Validates: Requirements 6.1, 6.4, 8.2, 8.4
@@ -5528,8 +4268,8 @@ TEST(ChunkParserProperty, ErrorReportingForInvalidJson) {
 
 #include "core/parse_orchestrator.h"
 
-TEST(ParseOrchestratorProperty, SemanticEquivalenceSingleThreaded) {
-    rc::check("Property 6a: Semantic equivalence — single-threaded path",
+TEST(ParseOrchestratorProperty, SemanticEquivalence) {
+    rc::check("Property 6: Semantic equivalence — parseBuffer vs. current parser",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -5543,49 +4283,10 @@ TEST(ParseOrchestratorProperty, SemanticEquivalenceSingleThreaded) {
             auto refResult = parseAll(json);
             RC_PRE(refResult.root != nullptr && !refResult.error.has_value());
 
-            // Parse with the optimized parser (single-threaded path, default threshold)
-            ParseBufferOptions opts;
-            opts.parallelThreshold = 1024 * 1024; // 1 MB — ensures single-threaded
-            auto arenaResult = parseBuffer(std::string{json}, opts);
+            // Parse with parseBuffer (simdjson backend)
+            auto arenaResult = parseBuffer(std::string{json});
 
-            // The optimized parser must succeed
-            RC_ASSERT(arenaResult.ok());
-
-            // Convert to public JsonNode type
-            auto optimizedResult = arenaResult.toParseResult();
-            RC_ASSERT(optimizedResult.root != nullptr);
-            RC_ASSERT(!optimizedResult.error.has_value());
-
-            // Trees must be structurally and value-equivalent
-            RC_ASSERT(nodesEqual(refResult.root, optimizedResult.root));
-        });
-}
-
-TEST(ParseOrchestratorProperty, SemanticEquivalenceParallelPath) {
-    rc::check("Property 6b: Semantic equivalence — parallel path (low threshold)",
-        [](void) {
-            // Generate a random seed for our JSON generator
-            auto seed = *rc::gen::arbitrary<uint32_t>();
-            std::mt19937 rng(seed);
-
-            // Generate a random valid JSON document with configurable depth
-            std::uniform_int_distribution<int> depthDist(1, 4);
-            std::string json = generateJsonValue(depthDist(rng), rng);
-
-            // Parse with the current parser (reference)
-            auto refResult = parseAll(json);
-            RC_PRE(refResult.root != nullptr && !refResult.error.has_value());
-
-            // Parse with the optimized parser using a very low parallelThreshold.
-            // This forces the input through the SIMD scan + structural index path.
-            // For standard single-value JSON, findPartitionPoints() returns empty
-            // and the code falls back to single-threaded, but it still exercises
-            // the full orchestrator code path up to that fallback point.
-            ParseBufferOptions opts;
-            opts.parallelThreshold = 1; // Force parallel pipeline attempt
-            auto arenaResult = parseBuffer(std::string{json}, opts);
-
-            // The optimized parser must succeed
+            // The simdjson-backed parser must succeed
             RC_ASSERT(arenaResult.ok());
 
             // Convert to public JsonNode type
@@ -5614,10 +4315,8 @@ TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
             std::uniform_int_distribution<int> depthDist(1, 4);
             std::string json = generateJsonValue(depthDist(rng), rng);
 
-            // Step 1: Parse with the optimized parser (parseBuffer)
-            ParseBufferOptions opts;
-            opts.parallelThreshold = 1; // Exercise full orchestrator path
-            auto firstParseResult = parseBuffer(std::string{json}, opts);
+            // Step 1: Parse with parseBuffer (simdjson backend)
+            auto firstParseResult = parseBuffer(std::string{json});
             RC_PRE(firstParseResult.ok());
 
             // Step 2: Convert to JsonNode
@@ -5630,7 +4329,7 @@ TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
             RC_ASSERT(!printed.empty());
 
             // Step 4: Re-parse the pretty-printed output with parseBuffer
-            auto secondParseResult = parseBuffer(std::string{printed}, opts);
+            auto secondParseResult = parseBuffer(std::string{printed});
             RC_ASSERT(secondParseResult.ok());
 
             // Step 5: Convert to JsonNode
@@ -5644,12 +4343,12 @@ TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 7.7: Property 9 — Parallel error offset correctness
+// Task 7.7: Property 9 — Error offset correctness
 // Validates: Requirements 4.6
 // ---------------------------------------------------------------------------
 
-TEST(ParseOrchestratorProperty, ParallelErrorOffsetCorrectness) {
-    rc::check("Property 9: Parallel error offset correctness",
+TEST(ParseOrchestratorProperty, ErrorOffsetCorrectness) {
+    rc::check("Property 9: Error offset correctness",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -5661,9 +4360,7 @@ TEST(ParseOrchestratorProperty, ParallelErrorOffsetCorrectness) {
 
             // Verify the original is valid via parseBuffer
             {
-                ParseBufferOptions opts;
-                opts.parallelThreshold = 1; // Force parallel pipeline
-                auto result = parseBuffer(std::string{json}, opts);
+                auto result = parseBuffer(std::string{json});
                 RC_PRE(result.ok());
             }
 
@@ -5713,16 +4410,12 @@ TEST(ParseOrchestratorProperty, ParallelErrorOffsetCorrectness) {
 
             // Skip if the corrupted version happens to still be valid
             {
-                ParseBufferOptions checkOpts;
-                checkOpts.parallelThreshold = 1;
-                auto checkResult = parseBuffer(std::string{corrupted}, checkOpts);
+                auto checkResult = parseBuffer(std::string{corrupted});
                 RC_PRE(!checkResult.ok());
             }
 
-            // Parse the corrupted JSON with parseBuffer using low parallelThreshold
-            ParseBufferOptions opts;
-            opts.parallelThreshold = 1; // Force the parallel pipeline
-            auto result = parseBuffer(std::string{corrupted}, opts);
+            // Parse the corrupted JSON with parseBuffer
+            auto result = parseBuffer(std::string{corrupted});
 
             // Property assertions:
             // 1. The parse must fail (error is reported)
@@ -5749,14 +4442,13 @@ TEST(ParseOrchestratorProperty, ParallelErrorOffsetCorrectness) {
 // Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 // ---------------------------------------------------------------------------
 
-// === Single-threaded path (input below threshold) ==========================
+// === Small input produces correct result ===================================
 
 TEST(ParseOrchestratorUnit, SmallInputUsesSingleThreadedPath) {
-    // A small JSON object well below the default 1 MB threshold
+    // A small JSON object
     std::string json = R"({"name": "Alice", "age": 30, "active": true})";
 
     ParseBufferOptions opts;
-    // Default threshold is 1 MB, so this small input takes single-threaded path
     auto result = parseBuffer(std::string{json}, opts);
 
     ASSERT_TRUE(result.ok());
@@ -5788,15 +4480,13 @@ TEST(ParseOrchestratorUnit, SmallArrayUsesSingleThreadedPath) {
     EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
 }
 
-// === Parallel path (input above threshold) =================================
+// === Multi-element input ===================================================
 
-TEST(ParseOrchestratorUnit, LowThresholdForcesParallelPipeline) {
-    // Use a JSON array with multiple top-level elements to allow partitioning
-    // Set parallelThreshold to 1 to force the parallel code path
+TEST(ParseOrchestratorUnit, MultiElementArrayMatchesReference) {
+    // A JSON array with multiple elements
     std::string json = R"([{"a":1},{"b":2},{"c":3},{"d":4}])";
 
     ParseBufferOptions opts;
-    opts.parallelThreshold = 1; // Force parallel pipeline attempt
 
     auto result = parseBuffer(std::string{json}, opts);
 
@@ -5812,11 +4502,10 @@ TEST(ParseOrchestratorUnit, LowThresholdForcesParallelPipeline) {
     EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
 }
 
-TEST(ParseOrchestratorUnit, ParallelPathWithNestedObjects) {
+TEST(ParseOrchestratorUnit, NestedObjectsMatchReference) {
     std::string json = R"({"x": {"nested": [1,2,3]}, "y": "hello", "z": true})";
 
     ParseBufferOptions opts;
-    opts.parallelThreshold = 1; // Force parallel pipeline
 
     auto result = parseBuffer(std::string{json}, opts);
 
@@ -5830,15 +4519,14 @@ TEST(ParseOrchestratorUnit, ParallelPathWithNestedObjects) {
     EXPECT_TRUE(nodesEqual(reference.root, optimized.root));
 }
 
-// === Error in one chunk cancels others =====================================
+// === Error reporting =======================================================
 
-TEST(ParseOrchestratorUnit, ErrorInChunkReportsCorrectOffset) {
+TEST(ParseOrchestratorUnit, ErrorReportsOffsetWithinBounds) {
     // Create JSON with a syntax error injected
     // The error is at a known position: the '@' character
     std::string json = R"({"valid": "ok", "bad": @invalid})";
 
     ParseBufferOptions opts;
-    opts.parallelThreshold = 1; // Force parallel pipeline
 
     auto result = parseBuffer(std::string{json}, opts);
 
@@ -5854,7 +4542,6 @@ TEST(ParseOrchestratorUnit, ErrorInMiddleOfInput) {
     std::string json = R"({"a": 1, "b": ???, "c": 3})";
 
     ParseBufferOptions opts;
-    opts.parallelThreshold = 1;
 
     auto result = parseBuffer(std::string{json}, opts);
 
@@ -5862,56 +4549,6 @@ TEST(ParseOrchestratorUnit, ErrorInMiddleOfInput) {
     ASSERT_TRUE(result.error.has_value());
     EXPECT_FALSE(result.error->description.empty());
     EXPECT_LE(result.error->byteOffset, json.size());
-}
-
-// === Forced scalar fallback produces same result as SIMD path ==============
-
-TEST(ParseOrchestratorUnit, ScalarFallbackMatchesSimdResult) {
-    std::string json = R"({"key": "value", "nums": [1, 2, 3], "flag": true})";
-
-    // Parse with forced scalar
-    ParseBufferOptions scalarOpts;
-    scalarOpts.parallelThreshold = 1;
-    scalarOpts.simdLevel = SimdLevel::Scalar;
-    auto scalarResult = parseBuffer(std::string{json}, scalarOpts);
-
-    // Parse with default SIMD level
-    ParseBufferOptions defaultOpts;
-    defaultOpts.parallelThreshold = 1;
-    auto defaultResult = parseBuffer(std::string{json}, defaultOpts);
-
-    ASSERT_TRUE(scalarResult.ok());
-    ASSERT_TRUE(defaultResult.ok());
-
-    auto scalarTree = scalarResult.toParseResult();
-    auto defaultTree = defaultResult.toParseResult();
-
-    ASSERT_NE(scalarTree.root, nullptr);
-    ASSERT_NE(defaultTree.root, nullptr);
-    EXPECT_TRUE(nodesEqual(scalarTree.root, defaultTree.root));
-}
-
-TEST(ParseOrchestratorUnit, ScalarFallbackMatchesSimdForNestedJson) {
-    std::string json = R"({"a":{"b":{"c":[1,2,3]}},"d":"hello\nworld"})";
-
-    ParseBufferOptions scalarOpts;
-    scalarOpts.parallelThreshold = 1;
-    scalarOpts.simdLevel = SimdLevel::Scalar;
-    auto scalarResult = parseBuffer(std::string{json}, scalarOpts);
-
-    ParseBufferOptions defaultOpts;
-    defaultOpts.parallelThreshold = 1;
-    auto defaultResult = parseBuffer(std::string{json}, defaultOpts);
-
-    ASSERT_TRUE(scalarResult.ok());
-    ASSERT_TRUE(defaultResult.ok());
-
-    auto scalarTree = scalarResult.toParseResult();
-    auto defaultTree = defaultResult.toParseResult();
-
-    ASSERT_NE(scalarTree.root, nullptr);
-    ASSERT_NE(defaultTree.root, nullptr);
-    EXPECT_TRUE(nodesEqual(scalarTree.root, defaultTree.root));
 }
 
 // === Empty input returns error =============================================
@@ -5949,8 +4586,6 @@ TEST(ParseOrchestratorUnit, StringOverloadWithOptions) {
     std::string json = R"([10, 20, 30])";
 
     ParseBufferOptions opts;
-    opts.parallelThreshold = 1;
-    opts.simdLevel = SimdLevel::Scalar;
 
     auto result = parseBuffer(std::string{json}, opts);
 
@@ -6482,11 +5117,10 @@ TEST(ParseBufferIntegration, SmallInputEquivalentToTraditionalParser) {
     EXPECT_TRUE(treesEquivalent(traditional.root, optimized.root));
 }
 
-// === Large input (parallel path) produces result equivalent to single-threaded
+// === Large input produces result equivalent to the traditional parser ======
 
-TEST(ParseBufferIntegration, LargeInputParallelEquivalentToSingleThreaded) {
-    // Generate a large JSON array that exceeds the parallel threshold when
-    // we set a low threshold. This tests the parallel path.
+TEST(ParseBufferIntegration, LargeInputEquivalentToTraditionalParser) {
+    // Generate a large JSON array with many elements.
     std::string json = "[";
     const int numElements = 500;
     for (int i = 0; i < numElements; ++i) {
@@ -6496,28 +5130,22 @@ TEST(ParseBufferIntegration, LargeInputParallelEquivalentToSingleThreaded) {
     }
     json += "]";
 
-    // Parse with single-threaded path (high threshold)
-    ParseBufferOptions singleOpts;
-    singleOpts.parallelThreshold = json.size() + 1; // Force single-threaded
-    auto singleResult = parseBuffer(std::string(json), singleOpts);
-    ASSERT_TRUE(singleResult.ok());
-    auto singlePR = singleResult.toParseResult();
-    ASSERT_NE(singlePR.root, nullptr);
+    // Parse via traditional API (reference)
+    auto traditional = parseAll(json);
+    ASSERT_NE(traditional.root, nullptr);
 
-    // Parse with parallel path (low threshold)
-    ParseBufferOptions parallelOpts;
-    parallelOpts.parallelThreshold = 64; // Force parallel
-    auto parallelResult = parseBuffer(std::string(json), parallelOpts);
-    ASSERT_TRUE(parallelResult.ok());
-    auto parallelPR = parallelResult.toParseResult();
-    ASSERT_NE(parallelPR.root, nullptr);
+    // Parse via parseBuffer
+    auto arenaResult = parseBuffer(std::string(json));
+    ASSERT_TRUE(arenaResult.ok());
+    auto optimizedPR = arenaResult.toParseResult();
+    ASSERT_NE(optimizedPR.root, nullptr);
 
     // Both should produce equivalent trees
-    EXPECT_TRUE(treesEquivalent(singlePR.root, parallelPR.root));
+    EXPECT_TRUE(treesEquivalent(traditional.root, optimizedPR.root));
 }
 
-TEST(ParseBufferIntegration, LargeInputParallelPreservesAllElements) {
-    // Build a large array and verify all elements are present after parallel parse
+TEST(ParseBufferIntegration, LargeInputPreservesAllElements) {
+    // Build a large array and verify all elements are present after parsing
     std::string json = "[";
     const int numElements = 200;
     for (int i = 0; i < numElements; ++i) {
@@ -6526,9 +5154,7 @@ TEST(ParseBufferIntegration, LargeInputParallelPreservesAllElements) {
     }
     json += "]";
 
-    ParseBufferOptions opts;
-    opts.parallelThreshold = 64; // Force parallel path
-    auto result = parseBuffer(std::string(json), opts);
+    auto result = parseBuffer(std::string(json));
     ASSERT_TRUE(result.ok());
     auto pr = result.toParseResult();
     ASSERT_NE(pr.root, nullptr);
@@ -6538,88 +5164,6 @@ TEST(ParseBufferIntegration, LargeInputParallelPreservesAllElements) {
     for (int i = 0; i < numElements; ++i) {
         EXPECT_EQ(pr.root->children[i]->value, std::to_string(i * 7));
     }
-}
-
-// === Forced SimdLevel::Scalar produces same result as SIMD path ============
-
-TEST(ParseBufferIntegration, ScalarProducesSameResultAsSimd) {
-    std::string json = R"({
-        "users": [
-            {"name": "Alice", "score": 95.5},
-            {"name": "Bob", "score": 87.3},
-            {"name": "Charlie", "score": 92.1}
-        ],
-        "metadata": {"count": 3, "valid": true}
-    })";
-
-    // Parse with detected SIMD level
-    ParseBufferOptions simdOpts;
-    simdOpts.simdLevel = detectSimdLevel();
-    auto simdResult = parseBuffer(std::string(json), simdOpts);
-    ASSERT_TRUE(simdResult.ok());
-    auto simdPR = simdResult.toParseResult();
-    ASSERT_NE(simdPR.root, nullptr);
-
-    // Parse with forced Scalar
-    ParseBufferOptions scalarOpts;
-    scalarOpts.simdLevel = SimdLevel::Scalar;
-    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
-    ASSERT_TRUE(scalarResult.ok());
-    auto scalarPR = scalarResult.toParseResult();
-    ASSERT_NE(scalarPR.root, nullptr);
-
-    // Results must be equivalent
-    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
-}
-
-TEST(ParseBufferIntegration, ScalarEquivalenceWithEscapeSequences) {
-    // Test with strings containing escape sequences to stress SIMD string handling
-    std::string json = R"({
-        "escaped": "line1\nline2\ttab",
-        "unicode": "\u0041\u0042\u0043",
-        "surrogate": "\uD83D\uDE00",
-        "backslash": "path\\to\\file"
-    })";
-
-    ParseBufferOptions simdOpts;
-    simdOpts.simdLevel = detectSimdLevel();
-    auto simdResult = parseBuffer(std::string(json), simdOpts);
-    ASSERT_TRUE(simdResult.ok());
-    auto simdPR = simdResult.toParseResult();
-
-    ParseBufferOptions scalarOpts;
-    scalarOpts.simdLevel = SimdLevel::Scalar;
-    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
-    ASSERT_TRUE(scalarResult.ok());
-    auto scalarPR = scalarResult.toParseResult();
-
-    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
-}
-
-TEST(ParseBufferIntegration, ScalarEquivalenceOnLargeParallelInput) {
-    // Test scalar vs SIMD on input that triggers the parallel path
-    std::string json = "[";
-    for (int i = 0; i < 100; ++i) {
-        if (i > 0) json += ",";
-        json += R"({"key":"value_)" + std::to_string(i) + R"("})";
-    }
-    json += "]";
-
-    ParseBufferOptions simdOpts;
-    simdOpts.parallelThreshold = 64;
-    simdOpts.simdLevel = detectSimdLevel();
-    auto simdResult = parseBuffer(std::string(json), simdOpts);
-    ASSERT_TRUE(simdResult.ok());
-    auto simdPR = simdResult.toParseResult();
-
-    ParseBufferOptions scalarOpts;
-    scalarOpts.parallelThreshold = 64;
-    scalarOpts.simdLevel = SimdLevel::Scalar;
-    auto scalarResult = parseBuffer(std::string(json), scalarOpts);
-    ASSERT_TRUE(scalarResult.ok());
-    auto scalarPR = scalarResult.toParseResult();
-
-    EXPECT_TRUE(treesEquivalent(simdPR.root, scalarPR.root));
 }
 
 // === Round-trip through PrettyPrinter for optimized parser output ===========
@@ -6706,8 +5250,8 @@ TEST(ParseBufferIntegration, RoundTripWithEscapeSequences) {
     EXPECT_TRUE(treesEquivalent(pr.root, rePR.root));
 }
 
-TEST(ParseBufferIntegration, RoundTripParallelPathOutput) {
-    // Verify round-trip works for output from the parallel parsing path
+TEST(ParseBufferIntegration, RoundTripMultiElementArray) {
+    // Verify round-trip works for a multi-element array
     std::string json = "[";
     for (int i = 0; i < 50; ++i) {
         if (i > 0) json += ",";
@@ -6715,9 +5259,7 @@ TEST(ParseBufferIntegration, RoundTripParallelPathOutput) {
     }
     json += "]";
 
-    ParseBufferOptions opts;
-    opts.parallelThreshold = 64; // Force parallel path
-    auto result = parseBuffer(std::string(json), opts);
+    auto result = parseBuffer(std::string(json));
     ASSERT_TRUE(result.ok());
     auto pr = result.toParseResult();
     ASSERT_NE(pr.root, nullptr);

@@ -1,5 +1,5 @@
 // tools/benchmark_parse.cpp
-// Standalone benchmark harness for comparing JSON parsing backends.
+// Standalone benchmark harness for the simdjson-backed parseBuffer.
 // Measures wall-clock time, peak RSS, and computes statistics.
 //
 // Validates: Requirements 4.1, 4.3, 4.4, 4.5
@@ -107,7 +107,6 @@ struct BenchmarkResult {
 
 struct BenchmarkConfig {
     std::filesystem::path inputFile;
-    jsontitan::core::ParserBackend backend = jsontitan::core::ParserBackend::Simdjson;
     unsigned iterations = 10;
 };
 
@@ -144,7 +143,6 @@ auto runBenchmark(const BenchmarkConfig& config) -> BenchmarkResult {
         std::string inputCopy = content;
 
         jsontitan::core::ParseBufferOptions opts;
-        opts.backend = config.backend;
 
         auto start = std::chrono::steady_clock::now();
         auto result = jsontitan::core::parseBuffer(std::move(inputCopy), opts);
@@ -186,14 +184,6 @@ auto runBenchmark(const BenchmarkConfig& config) -> BenchmarkResult {
 // Output formatting
 // ============================================================================
 
-auto backendToString(jsontitan::core::ParserBackend backend) -> std::string {
-    switch (backend) {
-        case jsontitan::core::ParserBackend::Simdjson: return "simdjson";
-        case jsontitan::core::ParserBackend::Custom:   return "custom";
-    }
-    return "unknown";
-}
-
 auto formatResultsTable(std::span<const BenchmarkResult> results,
                         std::span<const std::string> labels) -> std::string {
     std::string output;
@@ -226,18 +216,16 @@ void printUsage(const char* progName) {
     std::cerr << "Usage: " << progName << " <input-file> [options]\n"
               << "\n"
               << "Options:\n"
-              << "  --backend simdjson|custom   Select parsing backend (default: simdjson)\n"
               << "  --iterations N             Number of iterations (default: 10, minimum: 5)\n"
               << "  --help                     Show this help message\n"
               << "\n"
               << "Examples:\n"
               << "  " << progName << " large.json\n"
-              << "  " << progName << " large.json --backend custom --iterations 20\n";
+              << "  " << progName << " large.json --iterations 20\n";
 }
 
 struct CliArgs {
     std::filesystem::path inputFile;
-    jsontitan::core::ParserBackend backend = jsontitan::core::ParserBackend::Simdjson;
     unsigned iterations = 10;
     bool help = false;
 };
@@ -266,22 +254,7 @@ auto parseCliArgs(int argc, char* argv[]) -> CliArgs {
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
 
-        if (arg == "--backend") {
-            if (i + 1 >= argc) {
-                std::cerr << "Error: --backend requires an argument\n";
-                std::exit(1);
-            }
-            std::string backendStr = argv[++i];
-            if (backendStr == "simdjson") {
-                args.backend = jsontitan::core::ParserBackend::Simdjson;
-            } else if (backendStr == "custom") {
-                args.backend = jsontitan::core::ParserBackend::Custom;
-            } else {
-                std::cerr << "Error: Unknown backend '" << backendStr
-                          << "'. Use 'simdjson' or 'custom'.\n";
-                std::exit(1);
-            }
-        } else if (arg == "--iterations") {
+        if (arg == "--iterations") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --iterations requires an argument\n";
                 std::exit(1);
@@ -327,14 +300,13 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Benchmark: " << args.inputFile.filename().string() << "\n"
               << "  File size: " << fileSizeMB << " MB\n"
-              << "  Backend:   " << backendToString(args.backend) << "\n"
+              << "  Backend:   simdjson\n"
               << "  Iterations: " << args.iterations << "\n"
               << "\n"
               << "Running benchmark...\n\n";
 
     BenchmarkConfig config{
         .inputFile = args.inputFile,
-        .backend = args.backend,
         .iterations = args.iterations,
     };
 
@@ -342,7 +314,7 @@ int main(int argc, char* argv[]) {
 
     // Format and print results
     std::vector<BenchmarkResult> results{result};
-    std::vector<std::string> labels{backendToString(args.backend)};
+    std::vector<std::string> labels{std::string("simdjson")};
 
     std::cout << formatResultsTable(results, labels);
 

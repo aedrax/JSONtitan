@@ -369,7 +369,7 @@ TEST(SimdjsonGenerators, ValidJsonGeneratorProducesParseableDocuments) {
 
             // Parse with simdjson backend
             auto result = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_ASSERT(result.ok());
             RC_ASSERT(result.root != nullptr);
@@ -384,7 +384,7 @@ TEST(SimdjsonGenerators, InvalidJsonGeneratorProducesUnparseableDocuments) {
 
             // Parse with simdjson backend — should fail
             auto result = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_ASSERT(!result.ok() || result.error.has_value());
         });
@@ -396,7 +396,7 @@ TEST(SimdjsonGenerators, DuplicateKeyGeneratorProducesParseable) {
             const auto json = *generators::genJsonWithDuplicateKeys();
 
             auto result = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             RC_ASSERT(result.ok());
             RC_ASSERT(result.root != nullptr);
@@ -487,12 +487,27 @@ static bool jsonNodesSemanticEqual(
     return true;
 }
 
+/// Parse a complete JSON string in one chunk via the streaming parser
+/// (makeParserState/parseChunk/finalizeParse) — the test oracle.
+static auto oracleParse(const std::string& json) -> ParseResult {
+    auto state = makeParserState();
+    std::vector<std::byte> bytes(json.size());
+    for (std::size_t i = 0; i < json.size(); ++i) {
+        bytes[i] = static_cast<std::byte>(json[i]);
+    }
+    auto result = parseChunk(*state, std::span<const std::byte>(bytes));
+    if (result.error) {
+        return ParseResult{.root = nullptr, .error = result.error};
+    }
+    return finalizeParse(*result.nextState);
+}
+
 } // anonymous namespace
 
 // ===========================================================================
 // Property 1: Semantic Equivalence
-// For any valid JSON, simdjson and custom backends produce equivalent
-// ArenaJsonNode trees.
+// For any valid JSON, the simdjson backend and the streaming parser (oracle)
+// produce equivalent JsonNode trees.
 // Validates: Requirements 6.1, 2.2, 2.4
 // ===========================================================================
 
@@ -503,27 +518,24 @@ TEST(SimdjsonProperties, SemanticEquivalence) {
 
             // Parse with simdjson backend
             auto simdjsonResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
-            // Parse with custom backend
-            auto customResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Custom});
+            // Parse with the streaming oracle
+            auto oracleResult = oracleParse(json);
 
             // Both must parse successfully — if either fails, discard this test case
             // (the generator should produce valid JSON, but some edge cases may
-            // only be accepted by one backend)
+            // only be accepted by one parser)
             RC_PRE(simdjsonResult.ok());
-            RC_PRE(customResult.ok());
+            RC_PRE(oracleResult.root != nullptr && !oracleResult.error.has_value());
 
-            // Convert both to JsonNode trees
+            // Convert the simdjson result to a JsonNode tree
             auto simdjsonTree = simdjsonResult.toParseResult();
-            auto customTree = customResult.toParseResult();
 
             RC_ASSERT(simdjsonTree.root != nullptr);
-            RC_ASSERT(customTree.root != nullptr);
 
             // Compare the two trees for semantic equivalence
-            RC_ASSERT(jsonNodesSemanticEqual(simdjsonTree.root, customTree.root));
+            RC_ASSERT(jsonNodesSemanticEqual(simdjsonTree.root, oracleResult.root));
         });
 }
 
@@ -541,7 +553,7 @@ TEST(SimdjsonProperties, ParsePrintRoundTrip) {
 
             // Step 1: Parse with simdjson backend to get tree1
             auto result1 = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             // Must parse successfully
             RC_PRE(result1.ok());
@@ -556,7 +568,7 @@ TEST(SimdjsonProperties, ParsePrintRoundTrip) {
 
             // Step 3: Parse the pretty-printed output again with simdjson
             auto result2 = parseBuffer(std::string(printed),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             // The pretty-printed output must also parse successfully
             RC_ASSERT(result2.ok());
@@ -583,7 +595,7 @@ TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
 
             // Parse with simdjson backend
             auto result = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             // Must parse successfully
             RC_PRE(result.ok());
@@ -681,7 +693,7 @@ TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
                         // we can re-parse the expected value to get the resolved form.
                         std::string expectedJson = "[" + expectedValues[i] + "]";
                         auto expectedResult = parseBuffer(std::string(expectedJson),
-                            ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                            ParseBufferOptions{});
                         if (expectedResult.ok() && expectedResult.root->childCount > 0) {
                             auto expectedTree = expectedResult.toParseResult();
                             if (expectedTree.root && !expectedTree.root->children.empty()) {
@@ -712,7 +724,7 @@ TEST(SimdjsonProperties, ErrorMappingValidity) {
 
             // Parse with simdjson backend
             auto result = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             // Some generated "invalid" JSON might actually be accepted by simdjson
             // (e.g., lone surrogates handled differently). Discard those cases.
@@ -750,7 +762,6 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
             // Parse with simdjson backend and progress callback
             auto result = parseBuffer(std::string(json),
                 ParseBufferOptions{
-                    .backend = ParserBackend::Simdjson,
                     .progressCallback = callback
                 });
 
@@ -856,7 +867,7 @@ TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
             const char* sourceEnd = source->data() + source->size();
 
             auto result = parseBuffer(std::move(source),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
 
             // Must parse successfully
             RC_PRE(result.ok());

@@ -19,9 +19,6 @@ add_library(jsontitan_core STATIC
     csv_exporter.cpp
     xml_exporter.cpp
     arena_allocator.cpp
-    simd_scanner.cpp
-    structural_scanner.cpp
-    chunk_parser.cpp
     parse_orchestrator.cpp
     token_emitter.cpp
     simdjson_adapter.cpp

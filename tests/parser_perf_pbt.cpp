@@ -121,7 +121,7 @@ TEST(ParserPerfBugCondition, DeepCopyBottleneck_LargeArrays) {
             // Step 1: Parse via simdjson backend (this is the fast part)
             auto startParse = std::chrono::high_resolution_clock::now();
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
             auto endParse = std::chrono::high_resolution_clock::now();
 
             RC_PRE(arenaResult.ok());
@@ -162,7 +162,7 @@ TEST(ParserPerfBugCondition, DeepCopyBottleneck_NestedStructures) {
             // Step 1: Parse via simdjson backend
             auto startParse = std::chrono::high_resolution_clock::now();
             auto arenaResult = parseBuffer(std::string(json),
-                ParseBufferOptions{.backend = ParserBackend::Simdjson});
+                ParseBufferOptions{});
             auto endParse = std::chrono::high_resolution_clock::now();
 
             RC_PRE(arenaResult.ok());
@@ -209,7 +209,7 @@ TEST(ParserPerfBugCondition, ConcreteCase_10KObjects) {
     // Step 1: Parse via simdjson backend
     auto startParse = std::chrono::high_resolution_clock::now();
     auto arenaResult = parseBuffer(std::string(json),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
     auto endParse = std::chrono::high_resolution_clock::now();
 
     ASSERT_TRUE(arenaResult.ok());

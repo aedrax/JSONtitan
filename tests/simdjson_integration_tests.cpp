@@ -20,7 +20,7 @@ using namespace jsontitan::core;
 
 TEST(SimdjsonIntegration, EmptyInputReturnsError) {
     auto result = parseBuffer(std::string(""),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
 
     ASSERT_FALSE(result.ok());
     ASSERT_TRUE(result.error.has_value());
@@ -38,7 +38,7 @@ TEST(SimdjsonIntegration, BackendRoutingSimdjson) {
     const std::string input = R"({"key":"value"})";
 
     auto result = parseBuffer(std::string(input),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
 
     ASSERT_TRUE(result.ok()) << "Parse failed: "
         << (result.error ? result.error->description : "unknown");
@@ -55,28 +55,51 @@ TEST(SimdjsonIntegration, BackendRoutingSimdjson) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: Backend routing — Custom selection
+// Test 3: parseBuffer result matches the streaming parser (test oracle)
 // Validates: Requirements 3.1, 3.4
 // ---------------------------------------------------------------------------
 
-TEST(SimdjsonIntegration, BackendRoutingCustom) {
+// Recursively compare two JsonNode trees for structural and value equality.
+static bool jsonTreesEqual(const std::shared_ptr<const JsonNode>& a,
+                           const std::shared_ptr<const JsonNode>& b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    if (a->type != b->type) return false;
+    if (a->key != b->key) return false;
+    if (a->value != b->value) return false;
+    if (a->children.size() != b->children.size()) return false;
+    for (std::size_t i = 0; i < a->children.size(); ++i) {
+        if (!jsonTreesEqual(a->children[i], b->children[i])) return false;
+    }
+    return true;
+}
+
+TEST(SimdjsonIntegration, MatchesStreamingOracle) {
     const std::string input = R"({"key":"value"})";
 
-    auto result = parseBuffer(std::string(input),
-        ParseBufferOptions{.backend = ParserBackend::Custom});
+    // Parse with the streaming parser (makeParserState/parseChunk/finalizeParse)
+    auto state = makeParserState();
+    std::vector<std::byte> bytes(input.size());
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        bytes[i] = static_cast<std::byte>(input[i]);
+    }
+    auto chunkResult = parseChunk(*state, std::span<const std::byte>(bytes));
+    ASSERT_FALSE(chunkResult.error.has_value());
+    auto oracle = finalizeParse(*chunkResult.nextState);
+    ASSERT_NE(oracle.root, nullptr);
+    ASSERT_FALSE(oracle.error.has_value());
+
+    // Parse with parseBuffer (simdjson backend)
+    auto result = parseBuffer(std::string(input), ParseBufferOptions{});
 
     ASSERT_TRUE(result.ok()) << "Parse failed: "
         << (result.error ? result.error->description : "unknown");
     ASSERT_NE(result.root, nullptr);
 
-    // Root should be an Object
-    EXPECT_EQ(result.root->type, NodeType::Object);
-
-    // Should have one child with key "key" and value "value"
-    ASSERT_EQ(result.root->childCount, 1u);
-    EXPECT_EQ(result.root->children[0]->key.view(), "key");
-    EXPECT_EQ(result.root->children[0]->type, NodeType::String);
-    EXPECT_EQ(result.root->children[0]->value.view(), "value");
+    // The simdjson tree must match the streaming oracle's tree
+    auto simdjsonTree = result.root->toJsonNode();
+    ASSERT_NE(simdjsonTree, nullptr);
+    EXPECT_TRUE(jsonTreesEqual(oracle.root, simdjsonTree));
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +113,6 @@ TEST(SimdjsonIntegration, NoCallbackDoesNotCrash) {
     // Explicitly set progressCallback to nullptr
     auto result = parseBuffer(std::string(input),
         ParseBufferOptions{
-            .backend = ParserBackend::Simdjson,
             .progressCallback = nullptr
         });
 
@@ -110,7 +132,7 @@ TEST(SimdjsonIntegration, DuplicateKeyPreservation) {
     const std::string input = R"({"a":1,"a":2,"a":3})";
 
     auto result = parseBuffer(std::string(input),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
 
     ASSERT_TRUE(result.ok()) << "Parse failed: "
         << (result.error ? result.error->description : "unknown");
@@ -146,7 +168,7 @@ TEST(SimdjsonIntegration, UnicodeEscapeResolution) {
     const std::string input = R"({"emoji":"\u0048\u0065\u006C\u006C\u006F"})";
 
     auto result = parseBuffer(std::string(input),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
 
     ASSERT_TRUE(result.ok()) << "Parse failed: "
         << (result.error ? result.error->description : "unknown");
@@ -182,7 +204,7 @@ TEST(SimdjsonIntegration, SizeLimitErrorMessageFormat) {
     const std::string invalidInput = "{invalid json content";
 
     auto result = parseBuffer(std::string(invalidInput),
-        ParseBufferOptions{.backend = ParserBackend::Simdjson});
+        ParseBufferOptions{});
 
     ASSERT_FALSE(result.ok());
     ASSERT_TRUE(result.error.has_value());

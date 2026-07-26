@@ -672,24 +672,22 @@ class BugConditionExplorationTest : public QObject {
 
 private:
     // Generate a valid JSON string of approximately the given size.
-    // Produces multiple top-level JSON objects separated by newlines.
-    // Multiple top-level values are required to trigger the parallel parse path,
-    // which finds partition points at depth-0 boundaries.
-    // We generate objects large enough that each one exceeds the chunk size,
-    // ensuring the parallel path produces multiple progress callbacks.
+    // Produces a single top-level ARRAY of large objects, so the whole file
+    // is one valid JSON document (as required by simdjson) while still being
+    // large enough to exercise the progress-granularity assertions.
     static std::string generateValidJson(std::size_t approxSize) {
         std::string json;
         json.reserve(approxSize + 1024);
+        json += "[";
 
-        // Generate objects that are each ~500 KB to ensure we get multiple
-        // partition points without too many objects (avoids chunk merging issues)
+        // Generate array elements that are each ~500 KB
         constexpr std::size_t kObjectSize = 500 * 1024;
-        std::size_t currentSize = 0;
+        std::size_t currentSize = json.size();
         bool first = true;
 
         while (currentSize < approxSize) {
             if (!first) {
-                json += "\n";
+                json += ",";
                 currentSize += 1;
             }
             first = false;
@@ -707,6 +705,7 @@ private:
             currentSize += entry.size();
         }
 
+        json += "]";
         return json;
     }
 
@@ -746,8 +745,8 @@ private slots:
             "values in each phase range [0,50] and [50,100]",
             [this, &counterexample]() {
                 // Generate a random size between 2 MB and 4 MB
-                // (must exceed 1 MB parallel threshold and have enough top-level
-                // values to trigger multiple parallel chunks)
+                // (must exceed the 1 MB read chunk size so the read phase
+                // emits multiple progress values)
                 const auto size = *rc::gen::inRange<std::size_t>(
                     2 * 1024 * 1024, 4 * 1024 * 1024);
 

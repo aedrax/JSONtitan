@@ -8,7 +8,6 @@
 #include "core/arena_allocator.h"
 #include "core/arena_json_node.h"
 #include "core/parser.h"
-#include "core/simd_scanner.h"
 #include "core/source_buffer.h"
 
 namespace jsontitan::core {
@@ -30,31 +29,19 @@ struct ArenaParseResult {
     }
 };
 
-// Selects which parsing backend to use.
-enum class ParserBackend {
-    Simdjson,  // Default: use simdjson DOM API
-    Custom     // Existing parallel pipeline (simd_scanner → structural_scanner → chunk_parser)
-};
-
 // Options controlling the parse pipeline.
 struct ParseBufferOptions {
-    ParserBackend backend = ParserBackend::Simdjson;
-    std::size_t parallelThreshold = 1024 * 1024;  // 1 MB (custom backend only)
-    unsigned maxThreads = 0;  // 0 = use hardware_concurrency() (custom backend only)
-    SimdLevel simdLevel = detectSimdLevel();       // custom backend only
     std::function<void(float)> progressCallback = nullptr;  // Optional progress reporting (0.0–1.0)
     // Optional cooperative cancellation: polled periodically during parsing;
     // returning true aborts the parse with a "Parse cancelled" error.
     std::function<bool()> cancelCallback = nullptr;
 };
 
-// Parse a complete buffer using the parallel pipeline.
-// For inputs <= parallelThreshold, uses single-threaded parsing.
-// For larger inputs, uses SIMD scan + parallel chunk parsing.
+// Parse a complete buffer via simdjson.
 auto parseBuffer(std::string input,
                  ParseBufferOptions options = {}) -> ArenaParseResult;
 
-// Overload accepting a pre-constructed SourceBuffer.
+// Overload accepting a pre-constructed SourceBuffer. Parses via simdjson.
 auto parseBuffer(std::unique_ptr<SourceBuffer> source,
                  ParseBufferOptions options = {}) -> ArenaParseResult;
 
