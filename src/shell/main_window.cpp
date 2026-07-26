@@ -128,7 +128,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Detail panel rendering for the current tree selection
     m_detailPresenter = new DetailPanelPresenter(
-        m_detailPanel, m_treeView, m_filterProxy, m_treeModel, m_session, this);
+        m_detailPanel, m_breadcrumbLabel, m_treeView, m_filterProxy,
+        m_treeModel, m_session, this);
 
     showWelcomeMessage();
 
@@ -510,13 +511,26 @@ void MainWindow::setupCentralWidget() {
 
     splitter->addWidget(treeContainer);
 
-    // Detail panel
-    m_detailPanel = new QTextEdit(splitter);
+    // Detail pane: breadcrumb path bar above the detail panel
+    auto* detailContainer = new QWidget(splitter);
+    auto* detailLayout = new QVBoxLayout(detailContainer);
+    detailLayout->setContentsMargins(0, 0, 0, 0);
+    detailLayout->setSpacing(2);
+
+    m_breadcrumbLabel = new QLabel(detailContainer);
+    m_breadcrumbLabel->setObjectName("breadcrumbLabel");
+    m_breadcrumbLabel->setTextFormat(Qt::RichText);
+    m_breadcrumbLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse |
+                                               Qt::LinksAccessibleByKeyboard);
+    detailLayout->addWidget(m_breadcrumbLabel);
+
+    m_detailPanel = new QTextEdit(detailContainer);
     m_detailPanel->setObjectName("detailPanel");
     m_detailPanel->setReadOnly(true);
     m_detailPanel->setPlaceholderText(tr("Select a node to view its full value"));
+    detailLayout->addWidget(m_detailPanel, 1);
 
-    splitter->addWidget(m_detailPanel);
+    splitter->addWidget(detailContainer);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 1);
 

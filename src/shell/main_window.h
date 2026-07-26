@@ -111,6 +111,7 @@ private:
     QLabel* m_searchErrorLabel = nullptr;
     QTreeView* m_treeView = nullptr;
     QTextEdit* m_detailPanel = nullptr;
+    QLabel* m_breadcrumbLabel = nullptr;
     QLabel* m_welcomeLabel = nullptr;
     QProgressBar* m_progressBar = nullptr;
     QPushButton* m_cancelLoadButton = nullptr;

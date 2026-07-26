@@ -12,7 +12,9 @@
 #include "core/search_engine.h"
 #include "core/xml_exporter.h"
 #include "shell/clipboard_utils.h"
+#include "shell/detail_panel_presenter.h"
 #include "shell/document_session.h"
+#include "shell/model_paths.h"
 #include "shell/drop_validator.h"
 #include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
@@ -2512,6 +2514,137 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Phase 5b commit 2: breadcrumb path bar
+// ---------------------------------------------------------------------------
+
+class BreadcrumbTest : public QObject {
+    Q_OBJECT
+
+private:
+    struct Fixture {
+        QTextEdit detailPanel;
+        QLabel breadcrumb;
+        QTreeView tree;
+        TreeModel model;
+        FilterProxyModel proxy;
+        DocumentSession session{&model};
+        // Constructed after the tree has its model: the presenter wires
+        // itself to the view's selection model, which only exists then.
+        std::unique_ptr<DetailPanelPresenter> presenter;
+
+        Fixture() {
+            proxy.setSourceModel(&model);
+            tree.setModel(&proxy);
+            presenter = std::make_unique<DetailPanelPresenter>(
+                &detailPanel, &breadcrumb, &tree, &proxy, &model, &session);
+        }
+
+        void selectPath(const jsontitan::core::NodePath& path) {
+            QModelIndex sourceIdx =
+                jsontitan::shell::indexForPath(model, path);
+            QVERIFY(sourceIdx.isValid());
+            QModelIndex proxyIdx = proxy.mapFromSource(sourceIdx);
+            QVERIFY(proxyIdx.isValid());
+            tree.setCurrentIndex(proxyIdx);
+        }
+    };
+
+    static std::shared_ptr<const JsonNode> nestedRoot() {
+        return JsonNode::makeObject("", {
+            JsonNode::makeObject("a", {
+                JsonNode::makeArray("b", {
+                    JsonNode::makeObject("", {
+                        JsonNode::makeNumber("c", "1")
+                    })
+                })
+            })
+        });
+    }
+
+private slots:
+    void testBreadcrumbHtmlForNestedSelection() {
+        Fixture f;
+        f.session.setJsonRoot(nestedRoot(), QString(), QString(), false);
+
+        jsontitan::core::NodePath path{std::string("a"), std::string("b"),
+                                       std::size_t(0), std::string("c")};
+        f.selectPath(path);
+
+        const QString html = f.breadcrumb.text();
+        QCOMPARE(html, DetailPanelPresenter::breadcrumbHtml(path));
+        QVERIFY(html.contains("<a href=\"0\">$</a>"));
+        QVERIFY(html.contains("<a href=\"1\">a</a>"));
+        QVERIFY(html.contains("<a href=\"2\">b</a>"));
+        QVERIFY(html.contains("<a href=\"3\">[0]</a>"));
+        QVERIFY(html.contains("<a href=\"4\">c</a>"));
+
+        // Tooltip shows the full JSONPath.
+        QCOMPARE(f.breadcrumb.toolTip(), QString("$.a.b[0].c"));
+    }
+
+    void testBreadcrumbLinkNavigatesToAncestor() {
+        Fixture f;
+        f.session.setJsonRoot(nestedRoot(), QString(), QString(), false);
+
+        jsontitan::core::NodePath path{std::string("a"), std::string("b"),
+                                       std::size_t(0), std::string("c")};
+        f.selectPath(path);
+
+        // Activate the "b" segment (prefix length 2) — signals are
+        // invokable, so drive the real linkActivated delivery path.
+        QVERIFY(QMetaObject::invokeMethod(&f.breadcrumb, "linkActivated",
+                                          Q_ARG(QString, QString("2"))));
+
+        QModelIndex current = f.tree.currentIndex();
+        QVERIFY(current.isValid());
+        QModelIndex source = f.proxy.mapToSource(current);
+        auto selectedPath = jsontitan::shell::nodePathForIndex(f.model, source);
+        jsontitan::core::NodePath expected{std::string("a"), std::string("b")};
+        QVERIFY(selectedPath == expected);
+
+        // Breadcrumb follows the new (shorter) selection.
+        QCOMPARE(f.breadcrumb.text(),
+                 DetailPanelPresenter::breadcrumbHtml(expected));
+    }
+
+    void testBreadcrumbClearedWithoutSelection() {
+        Fixture f;
+        f.session.setJsonRoot(nestedRoot(), QString(), QString(), false);
+        f.selectPath({std::string("a")});
+        QVERIFY(!f.breadcrumb.text().isEmpty());
+
+        // Root link clears the selection and empties the breadcrumb.
+        QVERIFY(QMetaObject::invokeMethod(&f.breadcrumb, "linkActivated",
+                                          Q_ARG(QString, QString("0"))));
+        QVERIFY(!f.tree.currentIndex().isValid());
+        QVERIFY(f.breadcrumb.text().isEmpty());
+        QVERIFY(f.breadcrumb.toolTip().isEmpty());
+    }
+
+    void testBreadcrumbHtmlElidesLongPaths() {
+        jsontitan::core::NodePath longPath;
+        for (int i = 0; i < 10; ++i) {
+            longPath.push_back(std::string("k") + std::to_string(i));
+        }
+        const QString html = DetailPanelPresenter::breadcrumbHtml(longPath);
+        QVERIFY(html.contains("…"));
+        QVERIFY(html.contains("<a href=\"0\">$</a>"));
+        QVERIFY(html.contains("<a href=\"1\">k0</a>"));
+        // Middle segments are elided…
+        QVERIFY(!html.contains(">k3<"));
+        // …but the tail keeps absolute hrefs.
+        QVERIFY(html.contains("<a href=\"10\">k9</a>"));
+    }
+
+    void testBreadcrumbHtmlEscapesSegments() {
+        jsontitan::core::NodePath path{std::string("a<b>&c")};
+        const QString html = DetailPanelPresenter::breadcrumbHtml(path);
+        QVERIFY(html.contains("a&lt;b&gt;&amp;c"));
+        QVERIFY(!html.contains("a<b>"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -2568,6 +2701,9 @@ int main(int argc, char* argv[]) {
 
     ClipboardUtilsTest clipboardUtilsTest;
     status |= QTest::qExec(&clipboardUtilsTest, argc, argv);
+
+    BreadcrumbTest breadcrumbTest;
+    status |= QTest::qExec(&breadcrumbTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
