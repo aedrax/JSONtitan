@@ -35,7 +35,17 @@ target_link_libraries(jsontitan_shell_lib
 )
 
 # Main executable
-add_executable(jsontitan_shell main.cpp resources.qrc)
+# WIN32 suppresses the console window on Windows; MACOSX_BUNDLE produces a
+# JSONTitan.app that macdeployqt can package. Both are ignored elsewhere.
+add_executable(jsontitan_shell WIN32 MACOSX_BUNDLE main.cpp resources.qrc)
+
+set_target_properties(jsontitan_shell PROPERTIES
+    OUTPUT_NAME JSONTitan
+    MACOSX_BUNDLE_BUNDLE_NAME "JSONTitan"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.aedrax.jsontitan"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+)
 
 target_link_libraries(jsontitan_shell
     PRIVATE

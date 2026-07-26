@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  linux:
+    name: Linux (AppImage)
+    # Built on 22.04 (glibc 2.35) so the AppImage runs on distros from ~2022
+    # onward. gcc-13 comes from the toolchain PPA; its newer libstdc++/libgcc
+    # are linked statically so users don't need them installed.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Install system dependencies
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Configure and build
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DJSONTITAN_BUILD_TESTS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build --parallel
+
+      - name: Package AppImage
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            --executable build/src/shell/JSONTitan \
+            --desktop-file assets/linux/jsontitan.desktop \
+            --icon-file assets/icons/jsontitan.png \
+            --plugin qt \
+            --output appimage
+          mv JSONTitan*.AppImage JSONTitan-linux-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: JSONTitan-linux-x86_64.AppImage
+
+  windows:
+    name: Windows (zip)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Configure and build
+        run: |
+          cmake -B build -DJSONTITAN_BUILD_TESTS=OFF
+          cmake --build build --config Release --parallel
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path deploy | Out-Null
+          Copy-Item build/src/shell/Release/JSONTitan.exe deploy/
+          windeployqt --release --compiler-runtime --no-translations deploy/JSONTitan.exe
+          Compress-Archive -Path deploy/* -DestinationPath JSONTitan-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: JSONTitan-windows-x64.zip
+
+  macos:
+    name: macOS (dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Configure and build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DJSONTITAN_BUILD_TESTS=OFF
+          cmake --build build --parallel
+
+      - name: Package DMG
+        run: |
+          macdeployqt build/src/shell/JSONTitan.app -dmg
+          mv build/src/shell/JSONTitan.dmg JSONTitan-macos-universal.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: JSONTitan-macos-universal.dmg
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            JSONTitan-linux-x86_64.AppImage
+            JSONTitan-windows-x64.zip
+            JSONTitan-macos-universal.dmg

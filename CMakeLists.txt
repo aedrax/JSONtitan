@@ -16,6 +16,9 @@ add_subdirectory(src/core)
 add_subdirectory(src/shell)
 # add_subdirectory(tools)
 
-# Testing
-enable_testing()
-add_subdirectory(tests)
+# Testing (skipped in release/packaging builds via -DJSONTITAN_BUILD_TESTS=OFF)
+option(JSONTITAN_BUILD_TESTS "Build the test suite" ON)
+if(JSONTITAN_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

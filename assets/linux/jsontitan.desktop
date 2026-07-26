@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=JSONTitan
+Comment=Fast JSON viewer and editor
+Exec=JSONTitan %f
+Icon=jsontitan
+Categories=Development;Utility;
+MimeType=application/json;
+Terminal=false
