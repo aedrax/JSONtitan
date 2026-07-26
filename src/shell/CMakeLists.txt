@@ -2,6 +2,7 @@
 # so that shell_tests can reuse them without recompiling.
 set(SHELL_SOURCES
     main_window.cpp
+    document_session.cpp
     model_paths.cpp
     tree_model.cpp
     filter_proxy_model.cpp

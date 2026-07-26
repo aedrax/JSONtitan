@@ -329,6 +329,22 @@ target_link_libraries(deletion_shell_tests
 
 gtest_discover_tests(deletion_shell_tests)
 
+# ── Controller Tests (Google Test + Qt Test) ─────────────────────
+add_executable(controller_tests controller_tests.cpp)
+
+target_link_libraries(controller_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(controller_tests)
+
 # ── Deletion Engine PBT (Google Test + RapidCheck, no Qt) ────────
 add_executable(deletion_engine_pbt deletion_engine_pbt.cpp)
 

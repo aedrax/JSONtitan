@@ -58,6 +58,13 @@ MainWindow::MainWindow(QWidget* parent)
     setupCentralWidget();
     setupStatusBar();
     setupDropOverlay();
+
+    // Document state holder — constructed after widget setup, wired with
+    // raw model pointers (Qt parent ownership).
+    m_session = new DocumentSession(m_treeModel, this);
+    connect(m_session, &DocumentSession::modifiedChanged,
+            this, &MainWindow::updateWindowTitle);
+
     showWelcomeMessage();
 
     // Connect file loader signals
@@ -106,12 +113,10 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
     if (filePaths.size() == 1) {
         // Single file: use the same mechanism as File > Open
         QString qPath = QString::fromStdString(filePaths[0]);
-        m_isUnionMode = false;
-        m_currentFileName = QFileInfo(qPath).fileName();
-        m_currentFilePath = qPath;
+        m_session->setFileIdentity(qPath, QFileInfo(qPath).fileName(), false);
         m_progressBar->setValue(0);
         m_progressBar->show();
-        m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+        m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
         m_fileLoader->startParse(qPath);
     } else {
         // Multiple files: use the same union logic as File > Union Files
@@ -160,13 +165,12 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
 
         auto unionRoot = jsontitan::core::unionTrees(entries);
 
-        m_isUnionMode = true;
-        m_currentRoot = unionRoot;
-        m_arenaResult.reset();  // Search must target the union, not a previously opened file
-        m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
-
         invalidateActiveSearch();
-        m_treeModel->setRootNode(unionRoot);
+        // File path deliberately left as-is: union mode never reads it
+        // (Save redirects to Save As), matching pre-extraction behavior.
+        m_session->setJsonRoot(unionRoot, m_session->filePath(),
+                               tr("Union (%1 files)").arg(filePaths.size()),
+                               true);
         m_filterProxy->clearFilter();
 
         m_welcomeLabel->hide();
@@ -176,7 +180,7 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
         int nodeCount = unionRoot
             ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
             : 0;
-        updateStatusBar(m_currentFileName, nodeCount);
+        updateStatusBar(m_session->fileName(), nodeCount);
 
         m_detailPanel->clear();
         m_searchBar->clear();
@@ -320,7 +324,7 @@ void MainWindow::setupCentralWidget() {
         }
         connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteNode);
 
-        if (m_isUnionMode) {
+        if (m_session->isUnionMode()) {
             menu->addSeparator();
             auto* removeAction = menu->addAction(tr("Remove from Union"));
             connect(removeAction, &QAction::triggered, this, &MainWindow::onRemoveFromUnion);
@@ -430,16 +434,15 @@ void MainWindow::dropEvent(QDropEvent* event) {
     m_searchBar->clear();
     m_searchErrorLabel->hide();
     m_detailPanel->clear();
-    m_isUnionMode = false;
 
-    // Set current file name from the dropped file path
-    m_currentFileName = QFileInfo(result.filePath).fileName();
-    m_currentFilePath = result.filePath;
+    // Set current file name from the dropped file path and exit union mode
+    m_session->setFileIdentity(result.filePath,
+                               QFileInfo(result.filePath).fileName(), false);
 
     // Show progress bar and start parsing
     m_progressBar->setValue(0);
     m_progressBar->show();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
 
     m_fileLoader->startParse(result.filePath);
 }
@@ -467,23 +470,13 @@ std::optional<jsontitan::core::NodeView> MainWindow::selectedNodeView() const {
     }
 
     // The model hands out raw pointers into whichever backing is live; a
-    // NodeView over them is valid as long as that backing (m_currentRoot or
-    // m_arenaResult) is kept alive, which MainWindow guarantees.
+    // NodeView over them is valid as long as that backing is kept alive,
+    // which DocumentSession guarantees.
     if (const auto* jn = m_treeModel->jsonNodeForIndex(sourceIndex)) {
         return jsontitan::core::NodeView(*jn);
     }
     if (const auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
         return jsontitan::core::NodeView(*an);
-    }
-    return std::nullopt;
-}
-
-std::optional<jsontitan::core::NodeView> MainWindow::liveRootView() const {
-    if (m_currentRoot) {
-        return jsontitan::core::NodeView(*m_currentRoot);
-    }
-    if (m_arenaResult && m_arenaResult->root) {
-        return jsontitan::core::NodeView(*m_arenaResult->root);
     }
     return std::nullopt;
 }
@@ -503,12 +496,10 @@ void MainWindow::onOpenFile() {
         return;
     }
 
-    m_isUnionMode = false;
-    m_currentFileName = QFileInfo(filePath).fileName();
-    m_currentFilePath = filePath;
+    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
     m_progressBar->setValue(0);
     m_progressBar->show();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
 
     m_fileLoader->startParse(filePath);
 }
@@ -519,11 +510,10 @@ void MainWindow::onProgressUpdated(int percentage) {
 
 void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
     m_progressBar->hide();
-    m_arenaResult = result;
-    m_currentRoot.reset();  // Clear legacy root when using arena path
 
     invalidateActiveSearch();
-    m_treeModel->setArenaRoot(result);
+    // File identity was already recorded at parse start; keep it.
+    m_session->setArenaRoot(result, m_session->filePath(), m_session->fileName());
     m_filterProxy->clearFilter();
 
     // Show tree, hide welcome
@@ -534,7 +524,7 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     // Update status bar: the parse pipeline already counted the nodes, so a
     // full-tree walk here would be pure waste.
     int nodeCount = result && result->root ? static_cast<int>(result->nodeCount) : 0;
-    updateStatusBar(m_currentFileName, nodeCount);
+    updateStatusBar(m_session->fileName(), nodeCount);
 
     // Clear detail panel and search
     m_detailPanel->clear();
@@ -542,11 +532,11 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     m_searchErrorLabel->hide();
 
     // Clear modified flag on file open
-    setModified(false);
+    m_session->setModified(false);
 
     // Record file in recent files list
-    if (!m_currentFilePath.isEmpty()) {
-        m_recentFilesManager->fileOpened(m_currentFilePath);
+    if (!m_session->filePath().isEmpty()) {
+        m_recentFilesManager->fileOpened(m_session->filePath());
     }
 }
 
@@ -556,7 +546,7 @@ void MainWindow::onParseError(QString errorMessage) {
 
     QMessageBox::critical(this, tr("Parse Error"),
                           tr("Failed to parse %1:\n\n%2")
-                              .arg(m_currentFileName, errorMessage));
+                              .arg(m_session->fileName(), errorMessage));
 }
 
 void MainWindow::onRecentFileSelected(const QString& filePath) {
@@ -572,12 +562,10 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
         return;
     }
 
-    m_isUnionMode = false;
-    m_currentFileName = QFileInfo(filePath).fileName();
-    m_currentFilePath = filePath;
+    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
     m_progressBar->setValue(0);
     m_progressBar->show();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_currentFileName));
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
     m_fileLoader->startParse(filePath);
 }
 
@@ -596,7 +584,7 @@ void MainWindow::onSearchTextChanged(const QString& text) {
         return;
     }
 
-    if (!m_currentRoot && !m_arenaResult) {
+    if (!m_session->currentRoot() && !m_session->arenaResult()) {
         return;
     }
 
@@ -618,7 +606,7 @@ void MainWindow::invalidateActiveSearch() {
 
 void MainWindow::executeSearch() {
     QString text = m_searchBar->text();
-    if (text.isEmpty() || (!m_currentRoot && !m_arenaResult)) {
+    if (text.isEmpty() || (!m_session->currentRoot() && !m_session->arenaResult())) {
         return;
     }
 
@@ -646,17 +634,17 @@ void MainWindow::executeSearch() {
     }
 
     // Dispatch search to background worker — use arena path when available
-    if (m_arenaResult) {
+    if (m_session->arenaResult()) {
         QMetaObject::invokeMethod(m_searchWorker, "executeArenaSearch",
                                   Qt::QueuedConnection,
                                   Q_ARG(jsontitan::core::SearchQuery, query),
-                                  Q_ARG(std::shared_ptr<jsontitan::core::ArenaParseResult>, m_arenaResult),
+                                  Q_ARG(std::shared_ptr<jsontitan::core::ArenaParseResult>, m_session->arenaResult()),
                                   Q_ARG(uint64_t, m_searchGeneration));
     } else {
         QMetaObject::invokeMethod(m_searchWorker, "executeSearch",
                                   Qt::QueuedConnection,
                                   Q_ARG(jsontitan::core::SearchQuery, query),
-                                  Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_currentRoot),
+                                  Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_session->currentRoot()),
                                   Q_ARG(uint64_t, m_searchGeneration));
     }
 }
@@ -748,13 +736,11 @@ void MainWindow::onUnionFiles() {
     // Union the trees
     auto unionRoot = jsontitan::core::unionTrees(entries);
 
-    m_isUnionMode = true;
-    m_currentRoot = unionRoot;
-    m_arenaResult.reset();  // Search must target the union, not a previously opened file
-    m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
-
     invalidateActiveSearch();
-    m_treeModel->setRootNode(unionRoot);
+    // File path deliberately left as-is: union mode never reads it
+    // (Save redirects to Save As), matching pre-extraction behavior.
+    m_session->setJsonRoot(unionRoot, m_session->filePath(),
+                           tr("Union (%1 files)").arg(filePaths.size()), true);
     m_filterProxy->clearFilter();
 
     m_welcomeLabel->hide();
@@ -764,7 +750,7 @@ void MainWindow::onUnionFiles() {
     int nodeCount = unionRoot
         ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
         : 0;
-    updateStatusBar(m_currentFileName, nodeCount);
+    updateStatusBar(m_session->fileName(), nodeCount);
 
     m_detailPanel->clear();
     m_searchBar->clear();
@@ -772,7 +758,7 @@ void MainWindow::onUnionFiles() {
 }
 
 void MainWindow::onRemoveFromUnion() {
-    if (!m_isUnionMode || !m_currentRoot) {
+    if (!m_session->isUnionMode() || !m_session->currentRoot()) {
         return;
     }
 
@@ -801,16 +787,15 @@ void MainWindow::onRemoveFromUnion() {
 
     std::string filenameKey = nodePtr->key;
 
-    auto newRoot = jsontitan::core::removeFromUnion(*m_currentRoot, filenameKey);
-    m_currentRoot = newRoot;
+    auto newRoot = jsontitan::core::removeFromUnion(*m_session->currentRoot(), filenameKey);
     invalidateActiveSearch();
-    m_treeModel->setRootNode(newRoot);
+    m_session->replaceJsonRoot(newRoot);
     m_filterProxy->clearFilter();
 
     int nodeCount = newRoot
         ? static_cast<int>(1 + jsontitan::core::countDescendants(*newRoot))
         : 0;
-    updateStatusBar(m_currentFileName, nodeCount);
+    updateStatusBar(m_session->fileName(), nodeCount);
 
     m_detailPanel->clear();
 }
@@ -822,7 +807,7 @@ void MainWindow::onExportCsv() {
     // uniformly over both backings via NodeView (no deep copies).
     auto node = selectedNodeView();
     if (!node) {
-        node = liveRootView();
+        node = m_session->rootView();
     }
     if (!node) {
         QMessageBox::information(this, tr("Export CSV"),
@@ -851,7 +836,7 @@ void MainWindow::onExportXml() {
     // uniformly over both backings via NodeView (no deep copies).
     auto node = selectedNodeView();
     if (!node) {
-        node = liveRootView();
+        node = m_session->rootView();
     }
     if (!node) {
         QMessageBox::information(this, tr("Export XML"),
@@ -879,10 +864,10 @@ void MainWindow::onTreeSelectionChanged() {
     // Emit tokens directly over whichever backing the selection resolves to —
     // no toJsonNode() deep copy for arena-backed nodes.
     auto node = selectedNodeView();
-    if (!node && m_currentRoot) {
+    if (!node && m_session->currentRoot()) {
         // Legacy behavior: an unresolved selection over a JsonNode-backed
         // tree falls back to showing the root.
-        node = jsontitan::core::NodeView(*m_currentRoot);
+        node = jsontitan::core::NodeView(*m_session->currentRoot());
     }
     if (!node) {
         m_detailPanel->clear();
@@ -896,40 +881,14 @@ void MainWindow::onTreeSelectionChanged() {
     jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
 }
 
-// --- Helper: Convert arena tree to editable JsonNode tree ---
-
-bool MainWindow::ensureEditableRoot() {
-    if (m_currentRoot) {
-        return true;  // Already have an editable root
-    }
-
-    if (!m_arenaResult || !m_arenaResult->root) {
-        return false;  // Nothing to convert
-    }
-
-    // Convert the arena tree to a JsonNode tree (deep copy)
-    m_currentRoot = m_arenaResult->root->toJsonNode();
-    m_arenaResult.reset();
-
-    // Audit D-10: switch the model to the new backing in the same operation.
-    // Without this, the model keeps dangling arena pointers between the
-    // conversion and the caller's own setRootNode(). The deletion path calls
-    // setRootNode() again with the post-delete tree — resetting the model
-    // twice is accepted here (correctness over elegance).
-    m_treeModel->setRootNode(m_currentRoot);
-
-    return true;
-}
-
 // --- Task 7.1: Modified flag and title management ---
 
-void MainWindow::setModified(bool modified) {
-    m_modified = modified;
+void MainWindow::updateWindowTitle(bool modified) {
     QString title = QStringLiteral("JSONTitan");
-    if (!m_currentFileName.isEmpty()) {
-        title = m_currentFileName + QStringLiteral(" — JSONTitan");
+    if (!m_session->fileName().isEmpty()) {
+        title = m_session->fileName() + QStringLiteral(" — JSONTitan");
     }
-    if (m_modified) {
+    if (modified) {
         title = QStringLiteral("*") + title;
     }
     setWindowTitle(title);
@@ -939,7 +898,7 @@ void MainWindow::setModified(bool modified) {
 
 void MainWindow::onDeleteNode() {
     // Guard: no-op if nothing loaded at all
-    if (!m_currentRoot && !m_arenaResult) {
+    if (!m_session->currentRoot() && !m_session->arenaResult()) {
         return;
     }
 
@@ -1003,22 +962,21 @@ void MainWindow::onDeleteNode() {
     QModelIndex parentSourceIndex = sourceIndex.parent();
 
     // Convert arena tree to editable JsonNode tree if needed
-    if (!ensureEditableRoot()) {
+    if (!m_session->ensureEditable()) {
         return;
     }
 
     // Perform the deletion
-    auto newTree = jsontitan::core::deleteNode(m_currentRoot, path);
+    auto newTree = jsontitan::core::deleteNode(m_session->currentRoot(), path);
     if (!newTree) {
         return;  // Shouldn't happen since we guard against root deletion
     }
-    m_currentRoot = newTree;
     invalidateActiveSearch();
-    m_treeModel->setRootNode(newTree);
+    m_session->replaceJsonRoot(newTree);
     m_filterProxy->clearFilter();
 
     // Set modified flag
-    setModified(true);
+    m_session->setModified(true);
 
     // Restore selection: try next sibling, then previous sibling, then parent
     // After model reset, we need to re-resolve the parent index
@@ -1082,7 +1040,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 // are no unsaved changes, or the user chose Save (and it succeeded) or
 // Discard. Returns false when the user cancelled.
 bool MainWindow::confirmDiscardChanges() {
-    if (!m_modified) {
+    if (!m_session->modified()) {
         return true;
     }
 
@@ -1096,7 +1054,7 @@ bool MainWindow::confirmDiscardChanges() {
         onSave();
         // If still modified after save attempt (e.g., user cancelled the
         // save-as dialog or the write failed), don't discard.
-        return !m_modified;
+        return !m_session->modified();
     }
     return reply == QMessageBox::Discard;
 }
@@ -1106,24 +1064,24 @@ bool MainWindow::confirmDiscardChanges() {
 void MainWindow::onSave() {
     // Save streams straight from whichever backing is live — no deep copy of
     // arena-backed trees into JsonNode anymore.
-    auto root = liveRootView();
+    auto root = m_session->rootView();
     if (!root) {
         return;
     }
 
     // If in union mode or no current file path, delegate to Save As
-    if (m_isUnionMode || m_currentFilePath.isEmpty()) {
+    if (m_session->isUnionMode() || m_session->filePath().isEmpty()) {
         onSaveAs();
         return;
     }
 
-    QString error = SaveHandler::saveToFile(*root, m_currentFilePath);
+    QString error = SaveHandler::saveToFile(*root, m_session->filePath());
     if (error.isEmpty()) {
-        setModified(false);
+        m_session->setModified(false);
     } else {
         QMessageBox::critical(this, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
-                .arg(m_currentFilePath, error));
+                .arg(m_session->filePath(), error));
     }
 }
 
@@ -1132,7 +1090,7 @@ void MainWindow::onSave() {
 void MainWindow::onSaveAs() {
     // Save streams straight from whichever backing is live — no deep copy of
     // arena-backed trees into JsonNode anymore.
-    auto root = liveRootView();
+    auto root = m_session->rootView();
     if (!root) {
         return;
     }
@@ -1160,9 +1118,12 @@ void MainWindow::onSaveAs() {
 
     QString error = SaveHandler::saveToFile(*root, chosenPath);
     if (error.isEmpty()) {
-        m_currentFilePath = chosenPath;
-        m_currentFileName = QFileInfo(chosenPath).fileName();
-        setModified(false);
+        // Union mode is deliberately left unchanged (pre-extraction
+        // behavior: Save As never cleared it).
+        m_session->setFileIdentity(chosenPath,
+                                   QFileInfo(chosenPath).fileName(),
+                                   m_session->isUnionMode());
+        m_session->setModified(false);
     } else {
         QMessageBox::critical(this, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")

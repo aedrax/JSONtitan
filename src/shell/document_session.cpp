@@ -1,0 +1,84 @@
+#include "shell/document_session.h"
+
+DocumentSession::DocumentSession(TreeModel* model, QObject* parent)
+    : QObject(parent), m_model(model) {}
+
+void DocumentSession::setFileIdentity(const QString& filePath,
+                                      const QString& fileName,
+                                      bool unionMode) {
+    m_filePath = filePath;
+    m_fileName = fileName;
+    m_isUnionMode = unionMode;
+}
+
+void DocumentSession::setJsonRoot(
+    std::shared_ptr<const jsontitan::core::JsonNode> root,
+    const QString& filePath, const QString& fileName, bool unionMode) {
+    m_currentRoot = std::move(root);
+    m_arenaResult.reset();  // Search must target the new tree, not a previously opened file
+    m_filePath = filePath;
+    m_fileName = fileName;
+    m_isUnionMode = unionMode;
+
+    m_model->setRootNode(m_currentRoot);
+    emit documentReplaced();
+}
+
+void DocumentSession::setArenaRoot(
+    std::shared_ptr<jsontitan::core::ArenaParseResult> result,
+    const QString& filePath, const QString& fileName) {
+    m_arenaResult = std::move(result);
+    m_currentRoot.reset();  // Clear legacy root when using arena path
+    m_filePath = filePath;
+    m_fileName = fileName;
+
+    m_model->setArenaRoot(m_arenaResult);
+    emit documentReplaced();
+}
+
+void DocumentSession::replaceJsonRoot(
+    std::shared_ptr<const jsontitan::core::JsonNode> root) {
+    m_currentRoot = std::move(root);
+    m_arenaResult.reset();  // invariant: only one live backing
+
+    m_model->setRootNode(m_currentRoot);
+    emit documentReplaced();
+}
+
+bool DocumentSession::ensureEditable() {
+    if (m_currentRoot) {
+        return true;  // Already have an editable root
+    }
+
+    if (!m_arenaResult || !m_arenaResult->root) {
+        return false;  // Nothing to convert
+    }
+
+    // Convert the arena tree to a JsonNode tree (deep copy)
+    m_currentRoot = m_arenaResult->root->toJsonNode();
+    m_arenaResult.reset();
+
+    // Audit D-10: switch the model to the new backing in the same operation.
+    // Without this, the model keeps dangling arena pointers between the
+    // conversion and the caller's own setRootNode(). The deletion path calls
+    // setRootNode() again with the post-delete tree — resetting the model
+    // twice is accepted here (correctness over elegance).
+    m_model->setRootNode(m_currentRoot);
+
+    return true;
+}
+
+std::optional<jsontitan::core::NodeView> DocumentSession::rootView() const {
+    if (m_currentRoot) {
+        return jsontitan::core::NodeView(*m_currentRoot);
+    }
+    if (m_arenaResult && m_arenaResult->root) {
+        return jsontitan::core::NodeView(*m_arenaResult->root);
+    }
+    return std::nullopt;
+}
+
+void DocumentSession::setModified(bool modified) {
+    m_modified = modified;
+    emit modifiedChanged(modified);
+}

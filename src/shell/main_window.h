@@ -30,6 +30,7 @@
 #include "core/json_node.h"
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
+#include "shell/document_session.h"
 #include "shell/export_handler.h"
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
@@ -84,10 +85,7 @@ private:
     // View of the currently selected node (either backing), or nullopt when
     // no valid selection resolves to a node.
     std::optional<jsontitan::core::NodeView> selectedNodeView() const;
-    // View of the live document root (m_currentRoot or the arena root).
-    std::optional<jsontitan::core::NodeView> liveRootView() const;
-    void setModified(bool modified);
-    bool ensureEditableRoot();
+    void updateWindowTitle(bool modified);
     bool confirmDiscardChanges();
     // Invalidates any in-flight or pending search so its (stale) result is
     // discarded. Must be called whenever the displayed tree is replaced.
@@ -137,11 +135,6 @@ private:
     // Syntax highlighting
     jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();
 
-    // Current data
-    std::shared_ptr<const jsontitan::core::JsonNode> m_currentRoot;
-    std::shared_ptr<jsontitan::core::ArenaParseResult> m_arenaResult;
-    QString m_currentFileName;
-    QString m_currentFilePath;
-    bool m_isUnionMode = false;
-    bool m_modified = false;
+    // Current document state (tree backing, file identity, modified flag)
+    DocumentSession* m_session = nullptr;
 };
