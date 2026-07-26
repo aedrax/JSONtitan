@@ -345,6 +345,31 @@ target_link_libraries(controller_tests
 
 gtest_discover_tests(controller_tests)
 
+# ── Edit Engine Tests (Google Test + RapidCheck, no Qt) ─────────
+add_executable(edit_engine_tests edit_engine_tests.cpp)
+
+target_link_libraries(edit_engine_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(edit_engine_tests)
+
+# ── UndoStack Tests (Google Test, no Qt) ─────────────────────────
+add_executable(undo_stack_tests undo_stack_tests.cpp)
+
+target_link_libraries(undo_stack_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(undo_stack_tests)
+
 # ── Deletion Engine PBT (Google Test + RapidCheck, no Qt) ────────
 add_executable(deletion_engine_pbt deletion_engine_pbt.cpp)
 

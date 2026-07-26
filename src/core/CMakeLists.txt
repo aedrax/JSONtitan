@@ -23,6 +23,7 @@ add_library(jsontitan_core STATIC
     token_emitter.cpp
     simdjson_adapter.cpp
     deletion_engine.cpp
+    edit_engine.cpp
     json_exporter.cpp
     stream_export.cpp
 )
