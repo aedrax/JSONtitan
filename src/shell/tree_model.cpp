@@ -1,5 +1,8 @@
 #include "shell/tree_model.h"
 
+#include <optional>
+#include <string_view>
+
 using namespace jsontitan::core;
 
 TreeModel::TreeModel(QObject* parent)
@@ -74,7 +77,10 @@ TreeModel::InternalNode* TreeModel::ensureChildNode(InternalNode* parent, int ro
 }
 
 QModelIndex TreeModel::index(int row, int column, const QModelIndex& parent) const {
-    if (!m_rootInternal || column != 0)
+    if (!m_rootInternal || column < 0 || column >= ColumnCountValue)
+        return {};
+    // Standard tree-model convention: only column-0 indexes have children.
+    if (parent.isValid() && parent.column() != 0)
         return {};
 
     auto* parentNode = nodeFromIndex(parent);
@@ -111,6 +117,8 @@ QModelIndex TreeModel::parent(const QModelIndex& child) const {
 int TreeModel::rowCount(const QModelIndex& parent) const {
     if (!m_rootInternal)
         return 0;
+    if (parent.isValid() && parent.column() != 0)
+        return 0;
 
     auto* node = nodeFromIndex(parent);
     if (!node)
@@ -120,7 +128,23 @@ int TreeModel::rowCount(const QModelIndex& parent) const {
 }
 
 int TreeModel::columnCount(const QModelIndex& /*parent*/) const {
-    return 1;
+    return ColumnCountValue;
+}
+
+QVariant TreeModel::headerData(int section, Qt::Orientation orientation,
+                               int role) const {
+    if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
+        return {};
+    switch (section) {
+    case ColumnKeyValue:
+        return tr("Key / Value");
+    case ColumnType:
+        return tr("Type");
+    case ColumnSize:
+        return tr("Size");
+    default:
+        return {};
+    }
 }
 
 QVariant TreeModel::data(const QModelIndex& index, int role) const {
@@ -131,57 +155,60 @@ QVariant TreeModel::data(const QModelIndex& index, int role) const {
     if (!node)
         return {};
 
-    if (role == Qt::EditRole) {
-        // Raw scalar value text — what an inline editor should show, not the
-        // composite "key: value" display string. Containers are not editable.
-        if (auto* jn = node->jsonNode()) {
-            switch (jn->type) {
-            case NodeType::Object:
-            case NodeType::Array:
-                return {};
-            case NodeType::Null:
-                return QStringLiteral("null");
-            default:
-                return QString::fromStdString(jn->value);
-            }
-        }
-        if (auto* an = node->arenaNode()) {
-            switch (an->type) {
-            case NodeType::Object:
-            case NodeType::Array:
-                return {};
-            case NodeType::Null:
-                return QStringLiteral("null");
-            default: {
-                std::string_view valStr = an->valueView();
-                return QString::fromUtf8(valStr.data(),
-                                         static_cast<qsizetype>(valStr.size()));
-            }
-            }
-        }
+    // A uniform view over whichever backing this row belongs to.
+    std::optional<NodeView> view;
+    if (auto* jn = node->jsonNode()) {
+        view.emplace(*jn);
+    } else if (auto* an = node->arenaNode()) {
+        view.emplace(*an);
+    } else {
         return {};
     }
 
-    // Determine array index: if parent is an Array type, use the row
-    int arrayIndex = -1;
-    if (node->parentNode) {
-        if (auto* parentJn = node->parentNode->jsonNode()) {
-            if (parentJn->type == NodeType::Array)
-                arrayIndex = node->rowInParent;
-        } else if (auto* parentAn = node->parentNode->arenaNode()) {
-            if (parentAn->type == NodeType::Array)
-                arrayIndex = node->rowInParent;
+    if (role == Qt::EditRole) {
+        // Raw scalar value text — what an inline editor should show, not the
+        // composite "key: value" display string. Containers are not
+        // editable, and only column 0 carries the editable value.
+        if (index.column() != ColumnKeyValue)
+            return {};
+        switch (view->type()) {
+        case NodeType::Object:
+        case NodeType::Array:
+            return {};
+        case NodeType::Null:
+            return QStringLiteral("null");
+        default: {
+            std::string_view valStr = view->value();
+            return QString::fromUtf8(valStr.data(),
+                                     static_cast<qsizetype>(valStr.size()));
+        }
         }
     }
 
-    if (auto* jn = node->jsonNode()) {
-        return formatNodeDisplay(*jn, arrayIndex);
+    switch (index.column()) {
+    case ColumnKeyValue: {
+        // Determine array index: if parent is an Array type, use the row
+        int arrayIndex = -1;
+        if (node->parentNode) {
+            if (auto* parentJn = node->parentNode->jsonNode()) {
+                if (parentJn->type == NodeType::Array)
+                    arrayIndex = node->rowInParent;
+            } else if (auto* parentAn = node->parentNode->arenaNode()) {
+                if (parentAn->type == NodeType::Array)
+                    arrayIndex = node->rowInParent;
+            }
+        }
+        return formatNodeDisplay(*view, arrayIndex);
     }
-    if (auto* an = node->arenaNode()) {
-        return formatNodeDisplay(*an, arrayIndex);
+    case ColumnType:
+        return typeText(*view);
+    case ColumnSize: {
+        QString size = sizeText(*view);
+        return size.isEmpty() ? QVariant() : QVariant(size);
     }
-
-    return {};
+    default:
+        return {};
+    }
 }
 
 Qt::ItemFlags TreeModel::flags(const QModelIndex& index) const {
@@ -202,7 +229,9 @@ Qt::ItemFlags TreeModel::flags(const QModelIndex& index) const {
         return itemFlags;
     }
 
-    if (type != NodeType::Object && type != NodeType::Array) {
+    // Only the key/value column of scalar rows is editable.
+    if (index.column() == ColumnKeyValue &&
+        type != NodeType::Object && type != NodeType::Array) {
         itemFlags |= Qt::ItemIsEditable;
     }
     return itemFlags;
@@ -224,6 +253,8 @@ bool TreeModel::setData(const QModelIndex& index, const QVariant& value,
 bool TreeModel::hasChildren(const QModelIndex& parent) const {
     if (!m_rootInternal)
         return false;
+    if (parent.isValid() && parent.column() != 0)
+        return false;
 
     auto* node = nodeFromIndex(parent);
     if (!node)
@@ -234,6 +265,8 @@ bool TreeModel::hasChildren(const QModelIndex& parent) const {
 
 bool TreeModel::canFetchMore(const QModelIndex& parent) const {
     if (!m_rootInternal)
+        return false;
+    if (parent.isValid() && parent.column() != 0)
         return false;
 
     auto* node = nodeFromIndex(parent);
@@ -284,62 +317,52 @@ const ArenaJsonNode* TreeModel::arenaNodeForIndex(const QModelIndex& index) cons
     return node->arenaNode();
 }
 
-QString TreeModel::formatNodeDisplay(const JsonNode& node, int arrayIndex) {
+QString TreeModel::formatNodeDisplay(NodeView node, int arrayIndex) {
     QString display;
 
     // Key or array index
     if (arrayIndex >= 0) {
         display = QStringLiteral("[%1]").arg(arrayIndex);
-    } else if (!node.key.empty()) {
-        display = QString::fromStdString(node.key);
+    } else {
+        std::string_view keyStr = node.key();
+        if (!keyStr.empty()) {
+            display = QString::fromUtf8(keyStr.data(),
+                                        static_cast<qsizetype>(keyStr.size()));
+        }
     }
 
-    // Type indicator and value preview
-    switch (node.type) {
+    // Scalars carry a (truncated) value preview; containers show the key
+    // alone — their type and child count live in the Type/Size columns.
+    switch (node.type()) {
     case NodeType::Object:
-        if (!display.isEmpty())
-            display += QStringLiteral(" ");
-        display += QStringLiteral("{Object}");
-        if (!node.children.empty()) {
-            display += QStringLiteral(" (%1 items)").arg(node.children.size());
-        }
-        break;
-
     case NodeType::Array:
-        if (!display.isEmpty())
-            display += QStringLiteral(" ");
-        display += QStringLiteral("[Array]");
-        if (!node.children.empty()) {
-            display += QStringLiteral(" (%1 items)").arg(node.children.size());
-        }
         break;
 
-    case NodeType::String:
+    case NodeType::String: {
         if (!display.isEmpty())
             display += QStringLiteral(": ");
         display += QStringLiteral("\"");
-        {
-            QString val = QString::fromStdString(node.value);
-            if (val.size() > 50) {
-                display += val.left(50) + QStringLiteral("...");
-            } else {
-                display += val;
-            }
+        std::string_view valStr = node.value();
+        QString val = QString::fromUtf8(valStr.data(),
+                                        static_cast<qsizetype>(valStr.size()));
+        if (val.size() > 50) {
+            display += val.left(50) + QStringLiteral("...");
+        } else {
+            display += val;
         }
         display += QStringLiteral("\"");
         break;
+    }
 
     case NodeType::Number:
+    case NodeType::Boolean: {
         if (!display.isEmpty())
             display += QStringLiteral(": ");
-        display += QString::fromStdString(node.value);
+        std::string_view valStr = node.value();
+        display += QString::fromUtf8(valStr.data(),
+                                     static_cast<qsizetype>(valStr.size()));
         break;
-
-    case NodeType::Boolean:
-        if (!display.isEmpty())
-            display += QStringLiteral(": ");
-        display += QString::fromStdString(node.value);
-        break;
+    }
 
     case NodeType::Null:
         if (!display.isEmpty())
@@ -351,79 +374,37 @@ QString TreeModel::formatNodeDisplay(const JsonNode& node, int arrayIndex) {
     return display;
 }
 
+QString TreeModel::formatNodeDisplay(const JsonNode& node, int arrayIndex) {
+    return formatNodeDisplay(NodeView(node), arrayIndex);
+}
+
 QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) {
-    QString display;
+    return formatNodeDisplay(NodeView(node), arrayIndex);
+}
 
-    // Key or array index
-    if (arrayIndex >= 0) {
-        display = QStringLiteral("[%1]").arg(arrayIndex);
-    } else {
-        std::string_view keyStr = node.keyView();
-        if (!keyStr.empty()) {
-            display = QString::fromUtf8(keyStr.data(), static_cast<qsizetype>(keyStr.size()));
-        }
+QString TreeModel::typeText(NodeView node) {
+    switch (node.type()) {
+    case NodeType::Object:  return QStringLiteral("Object");
+    case NodeType::Array:   return QStringLiteral("Array");
+    case NodeType::String:  return QStringLiteral("String");
+    case NodeType::Number:  return QStringLiteral("Number");
+    case NodeType::Boolean: return QStringLiteral("Boolean");
+    case NodeType::Null:    return QStringLiteral("Null");
     }
+    return {};
+}
 
-    // Type indicator and value preview
-    switch (node.type) {
+QString TreeModel::sizeText(NodeView node) {
+    switch (node.type()) {
     case NodeType::Object:
-        if (!display.isEmpty())
-            display += QStringLiteral(" ");
-        display += QStringLiteral("{Object}");
-        if (node.childCount > 0) {
-            display += QStringLiteral(" (%1 items)").arg(node.childCount);
-        }
-        break;
-
-    case NodeType::Array:
-        if (!display.isEmpty())
-            display += QStringLiteral(" ");
-        display += QStringLiteral("[Array]");
-        if (node.childCount > 0) {
-            display += QStringLiteral(" (%1 items)").arg(node.childCount);
-        }
-        break;
-
-    case NodeType::String:
-        if (!display.isEmpty())
-            display += QStringLiteral(": ");
-        display += QStringLiteral("\"");
-        {
-            std::string_view valStr = node.valueView();
-            QString val = QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
-            if (val.size() > 50) {
-                display += val.left(50) + QStringLiteral("...");
-            } else {
-                display += val;
-            }
-        }
-        display += QStringLiteral("\"");
-        break;
-
-    case NodeType::Number:
-        if (!display.isEmpty())
-            display += QStringLiteral(": ");
-        {
-            std::string_view valStr = node.valueView();
-            display += QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
-        }
-        break;
-
-    case NodeType::Boolean:
-        if (!display.isEmpty())
-            display += QStringLiteral(": ");
-        {
-            std::string_view valStr = node.valueView();
-            display += QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
-        }
-        break;
-
-    case NodeType::Null:
-        if (!display.isEmpty())
-            display += QStringLiteral(": ");
-        display += QStringLiteral("null");
-        break;
+    case NodeType::Array: {
+        const std::size_t count = node.childCount();
+        return count == 1 ? QStringLiteral("1 item")
+                          : QStringLiteral("%1 items").arg(count);
     }
-
-    return display;
+    case NodeType::String:
+        return QStringLiteral("%1 B").arg(node.value().size());
+    default:
+        return {};
+    }
 }

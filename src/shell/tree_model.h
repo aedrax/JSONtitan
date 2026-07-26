@@ -11,12 +11,22 @@
 
 #include "core/arena_json_node.h"
 #include "core/json_node.h"
+#include "core/node_view.h"
 #include "core/parse_orchestrator.h"
 
 class TreeModel : public QAbstractItemModel {
     Q_OBJECT
 public:
     explicit TreeModel(QObject* parent = nullptr);
+
+    // Columns: 0 = key (or [i]) with a scalar value preview, 1 = node type,
+    // 2 = size (child count for containers, byte length for strings).
+    enum Column {
+        ColumnKeyValue = 0,
+        ColumnType = 1,
+        ColumnSize = 2,
+        ColumnCountValue = 3,
+    };
 
     void setRootNode(std::shared_ptr<const jsontitan::core::JsonNode> root);
 
@@ -30,6 +40,8 @@ public:
     int rowCount(const QModelIndex& parent) const override;
     int columnCount(const QModelIndex& parent) const override;
     QVariant data(const QModelIndex& index, int role) const override;
+    QVariant headerData(int section, Qt::Orientation orientation,
+                        int role = Qt::DisplayRole) const override;
 
     // Editing: scalar rows (String/Number/Boolean/Null, either backing) are
     // editable; EditRole returns the RAW value text ("true", "null", the
@@ -55,9 +67,20 @@ public:
     bool canFetchMore(const QModelIndex& parent) const override;
     void fetchMore(const QModelIndex& parent) override;
 
-    // Utility: format a node for display (exposed for property testing)
+    // Utility: format a node's column-0 display — the key (or [i]) plus a
+    // truncated value preview for scalars; containers show the key alone
+    // (their type and child count live in the Type/Size columns). Exposed
+    // for property testing. The concrete-type overloads forward to the
+    // NodeView implementation.
+    static QString formatNodeDisplay(jsontitan::core::NodeView node, int arrayIndex = -1);
     static QString formatNodeDisplay(const jsontitan::core::JsonNode& node, int arrayIndex = -1);
     static QString formatNodeDisplay(const jsontitan::core::ArenaJsonNode& node, int arrayIndex = -1);
+
+    // Column 1 text: Object/Array/String/Number/Boolean/Null.
+    static QString typeText(jsontitan::core::NodeView node);
+    // Column 2 text: "N items" for containers, "N B" for strings, empty
+    // otherwise.
+    static QString sizeText(jsontitan::core::NodeView node);
 
     // Get the JsonNode pointer for a given model index (returns nullptr for arena-backed nodes)
     const jsontitan::core::JsonNode* jsonNodeForIndex(const QModelIndex& index) const;

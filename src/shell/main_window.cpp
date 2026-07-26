@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QMenu>
@@ -192,6 +193,13 @@ MainWindow::MainWindow(QWidget* parent)
         settings.value(QStringLiteral("window/splitterState")).toByteArray();
     if (!splitterState.isEmpty()) {
         m_mainSplitter->restoreState(splitterState);
+    }
+    // Column widths: the header sections exist already (the model reports
+    // its columns even while empty), so restoring here is safe.
+    const QByteArray headerState =
+        settings.value(QStringLiteral("window/treeHeaderState")).toByteArray();
+    if (!headerState.isEmpty()) {
+        m_treeView->header()->restoreState(headerState);
     }
 }
 
@@ -493,7 +501,9 @@ void MainWindow::setupCentralWidget() {
 
     m_treeView = new QTreeView(treeContainer);
     m_treeView->setModel(m_filterProxy);
-    m_treeView->setHeaderHidden(true);
+    // Headers are visible now that the model has Type/Size columns.
+    m_treeView->setHeaderHidden(false);
+    m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setAlternatingRowColors(true);
     // Inline editing of scalar rows: F2 or double-click opens the editor
     // (which shows the raw EditRole text, not the display string).
@@ -1184,6 +1194,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         settings.setValue(QStringLiteral("window/state"), saveState());
         settings.setValue(QStringLiteral("window/splitterState"),
                           m_mainSplitter->saveState());
+        settings.setValue(QStringLiteral("window/treeHeaderState"),
+                          m_treeView->header()->saveState());
         event->accept();
     } else {
         event->ignore();

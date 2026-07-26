@@ -122,13 +122,22 @@ private slots:
                         RC_ASSERT(display.contains(key));
                     }
 
-                    // Verify type indicator is present
+                    // Column 0 no longer embeds the container type/count —
+                    // that information lives in the Type and Size columns.
                     switch (node->type) {
                     case NodeType::Object:
-                        RC_ASSERT(display.contains("{Object}"));
+                        RC_ASSERT(!display.contains("{Object}"));
+                        RC_ASSERT(TreeModel::typeText(*node) ==
+                                  QStringLiteral("Object"));
+                        RC_ASSERT(TreeModel::sizeText(*node).contains(
+                            QString::number(node->children.size())));
                         break;
                     case NodeType::Array:
-                        RC_ASSERT(display.contains("[Array]"));
+                        RC_ASSERT(!display.contains("[Array]"));
+                        RC_ASSERT(TreeModel::typeText(*node) ==
+                                  QStringLiteral("Array"));
+                        RC_ASSERT(TreeModel::sizeText(*node).contains(
+                            QString::number(node->children.size())));
                         break;
                     case NodeType::String:
                         // String values are shown in quotes
@@ -196,8 +205,16 @@ private slots:
         QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
 
         QCOMPARE(model.rowCount(QModelIndex()), 0);
-        QCOMPARE(model.columnCount(QModelIndex()), 1);
+        QCOMPARE(model.columnCount(QModelIndex()), 3);
         QVERIFY(!model.hasChildren(QModelIndex()));
+
+        // Headers exist even while empty.
+        QCOMPARE(model.headerData(0, Qt::Horizontal).toString(),
+                 QString("Key / Value"));
+        QCOMPARE(model.headerData(1, Qt::Horizontal).toString(),
+                 QString("Type"));
+        QCOMPARE(model.headerData(2, Qt::Horizontal).toString(),
+                 QString("Size"));
     }
 
     void testSetRootNodeTriggersReset() {
@@ -336,17 +353,54 @@ private slots:
         QVERIFY(deletedDisplay.contains("deleted"));
         QVERIFY(deletedDisplay.contains("null"));
 
-        // Object node
+        // Object node: column 0 shows the key alone; type/count moved to
+        // the Type and Size columns.
         QModelIndex addrIdx = model.index(4, 0, QModelIndex());
         QString addrDisplay = model.data(addrIdx, Qt::DisplayRole).toString();
-        QVERIFY(addrDisplay.contains("address"));
-        QVERIFY(addrDisplay.contains("{Object}"));
+        QCOMPARE(addrDisplay, QString("address"));
+        QCOMPARE(model.data(model.index(4, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("Object"));
+        QCOMPARE(model.data(model.index(4, 2, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("1 item"));
 
         // Array node
         QModelIndex tagsIdx = model.index(5, 0, QModelIndex());
         QString tagsDisplay = model.data(tagsIdx, Qt::DisplayRole).toString();
-        QVERIFY(tagsDisplay.contains("tags"));
-        QVERIFY(tagsDisplay.contains("[Array]"));
+        QCOMPARE(tagsDisplay, QString("tags"));
+        QCOMPARE(model.data(model.index(5, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("Array"));
+        QCOMPARE(model.data(model.index(5, 2, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("2 items"));
+
+        // Scalar type/size columns: strings report type and byte length,
+        // other scalars leave Size empty.
+        QCOMPARE(model.data(model.index(0, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("String"));
+        QCOMPARE(model.data(model.index(0, 2, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("5 B"));  // "Alice"
+        QCOMPARE(model.data(model.index(1, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("Number"));
+        QVERIFY(!model.data(model.index(1, 2, QModelIndex()),
+                            Qt::DisplayRole).isValid());
+        QCOMPARE(model.data(model.index(2, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("Boolean"));
+        QCOMPARE(model.data(model.index(3, 1, QModelIndex()),
+                            Qt::DisplayRole).toString(),
+                 QString("Null"));
+
+        // Only column 0 of scalar rows is editable.
+        QVERIFY(model.flags(nameIdx).testFlag(Qt::ItemIsEditable));
+        QVERIFY(!model.flags(model.index(0, 1, QModelIndex()))
+                     .testFlag(Qt::ItemIsEditable));
+        QVERIFY(!model.flags(addrIdx).testFlag(Qt::ItemIsEditable));
     }
 
     void testArrayIndexDisplay() {
