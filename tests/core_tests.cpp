@@ -3926,9 +3926,9 @@ TEST(ArenaAllocatorProperty, AllocationPreservesDataIntegrity) {
 
                 node->type = nodeType;
                 node->key = jsontitan::core::StringRef{
-                    keyCopy.data(), keyCopy.size(), true};
+                    keyCopy.data(), keyCopy.size()};
                 node->value = jsontitan::core::StringRef{
-                    valCopy.data(), valCopy.size(), true};
+                    valCopy.data(), valCopy.size()};
                 node->children = nullptr;
                 node->childCount = 0;
 
@@ -3966,7 +3966,7 @@ TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
                 child->type = jsontitan::core::NodeType::String;
                 auto val = arena.copyString("child" + std::to_string(i));
                 child->value = jsontitan::core::StringRef{
-                    val.data(), val.size(), true};
+                    val.data(), val.size()};
                 child->children = nullptr;
                 child->childCount = 0;
                 childNodes.push_back(child);
@@ -4168,20 +4168,19 @@ TEST(StringRef, DefaultConstructed) {
     jsontitan::core::StringRef ref{};
     EXPECT_EQ(ref.data, nullptr);
     EXPECT_EQ(ref.length, 0u);
-    EXPECT_FALSE(ref.ownsData);
     EXPECT_TRUE(ref.toString().empty());
     EXPECT_TRUE(ref.view().empty());
 }
 
 TEST(StringRef, ToStringFromPointer) {
     const char* text = "hello";
-    jsontitan::core::StringRef ref{text, 5, false};
+    jsontitan::core::StringRef ref{text, 5};
     EXPECT_EQ(ref.toString(), "hello");
 }
 
 TEST(StringRef, ViewFromPointer) {
     const char* text = "world";
-    jsontitan::core::StringRef ref{text, 5, false};
+    jsontitan::core::StringRef ref{text, 5};
     EXPECT_EQ(ref.view(), "world");
     // View should point to the same memory (zero-copy)
     EXPECT_EQ(ref.view().data(), text);
@@ -4189,29 +4188,29 @@ TEST(StringRef, ViewFromPointer) {
 
 TEST(StringRef, ToStringFromOwnedData) {
     std::string owned = "owned string";
-    jsontitan::core::StringRef ref{owned.data(), owned.size(), true};
+    jsontitan::core::StringRef ref{owned.data(), owned.size()};
     EXPECT_EQ(ref.toString(), "owned string");
 }
 
 TEST(StringRef, ViewFromOwnedData) {
     std::string owned = "owned view";
-    jsontitan::core::StringRef ref{owned.data(), owned.size(), true};
+    jsontitan::core::StringRef ref{owned.data(), owned.size()};
     EXPECT_EQ(ref.view(), "owned view");
 }
 
 TEST(StringRef, EqualityComparison) {
     const char* text1 = "same";
     const char* text2 = "same";
-    jsontitan::core::StringRef ref1{text1, 4, false};
-    jsontitan::core::StringRef ref2{text2, 4, false};
+    jsontitan::core::StringRef ref1{text1, 4};
+    jsontitan::core::StringRef ref2{text2, 4};
     EXPECT_EQ(ref1, ref2);
 }
 
 TEST(StringRef, InequalityComparison) {
     const char* text1 = "abc";
     const char* text2 = "xyz";
-    jsontitan::core::StringRef ref1{text1, 3, false};
-    jsontitan::core::StringRef ref2{text2, 3, false};
+    jsontitan::core::StringRef ref1{text1, 3};
+    jsontitan::core::StringRef ref2{text2, 3};
     EXPECT_NE(ref1, ref2);
 }
 
@@ -4219,8 +4218,8 @@ TEST(StringRef, EqualityAcrossOwnership) {
     // A zero-copy ref and an owned ref with the same content should be equal
     const char* zeroCopy = "test";
     std::string owned = "test";
-    jsontitan::core::StringRef ref1{zeroCopy, 4, false};
-    jsontitan::core::StringRef ref2{owned.data(), owned.size(), true};
+    jsontitan::core::StringRef ref1{zeroCopy, 4};
+    jsontitan::core::StringRef ref2{owned.data(), owned.size()};
     EXPECT_EQ(ref1, ref2);
 }
 
@@ -4264,7 +4263,6 @@ TEST(SourceBuffer, RefCreatesZeroCopyStringRef) {
     jsontitan::core::SourceBuffer buf(std::string("hello world"));
     auto ref = buf.ref(0, 5);
     EXPECT_EQ(ref.view(), "hello");
-    EXPECT_FALSE(ref.ownsData);
     // The ref should point directly into the buffer
     EXPECT_EQ(ref.data, buf.data());
 }
@@ -4273,7 +4271,6 @@ TEST(SourceBuffer, RefWithOffset) {
     jsontitan::core::SourceBuffer buf(std::string("hello world"));
     auto ref = buf.ref(6, 5);
     EXPECT_EQ(ref.view(), "world");
-    EXPECT_FALSE(ref.ownsData);
     EXPECT_EQ(ref.data, buf.data() + 6);
 }
 

@@ -12,12 +12,11 @@ namespace jsontitan::core {
 inline constexpr std::size_t kSimdjsonPadding = 64;
 
 // A reference to a string within the SourceBuffer or arena.
-// For strings without escapes: points into the raw source buffer (ownsData == false).
-// For strings with escapes: points to a resolved copy in the arena (ownsData == true).
+// StringRef never owns its bytes: the referenced storage (source buffer or
+// arena) must outlive every StringRef pointing into it.
 struct StringRef {
     const char* data = nullptr;
     std::size_t length = 0;
-    bool ownsData = false;
 
     // Materialize as std::string (always copies).
     [[nodiscard]] auto toString() const -> std::string {
@@ -100,7 +99,7 @@ public:
     // Caller must ensure offset + length <= size().
     [[nodiscard]] auto ref(std::size_t offset, std::size_t length) const
         -> StringRef {
-        return StringRef{m_data.data() + offset, length, false};
+        return StringRef{m_data.data() + offset, length};
     }
 
 private:

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 namespace jsontitan::core {
 
@@ -19,6 +20,13 @@ auto ArenaAllocator::alignUp(std::size_t value,
 
 auto ArenaAllocator::allocate(std::size_t size, std::size_t alignment)
     -> void* {
+    // Blocks come from new[], which only guarantees fundamental alignment;
+    // over-aligned requests cannot be honored by the base pointer, so
+    // reject them instead of returning a misaligned pointer.
+    if (alignment > alignof(std::max_align_t)) {
+        return nullptr;
+    }
+
     // Zero-size allocations return a valid, unique pointer.
     if (size == 0) {
         size = 1;
@@ -64,10 +72,13 @@ void ArenaAllocator::reset() noexcept {
     m_blocks.clear();
 }
 
-void ArenaAllocator::absorb(ArenaAllocator&& other) noexcept {
-    for (auto& block : other.m_blocks) {
-        m_blocks.push_back(std::move(block));
-    }
+void ArenaAllocator::absorb(ArenaAllocator&& other) {
+    // Reserve up front so the element transfer itself cannot throw
+    // mid-way; only this single reserve can fail (strong guarantee).
+    m_blocks.reserve(m_blocks.size() + other.m_blocks.size());
+    m_blocks.insert(m_blocks.end(),
+                    std::make_move_iterator(other.m_blocks.begin()),
+                    std::make_move_iterator(other.m_blocks.end()));
     other.m_blocks.clear();
 }
 

@@ -1,5 +1,7 @@
 #include "core/pretty_printer.h"
 
+#include "core/indent_util.h"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -142,6 +144,7 @@ void printNode(const JsonNode& node,
 } // anonymous namespace
 
 auto prettyPrint(const JsonNode& node, PrettyPrintOptions options) -> std::string {
+    options.indentWidth = clampIndentWidth(options.indentWidth);
     // Backward compatible: use maxOutputSize = 0 (unlimited)
     options.maxOutputSize = 0;
     std::string result;
@@ -151,6 +154,7 @@ auto prettyPrint(const JsonNode& node, PrettyPrintOptions options) -> std::strin
 }
 
 auto prettyPrintBounded(const JsonNode& node, PrettyPrintOptions options) -> PrettyPrintResult {
+    options.indentWidth = clampIndentWidth(options.indentWidth);
     std::string output;
     bool truncated = false;
     printNode(node, options, 0, output, truncated);

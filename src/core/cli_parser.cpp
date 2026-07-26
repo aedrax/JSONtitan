@@ -1,6 +1,7 @@
 #include "core/cli_parser.h"
 
 #include <filesystem>
+#include <system_error>
 
 namespace jsontitan::core {
 
@@ -48,13 +49,14 @@ auto parseCli(std::span<const std::string> args,
     std::filesystem::path cwdPath(cwd);
     for (const auto& arg : positionalArgs) {
         std::filesystem::path p(arg);
-        if (p.is_absolute()) {
-            result.filePaths.push_back(
-                std::filesystem::weakly_canonical(p).string());
-        } else {
-            result.filePaths.push_back(
-                std::filesystem::weakly_canonical(cwdPath / p).string());
+        if (!p.is_absolute()) {
+            p = cwdPath / p;
         }
+        // Use the non-throwing overload: canonicalization is cosmetic here,
+        // so on filesystem errors fall back to the uncanonicalized path.
+        std::error_code ec;
+        auto canonical = std::filesystem::weakly_canonical(p, ec);
+        result.filePaths.push_back(ec ? p.string() : canonical.string());
     }
 
     return result;

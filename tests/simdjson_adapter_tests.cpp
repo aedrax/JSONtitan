@@ -793,7 +793,7 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
 // ===========================================================================
 // Property 7: Arena Allocation Integrity
 // For any valid JSON, all StringRef pointers in the tree point within
-// ArenaAllocator memory (ownsData == true) and NOT into simdjson's internal
+// ArenaAllocator memory and NOT into simdjson's internal
 // buffers (which are freed after parse).
 // Validates: Requirements 8.1, 8.4
 // ===========================================================================
@@ -801,9 +801,9 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
 namespace {
 
 /// Recursively walk an ArenaJsonNode tree and verify that all non-empty
-/// StringRef values have ownsData == true (arena-allocated) and that their
-/// data pointers are non-null. For the simdjson backend, ALL strings must
-/// be arena-owned since simdjson's internal buffers are released after parse.
+/// StringRef values have non-null data pointers. For the simdjson backend,
+/// ALL strings must be arena-owned since simdjson's internal buffers are
+/// released after parse.
 ///
 /// Additionally verifies that no StringRef data pointer falls within the
 /// SourceBuffer's memory range — for the simdjson path, strings should be
@@ -826,8 +826,6 @@ static bool verifyArenaIntegrity(const ArenaJsonNode* node,
     // Check the key StringRef
     if (node->key.data != nullptr && node->key.length > 0) {
         stringRefCount++;
-        // For simdjson backend: all strings must be arena-owned
-        if (!node->key.ownsData) return false;
         // Pointer must not be within the source buffer
         // (simdjson copies all strings to arena, not source)
         if (node->key.data >= sourceStart && node->key.data < sourceEnd) return false;
@@ -836,8 +834,6 @@ static bool verifyArenaIntegrity(const ArenaJsonNode* node,
     // Check the value StringRef
     if (node->value.data != nullptr && node->value.length > 0) {
         stringRefCount++;
-        // For simdjson backend: all strings must be arena-owned
-        if (!node->value.ownsData) return false;
         // Pointer must not be within the source buffer
         if (node->value.data >= sourceStart && node->value.data < sourceEnd) return false;
     }

@@ -13,7 +13,8 @@ namespace jsontitan::core {
 namespace {
 
 // Map a simdjson error code to a human-readable ParseError.
-// Byte offset is included where simdjson provides location information.
+// The DOM API does not report an error location, so byteOffset is always 0
+// and the descriptions must not fabricate one.
 auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
     switch (error) {
         case simdjson::EMPTY:
@@ -21,7 +22,7 @@ auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
         case simdjson::UNCLOSED_STRING:
             return ParseError{0, "Unterminated string"};
         case simdjson::TAPE_ERROR:
-            return ParseError{0, "Structural error at byte 0"};
+            return ParseError{0, "Structural error (location unavailable)"};
         case simdjson::DEPTH_ERROR:
             return ParseError{0, "Document exceeds maximum nesting depth"};
         case simdjson::CAPACITY:
@@ -29,7 +30,7 @@ auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
         case simdjson::MEMALLOC:
             return ParseError{0, "Memory allocation failed during parsing"};
         case simdjson::UTF8_ERROR:
-            return ParseError{0, "Invalid UTF-8 encoding at byte 0"};
+            return ParseError{0, "Invalid UTF-8 encoding (location unavailable)"};
         case simdjson::TRAILING_CONTENT:
             return ParseError{0, "Unexpected trailing content after JSON value"};
         default:
@@ -115,7 +116,7 @@ auto convertElement(simdjson::dom::element elem,
                 for (auto [k, v] : obj) {
                     // Copy the key string into the arena.
                     auto keyCopy = arena.copyString(k);
-                    StringRef childKey{keyCopy.data(), keyCopy.size(), true};
+                    StringRef childKey{keyCopy.data(), keyCopy.size()};
 
                     auto* child = convertElement(v, childKey, arena, progress);
                     if (!child) {
@@ -168,7 +169,7 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
             auto valueCopy = arena.copyString(sv);
-            node->value = StringRef{valueCopy.data(), valueCopy.size(), true};
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
             break;
         }
 
@@ -186,7 +187,7 @@ auto convertElement(simdjson::dom::element elem,
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
             auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size(), true};
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
             break;
         }
 
@@ -203,7 +204,7 @@ auto convertElement(simdjson::dom::element elem,
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
             auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size(), true};
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
             break;
         }
 
@@ -222,7 +223,7 @@ auto convertElement(simdjson::dom::element elem,
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
             auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size(), true};
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
             break;
         }
 
@@ -234,7 +235,7 @@ auto convertElement(simdjson::dom::element elem,
             }
             std::string_view boolStr = val ? "true" : "false";
             auto valueCopy = arena.copyString(boolStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size(), true};
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
             break;
         }
 

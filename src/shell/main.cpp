@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "core/cli_parser.h"
@@ -17,14 +18,29 @@
 int main(int argc, char* argv[]) {
     // 3.1: Convert argv (excluding argv[0]) to std::vector<std::string>
     std::vector<std::string> args;
-    args.reserve(static_cast<std::size_t>(argc - 1));
+    if (argc > 0) {
+        args.reserve(static_cast<std::size_t>(argc - 1));
+    }
     for (int i = 1; i < argc; ++i) {
         args.emplace_back(argv[i]);
     }
 
-    // 3.2: Call parseCli() with the argument vector and current working directory
-    auto cliResult = jsontitan::core::parseCli(args,
-        std::filesystem::current_path().string());
+    // 3.2: Call parseCli() with the argument vector and current working
+    // directory. Nothing in this pre-QApplication prologue may propagate an
+    // exception out of main (std::terminate with no diagnostic).
+    jsontitan::core::CliParseResult cliResult;
+    try {
+        std::error_code cwdError;
+        auto cwd = std::filesystem::current_path(cwdError);
+        // If the cwd is unobtainable (deleted directory, EACCES), fall back
+        // to an empty base: relative CLI paths then resolve as-given.
+        cliResult = jsontitan::core::parseCli(
+            args, cwdError ? std::string{} : cwd.string());
+    } catch (const std::exception& e) {
+        std::cerr << "jsontitan: failed to process command line: "
+                  << e.what() << "\n";
+        return 1;
+    }
 
     // 3.5: Handle parse errors — print to stderr, return 1 (before QApplication)
     if (cliResult.error.has_value()) {

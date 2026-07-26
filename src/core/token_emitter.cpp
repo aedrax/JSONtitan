@@ -1,5 +1,7 @@
 #include "core/token_emitter.h"
 
+#include "core/indent_util.h"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -185,6 +187,7 @@ void emitNode(const JsonNode& node,
 } // anonymous namespace
 
 auto emitTokens(const JsonNode& node, PrettyPrintOptions options) -> TokenEmitResult {
+    options.indentWidth = clampIndentWidth(options.indentWidth);
     TokenEmitResult result;
     std::size_t currentSize = 0;
     bool truncated = false;

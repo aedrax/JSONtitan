@@ -6,6 +6,7 @@
 #include <new>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -50,6 +51,8 @@ public:
     // Typed allocation: construct T in-place within the arena.
     template <typename T, typename... Args>
     [[nodiscard]] auto construct(Args&&... args) -> T* {
+        static_assert(std::is_trivially_destructible_v<T>,
+                      "arena never runs destructors");
         void* mem = allocate(sizeof(T), alignof(T));
         if (!mem) {
             return nullptr;
@@ -68,7 +71,9 @@ public:
     // The other arena is left empty after this operation.
     // Pointers previously returned by the other arena remain valid
     // (they are now owned by this arena).
-    void absorb(ArenaAllocator&& other) noexcept;
+    // Not noexcept: growing the block list may allocate and can throw
+    // std::bad_alloc under memory pressure.
+    void absorb(ArenaAllocator&& other);
 
     // Total bytes allocated across all blocks (capacity).
     [[nodiscard]] auto totalAllocated() const noexcept -> std::size_t;
