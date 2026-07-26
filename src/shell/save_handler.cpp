@@ -1,18 +1,17 @@
 #include "shell/save_handler.h"
 
-#include "core/json_exporter.h"
+#include "core/stream_export.h"
 
 #include <QSaveFile>
 
-auto SaveHandler::saveToFile(const jsontitan::core::JsonNode& tree,
+auto SaveHandler::saveToFile(jsontitan::core::NodeView tree,
                              const QString& filePath) -> QString {
-    // Serialize the tree to JSON text (2-space indent, trailing newline)
+    // Serialize as JSON text (2-space indent, trailing newline), streamed
+    // straight into the file instead of materializing the whole document.
     jsontitan::core::JsonExportOptions options;
     options.mode = jsontitan::core::IndentMode::PrettyPrint;
     options.indentWidth = 2;
     options.trailingNewline = true;
-
-    std::string jsonText = jsontitan::core::exportJson(tree, options);
 
     // Atomic write: QSaveFile writes to a temp file and atomically replaces the
     // target on commit(), preserving the original file (and its permissions) if
@@ -23,10 +22,14 @@ auto SaveHandler::saveToFile(const jsontitan::core::JsonNode& tree,
             .arg(filePath, file.errorString());
     }
 
-    auto bytesWritten = file.write(jsonText.data(),
-                                   static_cast<qint64>(jsonText.size()));
-    if (bytesWritten != static_cast<qint64>(jsonText.size())
-        || file.error() != QFileDevice::NoError) {
+    jsontitan::core::ByteSink sink = [&file](std::string_view chunk) {
+        auto written = file.write(chunk.data(), static_cast<qint64>(chunk.size()));
+        return written == static_cast<qint64>(chunk.size())
+            && file.error() == QFileDevice::NoError;
+    };
+
+    auto result = jsontitan::core::exportJsonStream(tree, sink, options);
+    if (!result.ok || file.error() != QFileDevice::NoError) {
         return QStringLiteral("Failed to write %1: %2")
             .arg(filePath, file.errorString());
     }

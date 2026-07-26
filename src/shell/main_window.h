@@ -22,11 +22,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/arena_json_node.h"
 #include "core/json_node.h"
+#include "core/node_view.h"
 #include "core/parse_orchestrator.h"
 #include "shell/export_handler.h"
 #include "shell/file_loader.h"
@@ -79,9 +81,11 @@ private:
     void hideDropOverlay();
     void showWelcomeMessage();
     void updateStatusBar(const QString& fileName, int nodeCount);
-    int countNodes(const jsontitan::core::JsonNode& node) const;
-    int countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const;
-    std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
+    // View of the currently selected node (either backing), or nullopt when
+    // no valid selection resolves to a node.
+    std::optional<jsontitan::core::NodeView> selectedNodeView() const;
+    // View of the live document root (m_currentRoot or the arena root).
+    std::optional<jsontitan::core::NodeView> liveRootView() const;
     void setModified(bool modified);
     bool ensureEditableRoot();
     bool confirmDiscardChanges();

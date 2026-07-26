@@ -195,12 +195,17 @@ auto computePath(const std::shared_ptr<const JsonNode>& root,
     return std::nullopt;
 }
 
-auto countDescendants(const JsonNode& node) -> std::size_t {
+auto countDescendants(NodeView node) -> std::size_t {
     std::size_t count = 0;
-    for (const auto& child : node.children) {
-        count += 1 + countDescendants(*child);
+    const std::size_t childCount = node.childCount();
+    for (std::size_t i = 0; i < childCount; ++i) {
+        count += 1 + countDescendants(node.child(i));
     }
     return count;
+}
+
+auto countDescendants(const JsonNode& node) -> std::size_t {
+    return countDescendants(NodeView(node));
 }
 
 } // namespace jsontitan::core

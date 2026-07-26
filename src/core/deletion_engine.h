@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/json_node.h"
+#include "core/node_view.h"
 
 namespace jsontitan::core {
 
@@ -27,7 +28,9 @@ auto computePath(const std::shared_ptr<const JsonNode>& root,
                  const JsonNode* target)
     -> std::optional<NodePath>;
 
-// Utility: count all descendants of a node (recursive).
+// Utility: count all descendants of a node (recursive), over either tree
+// backing. The JsonNode overload forwards to the NodeView implementation.
+auto countDescendants(NodeView node) -> std::size_t;
 auto countDescendants(const JsonNode& node) -> std::size_t;
 
 } // namespace jsontitan::core

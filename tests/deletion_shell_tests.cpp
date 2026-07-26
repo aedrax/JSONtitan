@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 
 #include "core/json_node.h"
+#include "core/node_view.h"
+#include "core/parse_orchestrator.h"
 #include "shell/save_handler.h"
 
 using namespace jsontitan::core;
@@ -111,6 +113,37 @@ TEST(SaveHandler, OriginalUnchangedOnFailure) {
     file.close();
 
     EXPECT_EQ(content, QByteArray("{\"original\": true}\n"));
+}
+
+// Test 4: Saving an arena-backed tree writes byte-identical output to saving
+// the equivalent JsonNode tree (SaveHandler now streams over NodeView).
+TEST(SaveHandler, ArenaBackedSaveMatchesJsonNodeSave) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    const std::string json =
+        R"({"name":"Alice","age":30,"tags":["a","b"],"meta":{"ok":true,"n":null}})";
+
+    auto arenaResult = parseBuffer(std::string(json), ParseBufferOptions{});
+    ASSERT_TRUE(arenaResult.ok());
+    auto jsonRoot = arenaResult.root->toJsonNode();
+    ASSERT_NE(jsonRoot, nullptr);
+
+    QString arenaPath = tempDir.path() + "/arena.json";
+    QString legacyPath = tempDir.path() + "/legacy.json";
+
+    ASSERT_TRUE(SaveHandler::saveToFile(NodeView(*arenaResult.root), arenaPath).isEmpty());
+    ASSERT_TRUE(SaveHandler::saveToFile(*jsonRoot, legacyPath).isEmpty());
+
+    QFile arenaFile(arenaPath);
+    QFile legacyFile(legacyPath);
+    ASSERT_TRUE(arenaFile.open(QIODevice::ReadOnly));
+    ASSERT_TRUE(legacyFile.open(QIODevice::ReadOnly));
+    QByteArray arenaBytes = arenaFile.readAll();
+    QByteArray legacyBytes = legacyFile.readAll();
+
+    EXPECT_FALSE(arenaBytes.isEmpty());
+    EXPECT_EQ(arenaBytes, legacyBytes);
 }
 
 int main(int argc, char** argv) {

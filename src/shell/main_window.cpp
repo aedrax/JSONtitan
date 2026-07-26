@@ -172,7 +172,9 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
         m_treeView->show();
         m_noResultsLabel->hide();
 
-        int nodeCount = unionRoot ? countNodes(*unionRoot) : 0;
+        int nodeCount = unionRoot
+            ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
+            : 0;
         updateStatusBar(m_currentFileName, nodeCount);
 
         m_detailPanel->clear();
@@ -452,64 +454,37 @@ void MainWindow::updateStatusBar(const QString& fileName, int nodeCount) {
     m_statusLabel->setText(tr("%1 — %2 nodes").arg(fileName).arg(nodeCount));
 }
 
-int MainWindow::countNodes(const jsontitan::core::JsonNode& node) const {
-    int count = 1;
-    for (const auto& child : node.children) {
-        count += countNodes(*child);
-    }
-    return count;
-}
-
-int MainWindow::countArenaNodes(const jsontitan::core::ArenaJsonNode& node) const {
-    int count = 1;
-    for (std::size_t i = 0; i < node.childCount; ++i) {
-        count += countArenaNodes(*node.children[i]);
-    }
-    return count;
-}
-
-std::shared_ptr<const jsontitan::core::JsonNode> MainWindow::getSelectedNode() const {
+std::optional<jsontitan::core::NodeView> MainWindow::selectedNodeView() const {
     QModelIndex proxyIndex = m_treeView->currentIndex();
     if (!proxyIndex.isValid()) {
-        return m_currentRoot;
+        return std::nullopt;
     }
 
-    // Map proxy index back to source model to get the JsonNode
     QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
     if (!sourceIndex.isValid()) {
-        return m_currentRoot;
+        return std::nullopt;
     }
 
-    // Get the raw JsonNode pointer from the TreeModel
-    const jsontitan::core::JsonNode* nodePtr = m_treeModel->jsonNodeForIndex(sourceIndex);
-    if (!nodePtr) {
-        return m_currentRoot;
+    // The model hands out raw pointers into whichever backing is live; a
+    // NodeView over them is valid as long as that backing (m_currentRoot or
+    // m_arenaResult) is kept alive, which MainWindow guarantees.
+    if (const auto* jn = m_treeModel->jsonNodeForIndex(sourceIndex)) {
+        return jsontitan::core::NodeView(*jn);
     }
+    if (const auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
+        return jsontitan::core::NodeView(*an);
+    }
+    return std::nullopt;
+}
 
-    // Find the shared_ptr that owns this node by walking the tree
-    std::function<std::shared_ptr<const jsontitan::core::JsonNode>(
-        const std::shared_ptr<const jsontitan::core::JsonNode>&,
-        const jsontitan::core::JsonNode*)> findNode;
-
-    findNode = [&findNode](const std::shared_ptr<const jsontitan::core::JsonNode>& current,
-                           const jsontitan::core::JsonNode* target)
-        -> std::shared_ptr<const jsontitan::core::JsonNode> {
-        if (current.get() == target) {
-            return current;
-        }
-        for (const auto& child : current->children) {
-            auto result = findNode(child, target);
-            if (result) {
-                return result;
-            }
-        }
-        return nullptr;
-    };
-
+std::optional<jsontitan::core::NodeView> MainWindow::liveRootView() const {
     if (m_currentRoot) {
-        return findNode(m_currentRoot, nodePtr);
+        return jsontitan::core::NodeView(*m_currentRoot);
     }
-    return m_currentRoot;
+    if (m_arenaResult && m_arenaResult->root) {
+        return jsontitan::core::NodeView(*m_arenaResult->root);
+    }
+    return std::nullopt;
 }
 
 // --- Task 16.2: File Open and background parsing ---
@@ -555,8 +530,9 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     m_treeView->show();
     m_noResultsLabel->hide();
 
-    // Update status bar
-    int nodeCount = result && result->root ? countArenaNodes(*result->root) : 0;
+    // Update status bar: the parse pipeline already counted the nodes, so a
+    // full-tree walk here would be pure waste.
+    int nodeCount = result && result->root ? static_cast<int>(result->nodeCount) : 0;
     updateStatusBar(m_currentFileName, nodeCount);
 
     // Clear detail panel and search
@@ -784,7 +760,9 @@ void MainWindow::onUnionFiles() {
     m_treeView->show();
     m_noResultsLabel->hide();
 
-    int nodeCount = unionRoot ? countNodes(*unionRoot) : 0;
+    int nodeCount = unionRoot
+        ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
+        : 0;
     updateStatusBar(m_currentFileName, nodeCount);
 
     m_detailPanel->clear();
@@ -828,7 +806,9 @@ void MainWindow::onRemoveFromUnion() {
     m_treeModel->setRootNode(newRoot);
     m_filterProxy->clearFilter();
 
-    int nodeCount = newRoot ? countNodes(*newRoot) : 0;
+    int nodeCount = newRoot
+        ? static_cast<int>(1 + jsontitan::core::countDescendants(*newRoot))
+        : 0;
     updateStatusBar(m_currentFileName, nodeCount);
 
     m_detailPanel->clear();
@@ -837,40 +817,12 @@ void MainWindow::onRemoveFromUnion() {
 // --- Task 16.5: Export actions and detail panel ---
 
 void MainWindow::onExportCsv() {
-    // Check for arena-backed case first
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    QModelIndex sourceIndex = proxyIndex.isValid()
-        ? m_filterProxy->mapToSource(proxyIndex)
-        : QModelIndex();
-
-    const jsontitan::core::ArenaJsonNode* arenaNode = nullptr;
-    if (sourceIndex.isValid()) {
-        arenaNode = m_treeModel->arenaNodeForIndex(sourceIndex);
-    } else if (m_arenaResult && m_arenaResult->root) {
-        arenaNode = m_arenaResult->root;
+    // Export the selection if one resolves, otherwise the live root —
+    // uniformly over both backings via NodeView (no deep copies).
+    auto node = selectedNodeView();
+    if (!node) {
+        node = liveRootView();
     }
-
-    if (arenaNode) {
-        // Arena-backed path: convert only the selected subtree on-demand
-        QString filePath = QFileDialog::getSaveFileName(
-            this, tr("Export CSV"), QString(),
-            tr("CSV Files (*.csv);;All Files (*)"));
-
-        if (filePath.isEmpty()) {
-            return;
-        }
-
-        QString error = ExportHandler::exportCsvToFile(*arenaNode, filePath);
-        if (!error.isEmpty()) {
-            QMessageBox::critical(this, tr("Export Error"), error);
-        } else {
-            m_statusLabel->setText(tr("Exported CSV to %1").arg(QFileInfo(filePath).fileName()));
-        }
-        return;
-    }
-
-    // Legacy JsonNode path
-    auto node = getSelectedNode();
     if (!node) {
         QMessageBox::information(this, tr("Export CSV"),
                                  tr("No data to export. Please open a file first."));
@@ -894,40 +846,12 @@ void MainWindow::onExportCsv() {
 }
 
 void MainWindow::onExportXml() {
-    // Check for arena-backed case first
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    QModelIndex sourceIndex = proxyIndex.isValid()
-        ? m_filterProxy->mapToSource(proxyIndex)
-        : QModelIndex();
-
-    const jsontitan::core::ArenaJsonNode* arenaNode = nullptr;
-    if (sourceIndex.isValid()) {
-        arenaNode = m_treeModel->arenaNodeForIndex(sourceIndex);
-    } else if (m_arenaResult && m_arenaResult->root) {
-        arenaNode = m_arenaResult->root;
+    // Export the selection if one resolves, otherwise the live root —
+    // uniformly over both backings via NodeView (no deep copies).
+    auto node = selectedNodeView();
+    if (!node) {
+        node = liveRootView();
     }
-
-    if (arenaNode) {
-        // Arena-backed path: convert only the selected subtree on-demand
-        QString filePath = QFileDialog::getSaveFileName(
-            this, tr("Export XML"), QString(),
-            tr("XML Files (*.xml);;All Files (*)"));
-
-        if (filePath.isEmpty()) {
-            return;
-        }
-
-        QString error = ExportHandler::exportXmlToFile(*arenaNode, filePath);
-        if (!error.isEmpty()) {
-            QMessageBox::critical(this, tr("Export Error"), error);
-        } else {
-            m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
-        }
-        return;
-    }
-
-    // Legacy JsonNode path
-    auto node = getSelectedNode();
     if (!node) {
         QMessageBox::information(this, tr("Export XML"),
                                  tr("No data to export. Please open a file first."));
@@ -951,38 +875,24 @@ void MainWindow::onExportXml() {
 }
 
 void MainWindow::onTreeSelectionChanged() {
-    auto node = getSelectedNode();
-    if (node) {
-        // Legacy path (unchanged)
-        jsontitan::core::PrettyPrintOptions opts;
-        opts.maxOutputSize = 65536;  // 64 KB limit
-
-        auto tokenResult = jsontitan::core::emitTokens(*node, opts);
-        jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
+    // Emit tokens directly over whichever backing the selection resolves to —
+    // no toJsonNode() deep copy for arena-backed nodes.
+    auto node = selectedNodeView();
+    if (!node && m_currentRoot) {
+        // Legacy behavior: an unresolved selection over a JsonNode-backed
+        // tree falls back to showing the root.
+        node = jsontitan::core::NodeView(*m_currentRoot);
+    }
+    if (!node) {
+        m_detailPanel->clear();
         return;
     }
 
-    // Arena fallback path
-    if (m_arenaResult) {
-        QModelIndex proxyIndex = m_treeView->currentIndex();
-        if (proxyIndex.isValid()) {
-            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-            const jsontitan::core::ArenaJsonNode* arenaNode =
-                m_treeModel->arenaNodeForIndex(sourceIndex);
-            if (arenaNode) {
-                auto jsonNode = arenaNode->toJsonNode();
-                jsontitan::core::PrettyPrintOptions opts;
-                opts.maxOutputSize = 65536;  // 64 KB limit
+    jsontitan::core::PrettyPrintOptions opts;
+    opts.maxOutputSize = 65536;  // 64 KB limit
 
-                auto tokenResult = jsontitan::core::emitTokens(*jsonNode, opts);
-                jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
-                return;
-            }
-        }
-    }
-
-    // No node resolved from either path
-    m_detailPanel->clear();
+    auto tokenResult = jsontitan::core::emitTokens(*node, opts);
+    jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
 }
 
 // --- Helper: Convert arena tree to editable JsonNode tree ---
@@ -997,10 +907,15 @@ bool MainWindow::ensureEditableRoot() {
     }
 
     // Convert the arena tree to a JsonNode tree (deep copy)
-    // Do NOT reset the tree model here — callers that modify the tree
-    // will call setRootNode() themselves with the new tree.
     m_currentRoot = m_arenaResult->root->toJsonNode();
     m_arenaResult.reset();
+
+    // Audit D-10: switch the model to the new backing in the same operation.
+    // Without this, the model keeps dangling arena pointers between the
+    // conversion and the caller's own setRootNode(). The deletion path calls
+    // setRootNode() again with the post-delete tree — resetting the model
+    // twice is accepted here (correctness over elegance).
+    m_treeModel->setRootNode(m_currentRoot);
 
     return true;
 }
@@ -1087,9 +1002,9 @@ void MainWindow::onDeleteNode() {
     } else if (auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
         directChildCount = an->childCount;
         if (directChildCount > 10) {
-            // Convert to JsonNode just to count (or count arena nodes directly)
-            auto tempNode = an->toJsonNode();
-            descendantCount = jsontitan::core::countDescendants(*tempNode);
+            // Count directly over the arena backing — no deep copy.
+            descendantCount =
+                jsontitan::core::countDescendants(jsontitan::core::NodeView(*an));
         }
     }
 
@@ -1246,12 +1161,10 @@ bool MainWindow::confirmDiscardChanges() {
 // --- Task 8.2: Save implementation ---
 
 void MainWindow::onSave() {
-    if (!m_currentRoot && !m_arenaResult) {
-        return;
-    }
-
-    // Convert arena tree to editable JsonNode tree if needed
-    if (!ensureEditableRoot()) {
+    // Save streams straight from whichever backing is live — no deep copy of
+    // arena-backed trees into JsonNode anymore.
+    auto root = liveRootView();
+    if (!root) {
         return;
     }
 
@@ -1261,7 +1174,7 @@ void MainWindow::onSave() {
         return;
     }
 
-    QString error = SaveHandler::saveToFile(*m_currentRoot, m_currentFilePath);
+    QString error = SaveHandler::saveToFile(*root, m_currentFilePath);
     if (error.isEmpty()) {
         setModified(false);
     } else {
@@ -1274,12 +1187,10 @@ void MainWindow::onSave() {
 // --- Task 8.3: Save As implementation ---
 
 void MainWindow::onSaveAs() {
-    if (!m_currentRoot && !m_arenaResult) {
-        return;
-    }
-
-    // Convert arena tree to editable JsonNode tree if needed
-    if (!ensureEditableRoot()) {
+    // Save streams straight from whichever backing is live — no deep copy of
+    // arena-backed trees into JsonNode anymore.
+    auto root = liveRootView();
+    if (!root) {
         return;
     }
 
@@ -1304,7 +1215,7 @@ void MainWindow::onSaveAs() {
         }
     }
 
-    QString error = SaveHandler::saveToFile(*m_currentRoot, chosenPath);
+    QString error = SaveHandler::saveToFile(*root, chosenPath);
     if (error.isEmpty()) {
         m_currentFilePath = chosenPath;
         m_currentFileName = QFileInfo(chosenPath).fileName();

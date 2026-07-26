@@ -1,28 +1,41 @@
 #include "shell/export_handler.h"
 
-#include "core/arena_json_node.h"
-#include "core/csv_exporter.h"
-#include "core/xml_exporter.h"
+#include "core/stream_export.h"
 
 #include <QSaveFile>
 
+#include <functional>
+
 namespace {
 
-// Writes content to filePath via QSaveFile: the target is only replaced after
-// the full write succeeds, so a failure never destroys an existing file.
-auto writeAtomically(const std::string& content, const QString& filePath) -> QString {
+// Streams the given export function's output to filePath via QSaveFile: the
+// target is only replaced after the full write succeeds, so a failure never
+// destroys an existing file. A non-write failure (e.g. CSV validation error)
+// is returned verbatim.
+auto streamAtomically(
+    const std::function<jsontitan::core::StreamExportResult(
+        const jsontitan::core::ByteSink&)>& doExport,
+    const QString& filePath) -> QString {
     QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
         return QStringLiteral("Failed to open file for writing: %1 (%2)")
             .arg(filePath, file.errorString());
     }
 
-    auto bytesWritten = file.write(content.data(),
-                                   static_cast<qint64>(content.size()));
-    if (bytesWritten != static_cast<qint64>(content.size())
-        || file.error() != QFileDevice::NoError) {
-        return QStringLiteral("Failed to write to file: %1 (%2)")
-            .arg(filePath, file.errorString());
+    jsontitan::core::ByteSink sink = [&file](std::string_view chunk) {
+        auto written = file.write(chunk.data(), static_cast<qint64>(chunk.size()));
+        return written == static_cast<qint64>(chunk.size())
+            && file.error() == QFileDevice::NoError;
+    };
+
+    auto result = doExport(sink);
+    if (!result.ok) {
+        if (file.error() != QFileDevice::NoError) {
+            return QStringLiteral("Failed to write to file: %1 (%2)")
+                .arg(filePath, file.errorString());
+        }
+        // Validation failure (e.g. CSV shape error): report the core message.
+        return QString::fromStdString(result.error);
     }
 
     if (!file.commit()) {
@@ -35,44 +48,21 @@ auto writeAtomically(const std::string& content, const QString& filePath) -> QSt
 
 } // namespace
 
-auto ExportHandler::exportCsvToFile(const jsontitan::core::JsonNode& node,
+auto ExportHandler::exportCsvToFile(jsontitan::core::NodeView node,
                                     const QString& filePath) -> QString {
-    // Call the pure core CSV exporter
-    auto result = jsontitan::core::exportCsv(node);
-
-    // Check if the core returned an error
-    if (auto* error = std::get_if<jsontitan::core::CsvError>(&result)) {
-        return QString::fromStdString(error->description);
-    }
-
-    // Write the CSV content to the file (atomic: commit() replaces the target
-    // only after the full write succeeded).
-    const auto& csvContent = std::get<std::string>(result);
-    return writeAtomically(csvContent, filePath);
+    return streamAtomically(
+        [node](const jsontitan::core::ByteSink& sink) {
+            return jsontitan::core::exportCsvStream(node, sink);
+        },
+        filePath);
 }
 
-auto ExportHandler::exportXmlToFile(const jsontitan::core::JsonNode& node,
+auto ExportHandler::exportXmlToFile(jsontitan::core::NodeView node,
                                     const QString& filePath,
                                     const std::string& rootElementName) -> QString {
-    // Call the pure core XML exporter
-    std::string xmlContent = jsontitan::core::exportXml(node, rootElementName);
-
-    return writeAtomically(xmlContent, filePath);
-}
-
-auto ExportHandler::exportCsvToFile(const jsontitan::core::ArenaJsonNode& node,
-                                    const QString& filePath) -> QString {
-    // Convert only the selected subtree on-demand (not the full tree).
-    // This is acceptable because exports are user-initiated on small selections.
-    auto jsonNode = node.toJsonNode();
-    return exportCsvToFile(*jsonNode, filePath);
-}
-
-auto ExportHandler::exportXmlToFile(const jsontitan::core::ArenaJsonNode& node,
-                                    const QString& filePath,
-                                    const std::string& rootElementName) -> QString {
-    // Convert only the selected subtree on-demand (not the full tree).
-    // This is acceptable because exports are user-initiated on small selections.
-    auto jsonNode = node.toJsonNode();
-    return exportXmlToFile(*jsonNode, filePath, rootElementName);
+    return streamAtomically(
+        [node, &rootElementName](const jsontitan::core::ByteSink& sink) {
+            return jsontitan::core::exportXmlStream(node, sink, rootElementName);
+        },
+        filePath);
 }
