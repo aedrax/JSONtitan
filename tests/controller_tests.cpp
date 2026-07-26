@@ -166,7 +166,7 @@ TEST(ModelPathsTest, IndexForPathResolvesEveryNode) {
 // Round-trip property as it actually holds today: the walk drops the
 // top-level segment (see note above), so
 //   nodePathForIndex(indexForPath(path)) == path minus its first segment.
-TEST(ModelPathsTest, RoundTripDropsTopLevelSegment) {
+TEST(ModelPathsTest, PathIndexRoundTrip) {
     auto root = makeRoundTripTree();
 
     TreeModel model;
@@ -181,8 +181,7 @@ TEST(ModelPathsTest, RoundTripDropsTopLevelSegment) {
         ASSERT_TRUE(index.isValid());
         NodePath roundTripped =
             jsontitan::shell::nodePathForIndex(model, index);
-        NodePath expected(path.begin() + 1, path.end());
-        EXPECT_EQ(roundTripped, expected);
+        EXPECT_EQ(roundTripped, path);
     }
 }
 

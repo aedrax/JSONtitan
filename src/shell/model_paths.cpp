@@ -9,7 +9,11 @@ auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
     -> jsontitan::core::NodePath {
     jsontitan::core::NodePath path;
     QModelIndex walkIndex = sourceIndex;
-    while (walkIndex.isValid() && walkIndex.parent().isValid()) {
+    // Walk all the way up INCLUDING the top-level row: its parent is the
+    // invalid index, which nodeForIndex-style accessors resolve to the JSON
+    // root. (Stopping at parent().isValid() used to drop the top-level
+    // segment, truncating every depth>=2 path.)
+    while (walkIndex.isValid()) {
         QModelIndex parentIndex = walkIndex.parent();
         // Determine if the parent is an Object or Array
         jsontitan::core::NodeType parentType = jsontitan::core::NodeType::Object;
