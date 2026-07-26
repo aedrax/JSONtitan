@@ -1,10 +1,12 @@
 #include "shell/main_window.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
@@ -21,6 +23,7 @@
 #include <variant>
 
 #include "core/parse_orchestrator.h"
+#include "shell/clipboard_utils.h"
 #include "shell/drop_validator.h"
 #include "shell/model_paths.h"
 #include "shell/wait_cursor.h"
@@ -323,6 +326,7 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>Return</b></td><td>Next match (in search bar)</td></tr>"
            "<tr><td><b>F3</b></td><td>Next match</td></tr>"
            "<tr><td><b>Shift+F3</b></td><td>Previous match</td></tr>"
+           "<tr><td><b>Ctrl+C</b></td><td>Copy selected value (tree)</td></tr>"
            "<tr><td><b>Del</b></td><td>Delete selected node</td></tr>"
            "<tr><td><b>Esc</b></td><td>Cancel load in progress</td></tr>"
            "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>");
@@ -404,6 +408,38 @@ void MainWindow::setupCentralWidget() {
         // popup() menus are not deleted on dismissal; without this attribute
         // every right-click would leak a QMenu (and its actions) until exit.
         menu->setAttribute(Qt::WA_DeleteOnClose);
+
+        // Clipboard actions act on the CURRENT selection (same convention as
+        // Delete below); enablement follows the row under the cursor.
+        QModelIndex clickedIndex = m_treeView->indexAt(pos);
+        auto* copyValueAction = menu->addAction(tr("Copy Value"));
+        copyValueAction->setShortcut(QKeySequence::Copy);
+        copyValueAction->setEnabled(clickedIndex.isValid());
+        connect(copyValueAction, &QAction::triggered,
+                this, &MainWindow::onCopyValue);
+
+        auto* copyKeyAction = menu->addAction(tr("Copy Key"));
+        // Only object members carry keys; array elements and the root don't.
+        bool clickedHasKey = false;
+        if (clickedIndex.isValid()) {
+            QModelIndex clickedSource = m_filterProxy->mapToSource(clickedIndex);
+            if (clickedSource.isValid()) {
+                auto clickedPath = jsontitan::shell::nodePathForIndex(
+                    *m_treeModel, clickedSource);
+                clickedHasKey =
+                    jsontitan::shell::keyClipboardText(clickedPath).has_value();
+            }
+        }
+        copyKeyAction->setEnabled(clickedHasKey);
+        connect(copyKeyAction, &QAction::triggered,
+                this, &MainWindow::onCopyKey);
+
+        auto* copyPathAction = menu->addAction(tr("Copy Path"));
+        copyPathAction->setEnabled(clickedIndex.isValid());
+        connect(copyPathAction, &QAction::triggered,
+                this, &MainWindow::onCopyPath);
+
+        menu->addSeparator();
         auto* exportCsvAction = menu->addAction(tr("Export as CSV..."));
         connect(exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
         auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
@@ -413,7 +449,7 @@ void MainWindow::setupCentralWidget() {
         auto* deleteAction = menu->addAction(tr("Delete"));
         // Every row is deletable: top-level rows are the root's children,
         // not the root (the root itself is never a selectable row).
-        QModelIndex proxyIndex = m_treeView->indexAt(pos);
+        QModelIndex proxyIndex = clickedIndex;
         if (!proxyIndex.isValid()) {
             deleteAction->setEnabled(false);
         }
@@ -446,6 +482,14 @@ void MainWindow::setupCentralWidget() {
         menu->popup(m_treeView->viewport()->mapToGlobal(pos));
     });
     treeLayout->addWidget(m_treeView);
+
+    // Ctrl+C over the tree copies the selected node's value. Scoped to the
+    // tree (WidgetWithChildrenShortcut) so the detail panel's own copy and
+    // the search bar's copy keep working when they have focus.
+    auto* copyShortcut = new QShortcut(QKeySequence::Copy, m_treeView);
+    copyShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(copyShortcut, &QShortcut::activated,
+            this, &MainWindow::onCopyValue);
 
     // "No results found" label (hidden by default)
     m_noResultsLabel = new QLabel(tr("No results found"), treeContainer);
@@ -785,6 +829,49 @@ void MainWindow::onExportXml() {
     } else {
         m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
     }
+}
+
+// --- Phase 5b commit 1: clipboard actions ---
+
+jsontitan::core::NodePath MainWindow::currentSelectionPath() const {
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    if (!proxyIndex.isValid()) {
+        return {};
+    }
+    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    if (!sourceIndex.isValid()) {
+        return {};
+    }
+    return jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
+}
+
+void MainWindow::onCopyValue() {
+    auto node = m_detailPresenter->selectedNodeView();
+    if (!node) {
+        return;
+    }
+    QGuiApplication::clipboard()->setText(
+        jsontitan::shell::valueClipboardText(*node));
+    statusBar()->showMessage(tr("Value copied"), 2000);
+}
+
+void MainWindow::onCopyKey() {
+    auto key = jsontitan::shell::keyClipboardText(currentSelectionPath());
+    if (!key) {
+        return;
+    }
+    QGuiApplication::clipboard()->setText(*key);
+    statusBar()->showMessage(tr("Key copied"), 2000);
+}
+
+void MainWindow::onCopyPath() {
+    QModelIndex proxyIndex = m_treeView->currentIndex();
+    if (!proxyIndex.isValid()) {
+        return;
+    }
+    QGuiApplication::clipboard()->setText(
+        jsontitan::shell::jsonPathText(currentSelectionPath()));
+    statusBar()->showMessage(tr("Path copied"), 2000);
 }
 
 // --- Task 7.1: Modified flag and title management ---

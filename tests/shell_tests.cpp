@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
+#include <QClipboard>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -10,6 +11,7 @@
 #include "core/json_node.h"
 #include "core/search_engine.h"
 #include "core/xml_exporter.h"
+#include "shell/clipboard_utils.h"
 #include "shell/document_session.h"
 #include "shell/drop_validator.h"
 #include "shell/export_handler.h"
@@ -2422,6 +2424,94 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Phase 5b commit 1: copy key / value / path to clipboard
+// ---------------------------------------------------------------------------
+
+class ClipboardUtilsTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testJsonPathFormatting() {
+        using jsontitan::core::NodePath;
+        namespace sh = jsontitan::shell;
+
+        // Root
+        QCOMPARE(sh::jsonPathText(NodePath{}), QString("$"));
+
+        // Bare keys use dot notation, indices use brackets.
+        NodePath simple{std::string("user"), std::size_t(3),
+                        std::string("name_1")};
+        QCOMPARE(sh::jsonPathText(simple), QString("$.user[3].name_1"));
+
+        // Non-bare keys are bracket-quoted with escaping.
+        NodePath quoted{std::string("first-name"), std::string("0abc"),
+                        std::string("it's"), std::string("back\\slash"),
+                        std::string("")};
+        QCOMPARE(sh::jsonPathText(quoted),
+                 QString("$['first-name']['0abc']['it\\'s']"
+                         "['back\\\\slash']['']"));
+
+        // Leading underscore is bare-safe.
+        NodePath underscore{std::string("_priv")};
+        QCOMPARE(sh::jsonPathText(underscore), QString("$._priv"));
+    }
+
+    void testValueClipboardText() {
+        namespace sh = jsontitan::shell;
+
+        auto str = JsonNode::makeString("k", "hello");
+        QCOMPARE(sh::valueClipboardText(*str), QString("hello"));
+
+        auto num = JsonNode::makeNumber("k", "-3.5");
+        QCOMPARE(sh::valueClipboardText(*num), QString("-3.5"));
+
+        auto boolean = JsonNode::makeBool("k", true);
+        QCOMPARE(sh::valueClipboardText(*boolean), QString("true"));
+
+        auto null = JsonNode::makeNull("k");
+        QCOMPARE(sh::valueClipboardText(*null), QString("null"));
+
+        // Containers: compact JSON of the subtree, no trailing newline.
+        auto container = JsonNode::makeObject("", {
+            JsonNode::makeArray("a", {
+                JsonNode::makeNumber("", "1"),
+                JsonNode::makeBool("", true),
+                JsonNode::makeNull("")
+            })
+        });
+        QCOMPARE(sh::valueClipboardText(*container),
+                 QString("{\"a\":[1,true,null]}"));
+    }
+
+    void testKeyClipboardText() {
+        using jsontitan::core::NodePath;
+        namespace sh = jsontitan::shell;
+
+        // Object member: key of the last segment.
+        NodePath keyed{std::string("outer"), std::string("inner")};
+        auto key = sh::keyClipboardText(keyed);
+        QVERIFY(key.has_value());
+        QCOMPARE(*key, QString("inner"));
+
+        // Array element: no key.
+        NodePath indexed{std::string("items"), std::size_t(0)};
+        QVERIFY(!sh::keyClipboardText(indexed).has_value());
+
+        // Root: no key.
+        QVERIFY(!sh::keyClipboardText(NodePath{}).has_value());
+    }
+
+    void testClipboardRoundTrip() {
+        // Offscreen platform: the clipboard is an in-process store, so the
+        // round-trip is deterministic.
+        QClipboard* clipboard = QGuiApplication::clipboard();
+        QVERIFY(clipboard != nullptr);
+        clipboard->setText(QStringLiteral("$.roundtrip[42]"));
+        QCOMPARE(clipboard->text(), QString("$.roundtrip[42]"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -2475,6 +2565,9 @@ int main(int argc, char* argv[]) {
 
     RecentFilesManagerIntegrationTest recentFilesTest;
     status |= QTest::qExec(&recentFilesTest, argc, argv);
+
+    ClipboardUtilsTest clipboardUtilsTest;
+    status |= QTest::qExec(&clipboardUtilsTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);

@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "core/arena_json_node.h"
+#include "core/deletion_engine.h"
 #include "core/json_node.h"
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
@@ -69,6 +70,9 @@ private slots:
     void onOpenFile();
     void onExportCsv();
     void onExportXml();
+    void onCopyValue();
+    void onCopyKey();
+    void onCopyPath();
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
     void onRecentFileSelected(const QString& filePath);
@@ -95,6 +99,9 @@ private:
     // parse, hides the progress UI, and keeps the previous document (parse
     // results only install on completion).
     void cancelActiveLoad();
+
+    // NodePath of the tree view's current selection ({} when none).
+    jsontitan::core::NodePath currentSelectionPath() const;
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
