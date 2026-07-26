@@ -241,15 +241,10 @@ void MainWindow::setupCentralWidget() {
 
         menu->addSeparator();
         auto* deleteAction = menu->addAction(tr("Delete"));
-        // Disable Delete when root node is selected (no parent index)
+        // Every row is deletable: top-level rows are the root's children,
+        // not the root (the root itself is never a selectable row).
         QModelIndex proxyIndex = m_treeView->indexAt(pos);
-        if (proxyIndex.isValid()) {
-            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-            if (!sourceIndex.parent().isValid()) {
-                // This is the root node — disable delete
-                deleteAction->setEnabled(false);
-            }
-        } else {
+        if (!proxyIndex.isValid()) {
             deleteAction->setEnabled(false);
         }
         connect(deleteAction, &QAction::triggered,

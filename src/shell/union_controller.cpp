@@ -161,6 +161,7 @@ void UnionController::removeFromUnion() {
     auto newRoot = jsontitan::core::removeFromUnion(*m_session->currentRoot(), filenameKey);
     m_searchController->invalidate();
     m_session->replaceJsonRoot(newRoot);
+    m_session->setModified(true);
     m_filterProxy->clearFilter();
 
     int nodeCount = newRoot

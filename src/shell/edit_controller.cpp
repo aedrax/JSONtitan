@@ -42,10 +42,10 @@ void EditController::deleteSelectedNode() {
         return;
     }
 
-    // Guard: no-op if root is selected (no parent in source model)
-    if (!sourceIndex.parent().isValid()) {
-        return;
-    }
+    // Note: top-level rows are the root's direct children, not the root
+    // itself (the root is the model's invalid index and never selectable),
+    // so every valid index is deletable. The path.empty() check below is
+    // the actual root guard.
 
     // Compute the NodePath by walking up the QModelIndex parent chain.
     // This works regardless of whether the model is arena-backed or JsonNode-backed.
