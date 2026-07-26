@@ -3,6 +3,7 @@
 set(SHELL_SOURCES
     main_window.cpp
     document_session.cpp
+    edit_controller.cpp
     model_paths.cpp
     search_controller.cpp
     tree_model.cpp

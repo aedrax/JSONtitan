@@ -56,6 +56,15 @@ MainWindow::MainWindow(QWidget* parent)
                              m_searchErrorLabel, m_noResultsLabel, m_treeView},
         m_treeModel, m_filterProxy, m_session, this);
 
+    // Document-mutation flows (delete / save / unsaved-changes prompt)
+    m_editController = new EditController(this, m_treeView, m_treeModel,
+                                          m_filterProxy, m_session,
+                                          m_searchController, this);
+    connect(m_saveAction, &QAction::triggered,
+            m_editController, &EditController::save);
+    connect(m_saveAsAction, &QAction::triggered,
+            m_editController, &EditController::saveAs);
+
     showWelcomeMessage();
 
     // Connect file loader signals
@@ -199,11 +208,9 @@ void MainWindow::setupMenuBar() {
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
     m_saveAction->setShortcut(QKeySequence::Save);
-    connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
 
     m_saveAsAction = fileMenu->addAction(tr("Save &As..."));
     m_saveAsAction->setShortcut(QKeySequence::SaveAs);
-    connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
 
     fileMenu->addSeparator();
 
@@ -303,7 +310,8 @@ void MainWindow::setupCentralWidget() {
         } else {
             deleteAction->setEnabled(false);
         }
-        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteNode);
+        connect(deleteAction, &QAction::triggered,
+                m_editController, &EditController::deleteSelectedNode);
 
         if (m_session->isUnionMode()) {
             menu->addSeparator();
@@ -402,7 +410,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
         return;
     }
 
-    if (!confirmDiscardChanges()) {
+    if (!m_editController->confirmDiscardChanges()) {
         return;
     }
 
@@ -465,7 +473,7 @@ std::optional<jsontitan::core::NodeView> MainWindow::selectedNodeView() const {
 // --- Task 16.2: File Open and background parsing ---
 
 void MainWindow::onOpenFile() {
-    if (!confirmDiscardChanges()) {
+    if (!m_editController->confirmDiscardChanges()) {
         return;
     }
 
@@ -539,7 +547,7 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
         return;
     }
 
-    if (!confirmDiscardChanges()) {
+    if (!m_editController->confirmDiscardChanges()) {
         return;
     }
 
@@ -553,7 +561,7 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
 // --- Task 16.4: Multi-file union ---
 
 void MainWindow::onUnionFiles() {
-    if (!confirmDiscardChanges()) {
+    if (!m_editController->confirmDiscardChanges()) {
         return;
     }
 
@@ -771,133 +779,11 @@ void MainWindow::updateWindowTitle(bool modified) {
     setWindowTitle(title);
 }
 
-// --- Task 6.2: Delete node implementation ---
-
-void MainWindow::onDeleteNode() {
-    // Guard: no-op if nothing loaded at all
-    if (!m_session->currentRoot() && !m_session->arenaResult()) {
-        return;
-    }
-
-    // Guard: no-op if no selection
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return;
-    }
-
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-    if (!sourceIndex.isValid()) {
-        return;
-    }
-
-    // Guard: no-op if root is selected (no parent in source model)
-    if (!sourceIndex.parent().isValid()) {
-        return;
-    }
-
-    // Compute the NodePath by walking up the QModelIndex parent chain.
-    // This works regardless of whether the model is arena-backed or JsonNode-backed.
-    jsontitan::core::NodePath path =
-        jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
-
-    if (path.empty()) {
-        return;
-    }
-
-    // Get child count for confirmation dialog (before conversion)
-    std::size_t directChildCount = 0;
-    std::size_t descendantCount = 0;
-    if (auto* jn = m_treeModel->jsonNodeForIndex(sourceIndex)) {
-        directChildCount = jn->children.size();
-        if (directChildCount > 10) {
-            descendantCount = jsontitan::core::countDescendants(*jn);
-        }
-    } else if (auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
-        directChildCount = an->childCount;
-        if (directChildCount > 10) {
-            // Count directly over the arena backing — no deep copy.
-            descendantCount =
-                jsontitan::core::countDescendants(jsontitan::core::NodeView(*an));
-        }
-    }
-
-    // Confirmation dialog if node has >10 direct children
-    if (directChildCount > 10) {
-        auto reply = QMessageBox::question(
-            this, tr("Confirm Deletion"),
-            tr("This node has %1 descendants. Are you sure you want to delete it?")
-                .arg(descendantCount),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
-        if (reply != QMessageBox::Yes) {
-            return;
-        }
-    }
-
-    // Remember the current position for selection restoration
-    int deletedRow = sourceIndex.row();
-    QModelIndex parentSourceIndex = sourceIndex.parent();
-
-    // Convert arena tree to editable JsonNode tree if needed
-    if (!m_session->ensureEditable()) {
-        return;
-    }
-
-    // Perform the deletion
-    auto newTree = jsontitan::core::deleteNode(m_session->currentRoot(), path);
-    if (!newTree) {
-        return;  // Shouldn't happen since we guard against root deletion
-    }
-    m_searchController->invalidate();
-    m_session->replaceJsonRoot(newTree);
-    m_filterProxy->clearFilter();
-
-    // Set modified flag
-    m_session->setModified(true);
-
-    // Restore selection: try next sibling, then previous sibling, then parent
-    // After model reset, we need to re-resolve the parent index
-    // The parent path is everything except the last segment
-    QModelIndex newParentIndex;  // invalid = root
-    if (path.size() > 1) {
-        jsontitan::core::NodePath parentPath(path.begin(), path.end() - 1);
-        newParentIndex =
-            jsontitan::shell::indexForPath(*m_treeModel, parentPath);
-        if (!newParentIndex.isValid()) {
-            // The parent could not be re-resolved; selecting deletedRow under
-            // the wrong (shallower) parent would highlight an unrelated node.
-            return;
-        }
-    }
-
-    // Ensure parent's children are fetched
-    while (m_treeModel->canFetchMore(newParentIndex)) {
-        m_treeModel->fetchMore(newParentIndex);
-    }
-
-    int parentRowCount = m_treeModel->rowCount(newParentIndex);
-    QModelIndex newSourceIndex;
-    if (deletedRow < parentRowCount) {
-        newSourceIndex = m_treeModel->index(deletedRow, 0, newParentIndex);
-    } else if (deletedRow > 0) {
-        newSourceIndex = m_treeModel->index(deletedRow - 1, 0, newParentIndex);
-    } else {
-        newSourceIndex = newParentIndex;
-    }
-
-    if (newSourceIndex.isValid()) {
-        QModelIndex newProxyIndex = m_filterProxy->mapFromSource(newSourceIndex);
-        if (newProxyIndex.isValid()) {
-            m_treeView->setCurrentIndex(newProxyIndex);
-        }
-    }
-}
-
 // --- Task 6.3: Key press event override ---
 
 void MainWindow::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Delete) {
-        onDeleteNode();
+        m_editController->deleteSelectedNode();
         return;
     }
     QMainWindow::keyPressEvent(event);
@@ -906,104 +792,9 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 // --- Task 7.2: Close event override ---
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (confirmDiscardChanges()) {
+    if (m_editController->confirmDiscardChanges()) {
         event->accept();
     } else {
         event->ignore();
-    }
-}
-
-// Returns true when it is safe to discard the current document: either there
-// are no unsaved changes, or the user chose Save (and it succeeded) or
-// Discard. Returns false when the user cancelled.
-bool MainWindow::confirmDiscardChanges() {
-    if (!m_session->modified()) {
-        return true;
-    }
-
-    auto reply = QMessageBox::question(
-        this, tr("Unsaved Changes"),
-        tr("The document has been modified.\nDo you want to save your changes?"),
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
-        QMessageBox::Save);
-
-    if (reply == QMessageBox::Save) {
-        onSave();
-        // If still modified after save attempt (e.g., user cancelled the
-        // save-as dialog or the write failed), don't discard.
-        return !m_session->modified();
-    }
-    return reply == QMessageBox::Discard;
-}
-
-// --- Task 8.2: Save implementation ---
-
-void MainWindow::onSave() {
-    // Save streams straight from whichever backing is live — no deep copy of
-    // arena-backed trees into JsonNode anymore.
-    auto root = m_session->rootView();
-    if (!root) {
-        return;
-    }
-
-    // If in union mode or no current file path, delegate to Save As
-    if (m_session->isUnionMode() || m_session->filePath().isEmpty()) {
-        onSaveAs();
-        return;
-    }
-
-    QString error = SaveHandler::saveToFile(*root, m_session->filePath());
-    if (error.isEmpty()) {
-        m_session->setModified(false);
-    } else {
-        QMessageBox::critical(this, tr("Save Error"),
-            tr("Failed to save to %1:\n\n%2")
-                .arg(m_session->filePath(), error));
-    }
-}
-
-// --- Task 8.3: Save As implementation ---
-
-void MainWindow::onSaveAs() {
-    // Save streams straight from whichever backing is live — no deep copy of
-    // arena-backed trees into JsonNode anymore.
-    auto root = m_session->rootView();
-    if (!root) {
-        return;
-    }
-
-    QString chosenPath = QFileDialog::getSaveFileName(
-        this, tr("Save As"), QString(),
-        tr("JSON Files (*.json)"));
-
-    if (chosenPath.isEmpty()) {
-        return;
-    }
-
-    // If file exists, prompt for overwrite confirmation
-    if (QFile::exists(chosenPath)) {
-        auto reply = QMessageBox::question(
-            this, tr("Overwrite File"),
-            tr("The file \"%1\" already exists.\nDo you want to overwrite it?")
-                .arg(QFileInfo(chosenPath).fileName()),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
-        if (reply != QMessageBox::Yes) {
-            return;
-        }
-    }
-
-    QString error = SaveHandler::saveToFile(*root, chosenPath);
-    if (error.isEmpty()) {
-        // Union mode is deliberately left unchanged (pre-extraction
-        // behavior: Save As never cleared it).
-        m_session->setFileIdentity(chosenPath,
-                                   QFileInfo(chosenPath).fileName(),
-                                   m_session->isUnionMode());
-        m_session->setModified(false);
-    } else {
-        QMessageBox::critical(this, tr("Save Error"),
-            tr("Failed to save to %1:\n\n%2")
-                .arg(chosenPath, error));
     }
 }

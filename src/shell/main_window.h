@@ -31,6 +31,7 @@
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
 #include "shell/document_session.h"
+#include "shell/edit_controller.h"
 #include "shell/export_handler.h"
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
@@ -66,9 +67,6 @@ private slots:
     void onRemoveFromUnion();
     void onRecentFileSelected(const QString& filePath);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
-    void onDeleteNode();
-    void onSave();
-    void onSaveAs();
 
 private:
     void setupMenuBar();
@@ -83,7 +81,6 @@ private:
     // no valid selection resolves to a node.
     std::optional<jsontitan::core::NodeView> selectedNodeView() const;
     void updateWindowTitle(bool modified);
-    bool confirmDiscardChanges();
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
@@ -120,6 +117,9 @@ private:
 
     // Search pipeline (debounce, worker thread, invalidation)
     SearchController* m_searchController = nullptr;
+
+    // Document-mutation flows (delete / save / unsaved-changes prompt)
+    EditController* m_editController = nullptr;
 
     // Syntax highlighting
     jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();
