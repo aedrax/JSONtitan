@@ -36,7 +36,11 @@ auto ArenaAllocator::allocate(std::size_t size, std::size_t alignment)
 
     // Current block is exhausted (or no blocks yet). Allocate a new one.
     std::size_t minSize = std::max(m_blockSize, size + alignment);
+    std::size_t blockCountBefore = m_blocks.size();
     allocateNewBlock(minSize);
+    if (m_blocks.size() == blockCountBefore) {
+        return nullptr;  // OOM: no new block could be allocated
+    }
 
     auto& block = m_blocks.back();
     std::size_t alignedOffset = alignUp(block.used, alignment);
@@ -85,7 +89,12 @@ auto ArenaAllocator::totalUsed() const noexcept -> std::size_t {
 
 void ArenaAllocator::allocateNewBlock(std::size_t minSize) {
     std::size_t capacity = std::max(m_blockSize, minSize);
-    auto data = std::make_unique<std::byte[]>(capacity);
+    // nothrow: allocation failure must be observable as a nullptr from
+    // allocate()/construct() (callers check), not a bad_alloc mid-parse.
+    std::unique_ptr<std::byte[]> data(new (std::nothrow) std::byte[capacity]);
+    if (!data) {
+        return;  // allocate() sees no usable block and returns nullptr
+    }
     m_blocks.push_back(ArenaBlock{
         .data = std::move(data),
         .capacity = capacity,

@@ -33,9 +33,14 @@ void ParserStateDeleter::operator()(ParserState* p) const noexcept {
 namespace {
 
 struct InternalParser {
+    // Maximum nesting depth (matches simdjson's default): without a cap,
+    // a small file of repeated '[' overflows the stack and crashes.
+    static constexpr int kMaxDepth = 1024;
+
     const std::string& input;
     std::size_t pos;
     std::size_t baseOffset; // Added to pos for error byte offsets
+    int depth = 0;          // Current recursion depth in parseValue
 
     explicit InternalParser(const std::string& src, std::size_t base = 0)
         : input(src), pos(0), baseOffset(base) {}
@@ -237,8 +242,15 @@ struct InternalParser {
 
         char c = peek();
 
-        if (c == '{') return parseObject(key);
-        if (c == '[') return parseArray(key);
+        if (c == '{' || c == '[') {
+            if (depth >= kMaxDepth) {
+                return {nullptr, makeError("Maximum nesting depth exceeded (1024)")};
+            }
+            ++depth;
+            auto result = (c == '{') ? parseObject(key) : parseArray(key);
+            --depth;
+            return result;
+        }
         if (c == '"') {
             auto [str, err] = parseString();
             if (err) return {nullptr, err};

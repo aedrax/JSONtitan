@@ -39,6 +39,11 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
 
     emit progressUpdated(0, requestId);
 
+    // Everything below allocates proportionally to the file size; a file
+    // larger than available memory must surface as an error dialog, not a
+    // std::terminate from an exception escaping the worker slot.
+    try {
+
     // Phase 1: Read file in chunks with incremental progress
     constexpr qint64 kReadChunkSize = 1024 * 1024;  // 1 MB chunks
     std::string input;
@@ -66,6 +71,19 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
             emit progressUpdated(progress, requestId);
             lastProgress = progress;
         }
+    }
+
+    // A short read is an I/O error (removable media, network share,
+    // permission revoked mid-read): parsing the truncated buffer would show
+    // a misleading parse error — or silently display a truncated document.
+    if (bytesRead != totalSize || file.error() != QFileDevice::NoError) {
+        emit parseError(QStringLiteral("Failed to read %1: %2")
+                            .arg(filePath,
+                                 file.error() != QFileDevice::NoError
+                                     ? file.errorString()
+                                     : QStringLiteral("unexpected end of file")),
+                        requestId);
+        return;
     }
 
     // Ensure we emit 50 at the end of read phase
@@ -116,6 +134,15 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
 
     emit progressUpdated(100, requestId);
     emit arenaParseComplete(std::move(sharedResult), requestId);
+
+    } catch (const std::bad_alloc&) {
+        emit parseError(QStringLiteral("Out of memory loading %1").arg(filePath),
+                        requestId);
+    } catch (const std::exception& e) {
+        emit parseError(QStringLiteral("Failed to load %1: %2")
+                            .arg(filePath, QString::fromUtf8(e.what())),
+                        requestId);
+    }
 }
 
 quint64 FileLoaderWorker::beginRequest() {

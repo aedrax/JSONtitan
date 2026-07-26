@@ -1208,6 +1208,24 @@ TEST(Parser, ErrorOnObjectNonStringKey) {
     EXPECT_TRUE(r.error.has_value());
 }
 
+TEST(Parser, ErrorOnExcessiveNestingDepthInsteadOfStackOverflow) {
+    // 100k nested arrays: without the depth cap this crashes via stack
+    // overflow instead of returning a ParseError.
+    std::string deep(100000, '[');
+    auto r = parseAll(deep);
+    ASSERT_TRUE(r.error.has_value());
+    EXPECT_NE(r.error->description.find("nesting depth"), std::string::npos);
+}
+
+TEST(Parser, DepthJustBelowLimitParses) {
+    constexpr int kDepth = 1000;  // below the 1024 cap
+    std::string nested;
+    nested.append(kDepth, '[');
+    nested.append(kDepth, ']');
+    auto r = parseAll(nested);
+    EXPECT_FALSE(r.error.has_value());
+}
+
 // ---------------------------------------------------------------------------
 // Task 4.2: Property 1 — Parse-Print Round Trip
 // Validates: Requirements 1.2, 2.1, 2.2, 2.3, 2.4
