@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
 #include <QVBoxLayout>
@@ -108,6 +109,25 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onArenaParseComplete);
     connect(m_fileLoader, &FileLoader::parseError,
             this, &MainWindow::onParseError);
+
+    // Restore persisted window state (saved in closeEvent). First run: the
+    // keys are absent and the resize(1200, 800) default above stands.
+    QSettings settings;
+    const QByteArray geometry =
+        settings.value(QStringLiteral("window/geometry")).toByteArray();
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    }
+    const QByteArray windowState =
+        settings.value(QStringLiteral("window/state")).toByteArray();
+    if (!windowState.isEmpty()) {
+        restoreState(windowState);
+    }
+    const QByteArray splitterState =
+        settings.value(QStringLiteral("window/splitterState")).toByteArray();
+    if (!splitterState.isEmpty()) {
+        m_mainSplitter->restoreState(splitterState);
+    }
 }
 
 MainWindow::~MainWindow() = default;
@@ -187,6 +207,18 @@ void MainWindow::setupMenuBar() {
 
     m_exportXmlAction = fileMenu->addAction(tr("Export &XML..."));
     connect(m_exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
+
+    fileMenu->addSeparator();
+
+    // Session-restore option: persisted, default ON. CLI arguments always
+    // take precedence over the restored file (see main.cpp).
+    m_reopenLastFileAction = fileMenu->addAction(tr("Reopen Last File on Startup"));
+    m_reopenLastFileAction->setCheckable(true);
+    m_reopenLastFileAction->setChecked(
+        QSettings().value(QStringLiteral("session/reopenLastFile"), true).toBool());
+    connect(m_reopenLastFileAction, &QAction::toggled, this, [](bool checked) {
+        QSettings().setValue(QStringLiteral("session/reopenLastFile"), checked);
+    });
 
     fileMenu->addSeparator();
 
@@ -288,7 +320,8 @@ void MainWindow::setupCentralWidget() {
     mainLayout->addWidget(m_searchErrorLabel);
 
     // Splitter for tree view and detail panel
-    auto* splitter = new QSplitter(Qt::Horizontal, centralWidget);
+    m_mainSplitter = new QSplitter(Qt::Horizontal, centralWidget);
+    auto* splitter = m_mainSplitter;
 
     // Tree view area with overlay labels
     auto* treeContainer = new QWidget(splitter);
@@ -540,7 +573,30 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     // Record file in recent files list
     if (!m_session->filePath().isEmpty()) {
         m_recentFilesManager->fileOpened(m_session->filePath());
+        // Remember the last successfully opened single file for session
+        // restore on the next launch (arena completions are always
+        // single-file loads; unions never take this path).
+        QSettings().setValue(QStringLiteral("session/lastFilePath"),
+                             m_session->filePath());
     }
+}
+
+void MainWindow::restoreLastSession() {
+    QSettings settings;
+    if (!settings.value(QStringLiteral("session/reopenLastFile"), true).toBool()) {
+        return;
+    }
+    const QString lastFile =
+        settings.value(QStringLiteral("session/lastFilePath")).toString();
+    // Broken or missing last file: fall back to the welcome screen silently.
+    if (lastFile.isEmpty() || !QFile::exists(lastFile)) {
+        return;
+    }
+
+    m_session->setFileIdentity(lastFile, QFileInfo(lastFile).fileName(), false);
+    showLoadProgress();
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
+    m_fileLoader->startParse(lastFile);
 }
 
 void MainWindow::onParseError(QString errorMessage) {
@@ -667,6 +723,11 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (m_editController->confirmDiscardChanges()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+        settings.setValue(QStringLiteral("window/state"), saveState());
+        settings.setValue(QStringLiteral("window/splitterState"),
+                          m_mainSplitter->saveState());
         event->accept();
     } else {
         event->ignore();

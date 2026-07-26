@@ -1426,6 +1426,134 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 4 commit 4: window state persistence and session restore
+// ---------------------------------------------------------------------------
+
+class SessionRestoreTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void init() {
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTestsSession");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void cleanup() {
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testReopenOptionDefaultOnAndPersisted() {
+        MainWindow window;
+
+        QMenu* fileMenu = nullptr;
+        for (auto* action : window.menuBar()->actions()) {
+            if (action->text().contains("File")) {
+                fileMenu = action->menu();
+                break;
+            }
+        }
+        QVERIFY(fileMenu != nullptr);
+
+        QAction* reopenAction = nullptr;
+        for (auto* action : fileMenu->actions()) {
+            if (action->text().contains("Reopen Last File")) {
+                reopenAction = action;
+                break;
+            }
+        }
+        QVERIFY2(reopenAction != nullptr,
+                 "File menu missing Reopen Last File on Startup option");
+        QVERIFY(reopenAction->isCheckable());
+        QVERIFY(reopenAction->isChecked());  // default ON
+
+        reopenAction->setChecked(false);
+        QSettings settings;
+        QVERIFY(!settings.value("session/reopenLastFile", true).toBool());
+    }
+
+    void testWindowStatePersistedOnCloseAndRestored() {
+        {
+            MainWindow window;
+            window.resize(987, 654);
+            window.close();  // closeEvent saves geometry/state/splitter
+        }
+
+        QSettings settings;
+        QVERIFY(!settings.value("window/geometry").toByteArray().isEmpty());
+        QVERIFY(!settings.value("window/splitterState").toByteArray().isEmpty());
+
+        MainWindow restored;
+        QCOMPARE(restored.size(), QSize(987, 654));
+    }
+
+    void testRestoreLastSessionMissingFileFallsBackToWelcome() {
+        QSettings().setValue("session/lastFilePath",
+                             "/nonexistent_dir_xyz/gone.json");
+
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+        window.restoreLastSession();
+
+        // Silent fallback: welcome stays, no load started.
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(progressBar != nullptr);
+        QVERIFY(!progressBar->isVisible());
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(!treeView->isVisible());
+    }
+
+    void testRestoreLastSessionLoadsLastFile() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/last_session.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(R"({"hello": "world", "n": [1, 2, 3]})");
+        }
+        QSettings().setValue("session/lastFilePath", filePath);
+
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+        window.restoreLastSession();
+
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->isVisible(), 5000);
+        QVERIFY(window.windowTitle().contains("last_session.json"));
+    }
+
+    void testRestoreLastSessionRespectsDisabledOption() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/last_session.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(R"({"hello": "world"})");
+        }
+        QSettings settings;
+        settings.setValue("session/lastFilePath", filePath);
+        settings.setValue("session/reopenLastFile", false);
+
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+        window.restoreLastSession();
+
+        auto* progressBar = window.findChild<QProgressBar*>();
+        QVERIFY(!progressBar->isVisible());
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Phase 4 commit 2: cancellable loads with visible progress
 // ---------------------------------------------------------------------------
 
@@ -2114,6 +2242,9 @@ int main(int argc, char* argv[]) {
 
     CancelLoadTest cancelLoadTest;
     status |= QTest::qExec(&cancelLoadTest, argc, argv);
+
+    SessionRestoreTest sessionRestoreTest;
+    status |= QTest::qExec(&sessionRestoreTest, argc, argv);
 
     DropValidatorExtensionPropertyTest dropExtTest;
     status |= QTest::qExec(&dropExtTest, argc, argv);

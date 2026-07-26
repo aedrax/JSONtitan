@@ -80,11 +80,17 @@ int main(int argc, char* argv[]) {
     MainWindow window;
     window.show();
 
-    // 3.6: If action is OpenFiles, defer opening until event loop starts
+    // 3.6: If action is OpenFiles, defer opening until event loop starts.
+    // CLI arguments take precedence over session restore; with no files
+    // given, reopen the last file (if enabled and it still exists).
     if (cliResult.action == jsontitan::core::CliAction::OpenFiles) {
         auto filePaths = std::move(cliResult.filePaths);
         QTimer::singleShot(0, &window, [&window, paths = std::move(filePaths)]() {
             window.openFromCliArgs(paths);
+        });
+    } else {
+        QTimer::singleShot(0, &window, [&window]() {
+            window.restoreLastSession();
         });
     }
 

@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTextEdit>
 #include <QThread>
@@ -50,6 +51,12 @@ public:
 
     // Open file(s) from CLI-provided paths (single file or union mode)
     void openFromCliArgs(const std::vector<std::string>& filePaths);
+
+    // Reopens the last successfully opened single file, when the
+    // "Reopen Last File on Startup" option is enabled and the file still
+    // exists. Silent no-op (welcome screen stays) otherwise. Called at
+    // startup only when no CLI files were given — CLI args take precedence.
+    void restoreLastSession();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -103,6 +110,7 @@ private:
     QLabel* m_statusLabel = nullptr;
     QLabel* m_noResultsLabel = nullptr;
     QLabel* m_dropOverlay = nullptr;
+    QSplitter* m_mainSplitter = nullptr;
 
     // Menu actions
     QAction* m_openAction = nullptr;
@@ -116,6 +124,7 @@ private:
     QAction* m_deleteAction = nullptr;
     QAction* m_shortcutsAction = nullptr;
     QAction* m_aboutAction = nullptr;
+    QAction* m_reopenLastFileAction = nullptr;
 
     // Recent files
     RecentFilesManager* m_recentFilesManager = nullptr;
