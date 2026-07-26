@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMessageBox>
@@ -73,6 +74,14 @@ MainWindow::MainWindow(QWidget* parent)
             m_editController, &EditController::save);
     connect(m_saveAsAction, &QAction::triggered,
             m_editController, &EditController::saveAs);
+    connect(m_deleteAction, &QAction::triggered,
+            m_editController, &EditController::deleteSelectedNode);
+    // Keep Edit > Delete's enabled state in sync with the tree selection.
+    connect(m_treeView->selectionModel(),
+            &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex& current, const QModelIndex&) {
+                m_deleteAction->setEnabled(current.isValid());
+            });
 
     // Multi-file union flows
     m_unionController = new UnionController(
@@ -187,8 +196,49 @@ void MainWindow::setupMenuBar() {
     // unsaved-changes prompt before exiting.
     connect(m_exitAction, &QAction::triggered, this, &MainWindow::close);
 
-    menuBar()->addMenu(tr("&Edit"));
-    menuBar()->addMenu(tr("&Help"));
+    auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    m_deleteAction = editMenu->addAction(tr("&Delete"));
+    m_deleteAction->setShortcut(QKeySequence::Delete);
+    // Disabled until the tree has a valid current index; the trigger and the
+    // enabled-state sync are wired in the constructor once EditController
+    // and the tree's selection model exist.
+    m_deleteAction->setEnabled(false);
+
+    auto* helpMenu = menuBar()->addMenu(tr("&Help"));
+    m_shortcutsAction = helpMenu->addAction(tr("&Keyboard Shortcuts"));
+    connect(m_shortcutsAction, &QAction::triggered,
+            this, &MainWindow::onShowKeyboardShortcuts);
+    m_aboutAction = helpMenu->addAction(tr("&About JSONTitan"));
+    connect(m_aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
+}
+
+void MainWindow::onAbout() {
+    QMessageBox::about(
+        this, tr("About JSONTitan"),
+        tr("<h3>JSONTitan %1</h3>"
+           "<p>A fast viewer and editor for large JSON documents: "
+           "background parsing, search with filtering, multi-file union, "
+           "node deletion, and CSV/XML export.</p>"
+           "<p>Built with Qt %2.</p>")
+            .arg(QStringLiteral("0.1.0"),
+                 QString::fromLatin1(qVersion())));
+}
+
+void MainWindow::onShowKeyboardShortcuts() {
+    const QString rows =
+        tr("<tr><td><b>Ctrl+O</b></td><td>Open file</td></tr>"
+           "<tr><td><b>Ctrl+S</b></td><td>Save</td></tr>"
+           "<tr><td><b>Ctrl+Shift+S</b></td><td>Save As</td></tr>"
+           "<tr><td><b>Ctrl+F</b></td><td>Focus search bar</td></tr>"
+           "<tr><td><b>Return</b></td><td>Next match (in search bar)</td></tr>"
+           "<tr><td><b>F3</b></td><td>Next match</td></tr>"
+           "<tr><td><b>Shift+F3</b></td><td>Previous match</td></tr>"
+           "<tr><td><b>Del</b></td><td>Delete selected node</td></tr>"
+           "<tr><td><b>Esc</b></td><td>Cancel load in progress</td></tr>"
+           "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>");
+    QMessageBox::information(
+        this, tr("Keyboard Shortcuts"),
+        QStringLiteral("<table cellspacing=\"8\">%1</table>").arg(rows));
 }
 
 void MainWindow::setupCentralWidget() {

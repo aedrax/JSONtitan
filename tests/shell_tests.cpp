@@ -1361,6 +1361,53 @@ private slots:
         QVERIFY2(hasHelp, "Menu bar missing Help menu");
     }
 
+    // Phase 4 commit 3: populated Edit and Help menus
+    void testEditMenuHasDeleteAction() {
+        MainWindow window;
+
+        QMenu* editMenu = nullptr;
+        for (auto* action : window.menuBar()->actions()) {
+            if (action->text().contains("Edit")) {
+                editMenu = action->menu();
+                break;
+            }
+        }
+        QVERIFY2(editMenu != nullptr, "Edit menu not found");
+
+        QAction* deleteAction = nullptr;
+        for (auto* action : editMenu->actions()) {
+            if (action->text().contains("Delete")) {
+                deleteAction = action;
+                break;
+            }
+        }
+        QVERIFY2(deleteAction != nullptr, "Edit menu missing Delete action");
+        QCOMPARE(deleteAction->shortcut(), QKeySequence(QKeySequence::Delete));
+        // No tree selection exists yet — Delete must start disabled.
+        QVERIFY(!deleteAction->isEnabled());
+    }
+
+    void testHelpMenuHasAboutAndShortcuts() {
+        MainWindow window;
+
+        QMenu* helpMenu = nullptr;
+        for (auto* action : window.menuBar()->actions()) {
+            if (action->text().contains("Help")) {
+                helpMenu = action->menu();
+                break;
+            }
+        }
+        QVERIFY2(helpMenu != nullptr, "Help menu not found");
+
+        bool hasAbout = false, hasShortcuts = false;
+        for (auto* action : helpMenu->actions()) {
+            if (action->text().contains("About")) hasAbout = true;
+            if (action->text().contains("Keyboard Shortcuts")) hasShortcuts = true;
+        }
+        QVERIFY2(hasAbout, "Help menu missing About JSONTitan action");
+        QVERIFY2(hasShortcuts, "Help menu missing Keyboard Shortcuts action");
+    }
+
     void testSearchBarHasPlaceholderText() {
         MainWindow window;
 

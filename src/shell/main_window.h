@@ -66,6 +66,8 @@ private slots:
     void onProgressUpdated(int percentage);
     void onRecentFileSelected(const QString& filePath);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
+    void onAbout();
+    void onShowKeyboardShortcuts();
 
 private:
     void setupMenuBar();
@@ -111,6 +113,9 @@ private:
     QAction* m_exitAction = nullptr;
     QAction* m_saveAction = nullptr;
     QAction* m_saveAsAction = nullptr;
+    QAction* m_deleteAction = nullptr;
+    QAction* m_shortcutsAction = nullptr;
+    QAction* m_aboutAction = nullptr;
 
     // Recent files
     RecentFilesManager* m_recentFilesManager = nullptr;
