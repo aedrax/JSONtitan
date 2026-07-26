@@ -1379,6 +1379,85 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 4 commit 2: cancellable loads with visible progress
+// ---------------------------------------------------------------------------
+
+class CancelLoadTest : public QObject {
+    Q_OBJECT
+
+private:
+    // Starts a load by dropping a .json path onto the window; returns after
+    // the progress UI is up. The path need not exist: the drop handler
+    // starts the async parse regardless, and the (queued) error result is
+    // only delivered once the event loop runs again.
+    static void startLoadViaDrop(MainWindow& window) {
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl::fromLocalFile("/tmp/cancel_load_test.json")});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+
+        QDropEvent dropEvent(
+            QPointF(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dropEvent);
+    }
+
+private slots:
+    void testCancelButtonHiddenInitially() {
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        auto* cancelButton = window.findChild<QPushButton*>("cancelLoadButton");
+        QVERIFY(cancelButton != nullptr);
+        QVERIFY(!cancelButton->isVisible());
+    }
+
+    void testCancelButtonAppearsWithProgressAndCancels() {
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        auto* progressBar = window.findChild<QProgressBar*>();
+        auto* cancelButton = window.findChild<QPushButton*>("cancelLoadButton");
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QVERIFY(progressBar && cancelButton && statusLabel);
+
+        startLoadViaDrop(window);
+        QVERIFY(progressBar->isVisible());
+        QVERIFY(cancelButton->isVisible());
+
+        cancelButton->click();
+
+        QVERIFY(!progressBar->isVisible());
+        QVERIFY(!cancelButton->isVisible());
+        QCOMPARE(statusLabel->text(), QString("Load cancelled"));
+    }
+
+    void testEscapeCancelsLoadOnlyWhileProgressVisible() {
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        auto* progressBar = window.findChild<QProgressBar*>();
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QVERIFY(progressBar && statusLabel);
+
+        // Esc with no load in progress: nothing happens.
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QCOMPARE(statusLabel->text(), QString("Ready"));
+
+        // Esc during a load cancels it.
+        startLoadViaDrop(window);
+        QVERIFY(progressBar->isVisible());
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QVERIFY(!progressBar->isVisible());
+        QCOMPARE(statusLabel->text(), QString("Load cancelled"));
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Task 1.2: Property test for extension-based acceptance (Property 1)
 // Feature: drag-drop-file-open
 // Validates: Requirements 1.2, 1.3
@@ -1985,6 +2064,9 @@ int main(int argc, char* argv[]) {
 
     MainWindowSmokeTest mainWindowTest;
     status |= QTest::qExec(&mainWindowTest, argc, argv);
+
+    CancelLoadTest cancelLoadTest;
+    status |= QTest::qExec(&cancelLoadTest, argc, argv);
 
     DropValidatorExtensionPropertyTest dropExtTest;
     status |= QTest::qExec(&dropExtTest, argc, argv);

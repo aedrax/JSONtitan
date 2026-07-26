@@ -13,6 +13,7 @@
 #include "core/deletion_engine.h"
 #include "core/parser.h"
 #include "core/union_engine.h"
+#include "shell/wait_cursor.h"
 
 UnionController::UnionController(QWidget* dialogParent, Ui ui,
                                  TreeModel* treeModel,
@@ -38,11 +39,15 @@ void UnionController::loadUnionSynchronously(const QStringList& filePaths,
                                              bool recordInRecentFiles) {
     // Parse each file synchronously for union (they should be small enough)
     // For large files, a more sophisticated approach would be needed.
+    // Synchronous multi-file parse blocks the UI thread — show a wait
+    // cursor for the duration (restored early before any error dialog).
+    jsontitan::shell::WaitCursorGuard waitCursor;
     std::vector<jsontitan::core::FileEntry> entries;
 
     for (const auto& path : filePaths) {
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly)) {
+            waitCursor.restore();
             QMessageBox::critical(m_dialogParent, tr("File Error"),
                                   tr("Cannot open file: %1").arg(path));
             return;
@@ -59,6 +64,7 @@ void UnionController::loadUnionSynchronously(const QStringList& filePaths,
 
         auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
         if (chunkResult.error) {
+            waitCursor.restore();
             QMessageBox::critical(m_dialogParent, tr("Parse Error"),
                                   tr("Failed to parse %1:\n\n%2")
                                       .arg(QFileInfo(path).fileName(),
@@ -68,6 +74,7 @@ void UnionController::loadUnionSynchronously(const QStringList& filePaths,
 
         auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
         if (parseResult.error) {
+            waitCursor.restore();
             QMessageBox::critical(m_dialogParent, tr("Parse Error"),
                                   tr("Failed to parse %1:\n\n%2")
                                       .arg(QFileInfo(path).fileName(),

@@ -8,6 +8,7 @@
 #include "core/deletion_engine.h"
 #include "shell/model_paths.h"
 #include "shell/save_handler.h"
+#include "shell/wait_cursor.h"
 
 EditController::EditController(QWidget* dialogParent, QTreeView* treeView,
                                TreeModel* treeModel,
@@ -183,7 +184,9 @@ void EditController::save() {
         return;
     }
 
+    jsontitan::shell::WaitCursorGuard waitCursor;
     QString error = SaveHandler::saveToFile(*root, m_session->filePath());
+    waitCursor.restore();
     if (error.isEmpty()) {
         m_session->setModified(false);
     } else {
@@ -224,7 +227,9 @@ void EditController::saveAs() {
         }
     }
 
+    jsontitan::shell::WaitCursorGuard waitCursor;
     QString error = SaveHandler::saveToFile(*root, chosenPath);
+    waitCursor.restore();
     if (error.isEmpty()) {
         // Union mode is deliberately left unchanged (pre-extraction
         // behavior: Save As never cleared it).

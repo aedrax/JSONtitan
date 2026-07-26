@@ -13,6 +13,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QStatusBar>
 #include <QTextEdit>
 #include <QThread>
@@ -77,6 +78,15 @@ private:
     void updateStatusBar(const QString& fileName, int nodeCount);
     void updateWindowTitle(bool modified);
 
+    // Load-progress UI (progress bar + cancel button) shown while a
+    // background parse is running.
+    void showLoadProgress();
+    void hideLoadProgress();
+    // Cancels the active load (no-op when none is running): aborts the
+    // parse, hides the progress UI, and keeps the previous document (parse
+    // results only install on completion).
+    void cancelActiveLoad();
+
     // UI elements
     QLineEdit* m_searchBar = nullptr;
     QLabel* m_matchCountLabel = nullptr;
@@ -87,6 +97,7 @@ private:
     QTextEdit* m_detailPanel = nullptr;
     QLabel* m_welcomeLabel = nullptr;
     QProgressBar* m_progressBar = nullptr;
+    QPushButton* m_cancelLoadButton = nullptr;
     QLabel* m_statusLabel = nullptr;
     QLabel* m_noResultsLabel = nullptr;
     QLabel* m_dropOverlay = nullptr;

@@ -18,6 +18,7 @@
 
 #include "core/parse_orchestrator.h"
 #include "shell/drop_validator.h"
+#include "shell/wait_cursor.h"
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -134,8 +135,7 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
         // Single file: use the same mechanism as File > Open
         QString qPath = QString::fromStdString(filePaths[0]);
         m_session->setFileIdentity(qPath, QFileInfo(qPath).fileName(), false);
-        m_progressBar->setValue(0);
-        m_progressBar->show();
+        showLoadProgress();
         m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
         m_fileLoader->startParse(qPath);
     } else {
@@ -319,6 +319,7 @@ void MainWindow::setupCentralWidget() {
 
 void MainWindow::setupStatusBar() {
     m_statusLabel = new QLabel(this);
+    m_statusLabel->setObjectName("statusLabel");
     statusBar()->addWidget(m_statusLabel, 1);
 
     m_progressBar = new QProgressBar(this);
@@ -327,6 +328,37 @@ void MainWindow::setupStatusBar() {
     m_progressBar->setFormat("%p%");
     m_progressBar->hide();
     statusBar()->addPermanentWidget(m_progressBar);
+
+    m_cancelLoadButton = new QPushButton(tr("Cancel"), this);
+    m_cancelLoadButton->setObjectName("cancelLoadButton");
+    m_cancelLoadButton->setToolTip(tr("Cancel the current load (Esc)"));
+    m_cancelLoadButton->hide();
+    statusBar()->addPermanentWidget(m_cancelLoadButton);
+    connect(m_cancelLoadButton, &QPushButton::clicked,
+            this, &MainWindow::cancelActiveLoad);
+}
+
+void MainWindow::showLoadProgress() {
+    m_progressBar->setValue(0);
+    m_progressBar->show();
+    m_cancelLoadButton->show();
+}
+
+void MainWindow::hideLoadProgress() {
+    m_progressBar->hide();
+    m_cancelLoadButton->hide();
+}
+
+void MainWindow::cancelActiveLoad() {
+    if (!m_progressBar->isVisible()) {
+        return;
+    }
+    // The old document is untouched: parse results only install in
+    // onArenaParseComplete, and cancelParse() invalidates the request id so
+    // any in-flight result is dropped instead of forwarded.
+    m_fileLoader->cancelParse();
+    hideLoadProgress();
+    m_statusLabel->setText(tr("Load cancelled"));
 }
 
 void MainWindow::setupDropOverlay() {
@@ -386,8 +418,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
                                QFileInfo(result.filePath).fileName(), false);
 
     // Show progress bar and start parsing
-    m_progressBar->setValue(0);
-    m_progressBar->show();
+    showLoadProgress();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
 
     m_fileLoader->startParse(result.filePath);
@@ -420,8 +451,7 @@ void MainWindow::onOpenFile() {
     }
 
     m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
-    m_progressBar->setValue(0);
-    m_progressBar->show();
+    showLoadProgress();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
 
     m_fileLoader->startParse(filePath);
@@ -432,7 +462,7 @@ void MainWindow::onProgressUpdated(int percentage) {
 }
 
 void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
-    m_progressBar->hide();
+    hideLoadProgress();
 
     m_searchController->invalidate();
     // File identity was already recorded at parse start; keep it.
@@ -464,7 +494,7 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
 }
 
 void MainWindow::onParseError(QString errorMessage) {
-    m_progressBar->hide();
+    hideLoadProgress();
     m_statusLabel->setText(tr("Parse failed"));
 
     QMessageBox::critical(this, tr("Parse Error"),
@@ -486,8 +516,7 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
     }
 
     m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
-    m_progressBar->setValue(0);
-    m_progressBar->show();
+    showLoadProgress();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
     m_fileLoader->startParse(filePath);
 }
@@ -515,7 +544,9 @@ void MainWindow::onExportCsv() {
         return;
     }
 
+    jsontitan::shell::WaitCursorGuard waitCursor;
     QString error = ExportHandler::exportCsvToFile(*node, filePath);
+    waitCursor.restore();
     if (!error.isEmpty()) {
         QMessageBox::critical(this, tr("Export Error"), error);
     } else {
@@ -544,7 +575,9 @@ void MainWindow::onExportXml() {
         return;
     }
 
+    jsontitan::shell::WaitCursorGuard waitCursor;
     QString error = ExportHandler::exportXmlToFile(*node, filePath);
+    waitCursor.restore();
     if (!error.isEmpty()) {
         QMessageBox::critical(this, tr("Export Error"), error);
     } else {
@@ -570,6 +603,11 @@ void MainWindow::updateWindowTitle(bool modified) {
 void MainWindow::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Delete) {
         m_editController->deleteSelectedNode();
+        return;
+    }
+    // Esc cancels an in-progress load — only while the progress UI is up.
+    if (event->key() == Qt::Key_Escape && m_progressBar->isVisible()) {
+        cancelActiveLoad();
         return;
     }
     QMainWindow::keyPressEvent(event);
