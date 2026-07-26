@@ -225,7 +225,9 @@ void MainWindow::setupMenuBar() {
 
     m_exitAction = fileMenu->addAction(tr("E&xit"));
     m_exitAction->setShortcut(QKeySequence::Quit);
-    connect(m_exitAction, &QAction::triggered, qApp, &QApplication::quit);
+    // close() (not QApplication::quit) so closeEvent runs the
+    // unsaved-changes prompt before exiting.
+    connect(m_exitAction, &QAction::triggered, this, &MainWindow::close);
 
     menuBar()->addMenu(tr("&Edit"));
     menuBar()->addMenu(tr("&Help"));
@@ -411,6 +413,10 @@ void MainWindow::dropEvent(QDropEvent* event) {
         return;
     }
 
+    if (!confirmDiscardChanges()) {
+        return;
+    }
+
     event->acceptProposedAction();
 
     // Cancel any in-progress parse
@@ -508,6 +514,10 @@ std::shared_ptr<const jsontitan::core::JsonNode> MainWindow::getSelectedNode() c
 // --- Task 16.2: File Open and background parsing ---
 
 void MainWindow::onOpenFile() {
+    if (!confirmDiscardChanges()) {
+        return;
+    }
+
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open JSON File"), QString(),
         tr("JSON Files (*.json);;All Files (*)"));
@@ -609,6 +619,10 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
             tr("The file \"%1\" no longer exists and will be removed from the recent files list.")
                 .arg(filePath));
         m_recentFilesManager->removeFile(filePath);
+        return;
+    }
+
+    if (!confirmDiscardChanges()) {
         return;
     }
 
@@ -721,6 +735,10 @@ void MainWindow::onSearchComplete(jsontitan::core::FilterResult result, uint64_t
 // --- Task 16.4: Multi-file union ---
 
 void MainWindow::onUnionFiles() {
+    if (!confirmDiscardChanges()) {
+        return;
+    }
+
     QStringList filePaths = QFileDialog::getOpenFileNames(
         this, tr("Select JSON Files to Union"), QString(),
         tr("JSON Files (*.json);;All Files (*)"));
@@ -1204,31 +1222,34 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 // --- Task 7.2: Close event override ---
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (m_modified) {
-        auto reply = QMessageBox::question(
-            this, tr("Unsaved Changes"),
-            tr("The document has been modified.\nDo you want to save your changes?"),
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
-            QMessageBox::Save);
-
-        if (reply == QMessageBox::Save) {
-            onSave();
-            // If still modified after save attempt (e.g., user cancelled save-as dialog),
-            // don't close
-            if (m_modified) {
-                event->ignore();
-                return;
-            }
-            event->accept();
-        } else if (reply == QMessageBox::Discard) {
-            event->accept();
-        } else {
-            // Cancel
-            event->ignore();
-        }
-    } else {
+    if (confirmDiscardChanges()) {
         event->accept();
+    } else {
+        event->ignore();
     }
+}
+
+// Returns true when it is safe to discard the current document: either there
+// are no unsaved changes, or the user chose Save (and it succeeded) or
+// Discard. Returns false when the user cancelled.
+bool MainWindow::confirmDiscardChanges() {
+    if (!m_modified) {
+        return true;
+    }
+
+    auto reply = QMessageBox::question(
+        this, tr("Unsaved Changes"),
+        tr("The document has been modified.\nDo you want to save your changes?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+
+    if (reply == QMessageBox::Save) {
+        onSave();
+        // If still modified after save attempt (e.g., user cancelled the
+        // save-as dialog or the write failed), don't discard.
+        return !m_modified;
+    }
+    return reply == QMessageBox::Discard;
 }
 
 // --- Task 8.2: Save implementation ---

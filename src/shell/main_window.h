@@ -85,6 +85,7 @@ private:
     std::shared_ptr<const jsontitan::core::JsonNode> getSelectedNode() const;
     void setModified(bool modified);
     bool ensureEditableRoot();
+    bool confirmDiscardChanges();
     // Invalidates any in-flight or pending search so its (stale) result is
     // discarded. Must be called whenever the displayed tree is replaced.
     void invalidateActiveSearch();
