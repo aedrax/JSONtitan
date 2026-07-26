@@ -807,7 +807,7 @@ void MainWindow::onRemoveFromUnion() {
     }
 
     // Get the key of the selected node
-    auto* nodePtr = static_cast<const jsontitan::core::JsonNode*>(sourceIndex.internalPointer());
+    const auto* nodePtr = m_treeModel->jsonNodeForIndex(sourceIndex);
     if (!nodePtr) {
         return;
     }
