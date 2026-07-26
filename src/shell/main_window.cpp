@@ -632,6 +632,11 @@ void MainWindow::invalidateActiveSearch() {
     // onSearchComplete, and no debounced search fires against stale UI state.
     ++m_searchGeneration;
     m_debounceTimer->stop();
+    // Also tell the worker directly (atomic) so a running search aborts
+    // instead of scanning the rest of the tree for a doomed result.
+    if (m_searchWorker) {
+        m_searchWorker->updateLatestGeneration(m_searchGeneration);
+    }
 }
 
 void MainWindow::executeSearch() {
@@ -640,8 +645,10 @@ void MainWindow::executeSearch() {
         return;
     }
 
-    // Increment generation counter to track this search request
+    // Increment generation counter to track this search request; the direct
+    // update lets the worker abort any older search immediately.
     ++m_searchGeneration;
+    m_searchWorker->updateLatestGeneration(m_searchGeneration);
 
     // Build SearchQuery from current UI state
     jsontitan::core::SearchQuery query;

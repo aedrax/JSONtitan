@@ -8,187 +8,174 @@ namespace jsontitan::core {
 
 namespace {
 
-// Convert a string to lowercase for case-insensitive matching
-auto toLower(const std::string& s) -> std::string {
-    std::string result;
-    result.reserve(s.size());
-    for (unsigned char c : s) {
-        result += static_cast<char>(std::tolower(c));
+// How often (in visited nodes) the cancellation callback is polled.
+constexpr std::size_t kCancelCheckInterval = 4096;
+
+// Lowercase one char (byte-wise; matches the previous toLower semantics).
+inline auto lowerChar(char c) -> char {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+// Allocation-free case-insensitive substring scan. `loweredNeedle` must
+// already be lowercased (done once per filter() call, not once per node —
+// the previous implementation heap-allocated two lowered copies per visited
+// node, ~100-200M temporary allocations on a 50M-node tree).
+auto containsSubstringCI(std::string_view haystack, std::string_view loweredNeedle) -> bool {
+    if (loweredNeedle.empty()) return true;
+    auto it = std::search(
+        haystack.begin(), haystack.end(),
+        loweredNeedle.begin(), loweredNeedle.end(),
+        [](char h, char n) { return lowerChar(h) == n; });
+    return it != haystack.end();
+}
+
+// Case-sensitive substring scan.
+auto containsSubstringCS(std::string_view haystack, std::string_view needle) -> bool {
+    if (needle.empty()) return true;
+    return haystack.find(needle) != std::string_view::npos;
+}
+
+// Query state prepared once per filter() call.
+struct CompiledQuery {
+    const SearchQuery& query;
+    std::string loweredPattern;        // only for case-insensitive substring
+    const std::regex* regex = nullptr; // only for regex mode
+    const std::function<bool()>* shouldCancel = nullptr;
+    std::size_t visited = 0;
+    bool cancelled = false;
+
+    // Returns true when the walk should stop.
+    auto pollCancel() -> bool {
+        if (cancelled) return true;
+        if (shouldCancel && *shouldCancel &&
+            ++visited % kCancelCheckInterval == 0 && (*shouldCancel)()) {
+            cancelled = true;
+        }
+        return cancelled;
     }
-    return result;
-}
 
-// Convert a string_view to lowercase for case-insensitive matching
-auto toLower(std::string_view s) -> std::string {
-    std::string result;
-    result.reserve(s.size());
-    for (unsigned char c : s) {
-        result += static_cast<char>(std::tolower(c));
-    }
-    return result;
-}
-
-// Check if haystack contains needle (case-insensitive)
-auto containsSubstringCI(const std::string& haystack, const std::string& needle) -> bool {
-    if (needle.empty()) return true;
-    auto lowerHaystack = toLower(haystack);
-    auto lowerNeedle = toLower(needle);
-    return lowerHaystack.find(lowerNeedle) != std::string::npos;
-}
-
-// Check if haystack (string_view) contains needle (case-insensitive)
-auto containsSubstringCI(std::string_view haystack, const std::string& needle) -> bool {
-    if (needle.empty()) return true;
-    auto lowerHaystack = toLower(haystack);
-    auto lowerNeedle = toLower(needle);
-    return lowerHaystack.find(lowerNeedle) != std::string::npos;
-}
-
-// Check if haystack contains needle (case-sensitive)
-auto containsSubstringCS(const std::string& haystack, const std::string& needle) -> bool {
-    if (needle.empty()) return true;
-    return haystack.find(needle) != std::string::npos;
-}
-
-// Check if haystack (string_view) contains needle (case-sensitive)
-auto containsSubstringCS(std::string_view haystack, const std::string& needle) -> bool {
-    if (needle.empty()) return true;
-    return haystack.find(needle) != std::string::npos;
-}
-
-// Check if a node's key or string value matches the query
-auto nodeMatches(const JsonNode& node, const SearchQuery& query,
-                 const std::regex* compiledRegex) -> bool {
-    if (query.mode == SearchMode::Substring) {
-        if (query.caseSensitive) {
-            if (containsSubstringCS(node.key, query.pattern)) return true;
-            if (node.type == NodeType::String && containsSubstringCS(node.value, query.pattern))
-                return true;
-        } else {
-            if (containsSubstringCI(node.key, query.pattern)) return true;
-            if (node.type == NodeType::String && containsSubstringCI(node.value, query.pattern))
+    auto matches(std::string_view key, std::string_view value, NodeType type) const -> bool {
+        if (query.mode == SearchMode::Substring) {
+            if (query.caseSensitive) {
+                if (containsSubstringCS(key, query.pattern)) return true;
+                if (type == NodeType::String && containsSubstringCS(value, query.pattern))
+                    return true;
+            } else {
+                if (containsSubstringCI(key, loweredPattern)) return true;
+                if (type == NodeType::String && containsSubstringCI(value, loweredPattern))
+                    return true;
+            }
+        } else if (query.mode == SearchMode::Regex && regex) {
+            if (std::regex_search(key.begin(), key.end(), *regex)) return true;
+            if (type == NodeType::String &&
+                std::regex_search(value.begin(), value.end(), *regex))
                 return true;
         }
-    } else if (query.mode == SearchMode::Regex && compiledRegex) {
-        if (std::regex_search(node.key, *compiledRegex)) return true;
-        if (node.type == NodeType::String && std::regex_search(node.value, *compiledRegex))
-            return true;
+        return false;
     }
-    return false;
-}
-
-// Check if an ArenaJsonNode's key or string value matches the query
-auto arenaNodeMatches(const ArenaJsonNode& node, const SearchQuery& query,
-                      const std::regex* compiledRegex) -> bool {
-    auto keyStr = node.keyView();
-    auto valueStr = node.valueView();
-
-    if (query.mode == SearchMode::Substring) {
-        if (query.caseSensitive) {
-            if (containsSubstringCS(keyStr, query.pattern)) return true;
-            if (node.type == NodeType::String && containsSubstringCS(valueStr, query.pattern))
-                return true;
-        } else {
-            if (containsSubstringCI(keyStr, query.pattern)) return true;
-            if (node.type == NodeType::String && containsSubstringCI(valueStr, query.pattern))
-                return true;
-        }
-    } else if (query.mode == SearchMode::Regex && compiledRegex) {
-        // std::regex_search requires iterators; use string_view begin/end
-        if (std::regex_search(keyStr.begin(), keyStr.end(), *compiledRegex)) return true;
-        if (node.type == NodeType::String &&
-            std::regex_search(valueStr.begin(), valueStr.end(), *compiledRegex))
-            return true;
-    }
-    return false;
-}
+};
 
 // Recursive DFS to find all matching nodes and build ancestor index paths.
 void searchRecursive(const std::shared_ptr<const JsonNode>& node,
-                     const SearchQuery& query,
-                     const std::regex* compiledRegex,
+                     CompiledQuery& cq,
                      std::vector<std::size_t>& currentPath,
                      std::vector<SearchMatch>& matches) {
-    // Check if this node itself matches
-    if (nodeMatches(*node, query, compiledRegex)) {
+    if (cq.pollCancel()) {
+        return;
+    }
+
+    if (cq.matches(node->key, node->value, node->type)) {
         matches.push_back(SearchMatch{
             .ancestorIndices = currentPath,
             .node = node
         });
     }
 
-    // Recurse into children
     for (std::size_t i = 0; i < node->children.size(); ++i) {
         currentPath.push_back(i);
-        searchRecursive(node->children[i], query, compiledRegex, currentPath, matches);
+        searchRecursive(node->children[i], cq, currentPath, matches);
         currentPath.pop_back();
+        if (cq.cancelled) return;
     }
 }
 
-// Recursive DFS for ArenaJsonNode trees.
-// Matching nodes are converted to JsonNode on-demand (only the matched leaf, not the full tree).
+// Recursive DFS for ArenaJsonNode trees. Matches carry only their index
+// path — no node materialization (see SearchMatch::node documentation).
 void arenaSearchRecursive(const ArenaJsonNode& node,
-                          const SearchQuery& query,
-                          const std::regex* compiledRegex,
+                          CompiledQuery& cq,
                           std::vector<std::size_t>& currentPath,
                           std::vector<SearchMatch>& matches) {
-    // Check if this node itself matches
-    if (arenaNodeMatches(node, query, compiledRegex)) {
-        // Convert only this matched node to JsonNode for the SearchMatch result
+    if (cq.pollCancel()) {
+        return;
+    }
+
+    if (cq.matches(node.keyView(), node.valueView(), node.type)) {
         matches.push_back(SearchMatch{
             .ancestorIndices = currentPath,
-            .node = node.toJsonNode()
+            .node = nullptr
         });
     }
 
-    // Recurse into children
     for (std::size_t i = 0; i < node.childCount; ++i) {
         currentPath.push_back(i);
-        arenaSearchRecursive(*node.children[i], query, compiledRegex, currentPath, matches);
+        arenaSearchRecursive(*node.children[i], cq, currentPath, matches);
         currentPath.pop_back();
+        if (cq.cancelled) return;
     }
 }
 
-} // anonymous namespace
-
-auto filter(const JsonNode& root, const SearchQuery& query) -> FilterResult {
-    // Empty pattern matches nothing — return empty results (not an error)
-    if (query.pattern.empty()) {
-        return FilterResult{.matches = {}, .error = std::nullopt};
-    }
-
-    // For regex mode, try to compile the pattern first
-    std::regex compiledRegex;
-    const std::regex* regexPtr = nullptr;
-
+// Shared per-call setup: compile the regex / lower the pattern.
+// Returns an error result if the regex is invalid.
+auto prepare(const SearchQuery& query,
+             std::regex& regexStorage,
+             CompiledQuery& cq) -> std::optional<FilterResult> {
     if (query.mode == SearchMode::Regex) {
         try {
-            auto flags = std::regex_constants::ECMAScript;
+            auto flags = std::regex_constants::ECMAScript | std::regex_constants::optimize;
             if (!query.caseSensitive) {
                 flags |= std::regex_constants::icase;
             }
-            compiledRegex = std::regex(query.pattern, flags);
-            regexPtr = &compiledRegex;
+            regexStorage = std::regex(query.pattern, flags);
+            cq.regex = &regexStorage;
         } catch (const std::regex_error& e) {
             return FilterResult{
                 .matches = {},
                 .error = SearchError{.description = std::string("Invalid regex pattern: ") + e.what()}
             };
         }
+    } else if (!query.caseSensitive) {
+        cq.loweredPattern.reserve(query.pattern.size());
+        for (char c : query.pattern) {
+            cq.loweredPattern += lowerChar(c);
+        }
+    }
+    return std::nullopt;
+}
+
+} // anonymous namespace
+
+auto filter(const JsonNode& root, const SearchQuery& query,
+            const std::function<bool()>& shouldCancel) -> FilterResult {
+    // Empty pattern matches nothing — return empty results (not an error)
+    if (query.pattern.empty()) {
+        return FilterResult{.matches = {}, .error = std::nullopt};
     }
 
-    // We need a shared_ptr to the root for the recursive search.
-    // Since filter takes a const reference, we create a temporary shared_ptr
-    // that wraps the root without owning it (using a no-op deleter).
-    // However, for child nodes we already have shared_ptrs from the tree.
-    // For the root itself, we'll handle it specially.
+    std::regex regexStorage;
+    CompiledQuery cq = {.query = query};
+    cq.shouldCancel = &shouldCancel;
+    if (auto err = prepare(query, regexStorage, cq)) {
+        FilterResult errorResult = std::move(*err);
+        return errorResult;
+    }
+
     std::vector<SearchMatch> matches;
     std::vector<std::size_t> currentPath;
 
     // Check root node
-    if (nodeMatches(root, query, regexPtr)) {
-        // For the root match, we need a shared_ptr. Since we don't own the root,
-        // we create a non-owning shared_ptr.
+    if (cq.matches(root.key, root.value, root.type)) {
+        // The caller keeps the tree alive for the duration of any use of the
+        // result; a non-owning pointer preserves node identity across calls.
         auto rootPtr = std::shared_ptr<const JsonNode>(&root, [](const JsonNode*) {});
         matches.push_back(SearchMatch{
             .ancestorIndices = currentPath,
@@ -199,55 +186,46 @@ auto filter(const JsonNode& root, const SearchQuery& query) -> FilterResult {
     // Recurse into children
     for (std::size_t i = 0; i < root.children.size(); ++i) {
         currentPath.push_back(i);
-        searchRecursive(root.children[i], query, regexPtr, currentPath, matches);
+        searchRecursive(root.children[i], cq, currentPath, matches);
         currentPath.pop_back();
+        if (cq.cancelled) break;
     }
 
     return FilterResult{.matches = std::move(matches), .error = std::nullopt};
 }
 
-auto filter(const ArenaJsonNode& root, const SearchQuery& query) -> FilterResult {
+auto filter(const ArenaJsonNode& root, const SearchQuery& query,
+            const std::function<bool()>& shouldCancel) -> FilterResult {
     // Empty pattern matches nothing — return empty results (not an error)
     if (query.pattern.empty()) {
         return FilterResult{.matches = {}, .error = std::nullopt};
     }
 
-    // For regex mode, try to compile the pattern first
-    std::regex compiledRegex;
-    const std::regex* regexPtr = nullptr;
-
-    if (query.mode == SearchMode::Regex) {
-        try {
-            auto flags = std::regex_constants::ECMAScript;
-            if (!query.caseSensitive) {
-                flags |= std::regex_constants::icase;
-            }
-            compiledRegex = std::regex(query.pattern, flags);
-            regexPtr = &compiledRegex;
-        } catch (const std::regex_error& e) {
-            return FilterResult{
-                .matches = {},
-                .error = SearchError{.description = std::string("Invalid regex pattern: ") + e.what()}
-            };
-        }
+    std::regex regexStorage;
+    CompiledQuery cq = {.query = query};
+    cq.shouldCancel = &shouldCancel;
+    if (auto err = prepare(query, regexStorage, cq)) {
+        FilterResult errorResult = std::move(*err);
+        return errorResult;
     }
 
     std::vector<SearchMatch> matches;
     std::vector<std::size_t> currentPath;
 
     // Check root node
-    if (arenaNodeMatches(root, query, regexPtr)) {
+    if (cq.matches(root.keyView(), root.valueView(), root.type)) {
         matches.push_back(SearchMatch{
             .ancestorIndices = currentPath,
-            .node = root.toJsonNode()
+            .node = nullptr
         });
     }
 
     // Recurse into children
     for (std::size_t i = 0; i < root.childCount; ++i) {
         currentPath.push_back(i);
-        arenaSearchRecursive(*root.children[i], query, regexPtr, currentPath, matches);
+        arenaSearchRecursive(*root.children[i], cq, currentPath, matches);
         currentPath.pop_back();
+        if (cq.cancelled) break;
     }
 
     return FilterResult{.matches = std::move(matches), .error = std::nullopt};

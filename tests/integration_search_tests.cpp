@@ -208,8 +208,13 @@ void IntegrationSearchTest::testUIThreadNotBlockedDuringSearch() {
              qPrintable(QString("UI thread was blocked for %1ms during search dispatch")
                             .arg(uiElapsed)));
 
-    // Wait for the background search to complete
-    QVERIFY(completeSpy.wait(30000)); // 30s timeout for large tree
+    // Wait for the background search to complete. The signal may already
+    // have been delivered during the processEvents() loop above (the search
+    // finishes in milliseconds), and QSignalSpy::wait only observes NEW
+    // emissions — waiting unconditionally would time out after a fast search.
+    if (completeSpy.isEmpty()) {
+        QVERIFY(completeSpy.wait(30000));
+    }
 
     // Verify search completed successfully
     auto args = completeSpy.at(0);
