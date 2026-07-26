@@ -313,6 +313,19 @@ target_link_libraries(json_exporter_pbt
 
 gtest_discover_tests(json_exporter_pbt)
 
+# ── Stream Export Tests (Google Test + RapidCheck, no Qt) ────────
+add_executable(stream_export_tests stream_export_tests.cpp)
+
+target_link_libraries(stream_export_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(stream_export_tests)
+
 # ── Deletion Shell Tests (Google Test + Qt Test) ─────────────────
 add_executable(deletion_shell_tests deletion_shell_tests.cpp)
 

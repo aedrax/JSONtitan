@@ -1,5 +1,7 @@
 #include "core/xml_exporter.h"
 
+#include "core/stream_export.h"
+
 #include <cctype>
 #include <string>
 
@@ -24,52 +26,6 @@ auto isXmlNameStartChar(char c) -> bool {
 auto isXmlNameChar(char c) -> bool {
     return isXmlNameStartChar(c) || std::isdigit(static_cast<unsigned char>(c)) ||
            c == '-' || c == '.';
-}
-
-// Serialize a JsonNode subtree to XML, appending to the output string.
-void serializeNode(const JsonNode& node, const std::string& elementName,
-                   int indent, std::string& out) {
-    std::string indentStr(static_cast<std::size_t>(indent * 2), ' ');
-    std::string sanitized = sanitizeXmlName(elementName);
-
-    switch (node.type) {
-        case NodeType::Object: {
-            out += indentStr + "<" + sanitized + ">\n";
-            for (const auto& child : node.children) {
-                std::string childName = child->key.empty() ? "item" : child->key;
-                serializeNode(*child, childName, indent + 1, out);
-            }
-            out += indentStr + "</" + sanitized + ">\n";
-            return;
-        }
-        case NodeType::Array: {
-            out += indentStr + "<" + sanitized + ">\n";
-            for (std::size_t i = 0; i < node.children.size(); ++i) {
-                std::string itemName = "item_" + std::to_string(i);
-                serializeNode(*node.children[i], itemName, indent + 1, out);
-            }
-            out += indentStr + "</" + sanitized + ">\n";
-            return;
-        }
-        case NodeType::String:
-            out += indentStr + "<" + sanitized + ">" +
-                   escapeXmlText(node.value) +
-                   "</" + sanitized + ">\n";
-            return;
-        case NodeType::Number:
-            out += indentStr + "<" + sanitized + ">" +
-                   escapeXmlText(node.value) +
-                   "</" + sanitized + ">\n";
-            return;
-        case NodeType::Boolean:
-            out += indentStr + "<" + sanitized + ">" +
-                   node.value +
-                   "</" + sanitized + ">\n";
-            return;
-        case NodeType::Null:
-            out += indentStr + "<" + sanitized + "/>\n";
-            return;
-    }
 }
 
 } // anonymous namespace
@@ -138,9 +94,13 @@ auto escapeXmlText(const std::string& text) -> std::string {
 
 auto exportXml(const JsonNode& node, const std::string& rootElementName)
     -> std::string {
+    // Thin wrapper over the streaming exporter with a string-appending sink.
     std::string result;
-    result += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    serializeNode(node, rootElementName, 0, result);
+    ByteSink sink = [&result](std::string_view chunk) {
+        result += chunk;
+        return true;
+    };
+    exportXmlStream(NodeView(node), sink, rootElementName);
     return result;
 }
 

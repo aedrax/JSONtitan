@@ -24,6 +24,7 @@ add_library(jsontitan_core STATIC
     simdjson_adapter.cpp
     deletion_engine.cpp
     json_exporter.cpp
+    stream_export.cpp
 )
 
 target_include_directories(jsontitan_core
