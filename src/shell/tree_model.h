@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractItemModel>
+#include <limits>
 
 #include <memory>
 #include <unordered_set>
@@ -47,8 +48,9 @@ public:
     // Get the root JsonNode
     std::shared_ptr<const jsontitan::core::JsonNode> rootNode() const { return m_rootJsonNode; }
 
-    // Get the arena parse result (nullptr if using JsonNode path)
-    std::shared_ptr<jsontitan::core::ArenaParseResult> arenaResult() const { return m_arenaResult; }
+    // Get the arena parse result (nullptr if using JsonNode path).
+    // Const element type: a const model must not hand out mutable arena state.
+    std::shared_ptr<const jsontitan::core::ArenaParseResult> arenaResult() const { return m_arenaResult; }
 
 private:
     // Internal node wrapper that tracks which children have been fetched.
@@ -77,13 +79,18 @@ private:
             return nullptr;
         }
 
-        // Total child count regardless of backing type
+        // Total child count regardless of backing type, clamped to int:
+        // Qt models are int-bounded, and a >2^31-element array must saturate
+        // rather than overflow into a negative count.
         [[nodiscard]] int totalChildCount() const {
+            std::size_t count = 0;
             if (auto* jn = jsonNode())
-                return static_cast<int>(jn->children.size());
-            if (auto* an = arenaNode())
-                return static_cast<int>(an->childCount);
-            return 0;
+                count = jn->children.size();
+            else if (auto* an = arenaNode())
+                count = an->childCount;
+            constexpr auto kMax =
+                static_cast<std::size_t>(std::numeric_limits<int>::max());
+            return static_cast<int>(count < kMax ? count : kMax);
         }
     };
 

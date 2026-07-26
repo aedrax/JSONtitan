@@ -84,10 +84,9 @@ QModelIndex TreeModel::index(int row, int column, const QModelIndex& parent) con
     if (row < 0 || row >= parentNode->fetchedChildCount)
         return {};
 
-    // Use const_cast because ensureChildNode mutates the internal cache
-    // but does not change the logical model state
-    auto* mutableParent = const_cast<InternalNode*>(parentNode);
-    auto* childNode = ensureChildNode(mutableParent, row);
+    // ensureChildNode mutates only the lazily-built fetch cache, not the
+    // logical model state (nodeFromIndex already returns a mutable pointer).
+    auto* childNode = ensureChildNode(parentNode, row);
     if (!childNode)
         return {};
 
@@ -293,7 +292,7 @@ QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) 
     } else {
         std::string_view keyStr = node.keyView();
         if (!keyStr.empty()) {
-            display = QString::fromUtf8(keyStr.data(), static_cast<int>(keyStr.size()));
+            display = QString::fromUtf8(keyStr.data(), static_cast<qsizetype>(keyStr.size()));
         }
     }
 
@@ -323,7 +322,7 @@ QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) 
         display += QStringLiteral("\"");
         {
             std::string_view valStr = node.valueView();
-            QString val = QString::fromUtf8(valStr.data(), static_cast<int>(valStr.size()));
+            QString val = QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
             if (val.length() > 50) {
                 display += val.left(50) + QStringLiteral("...");
             } else {
@@ -338,7 +337,7 @@ QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) 
             display += QStringLiteral(": ");
         {
             std::string_view valStr = node.valueView();
-            display += QString::fromUtf8(valStr.data(), static_cast<int>(valStr.size()));
+            display += QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
         }
         break;
 
@@ -347,7 +346,7 @@ QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) 
             display += QStringLiteral(": ");
         {
             std::string_view valStr = node.valueView();
-            display += QString::fromUtf8(valStr.data(), static_cast<int>(valStr.size()));
+            display += QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
         }
         break;
 

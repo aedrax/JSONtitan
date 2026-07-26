@@ -206,11 +206,11 @@ void MainWindow::setupMenuBar() {
     fileMenu->addSeparator();
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
-    m_saveAction->setShortcut(QKeySequence(tr("Ctrl+S")));
+    m_saveAction->setShortcut(QKeySequence::Save);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
 
     m_saveAsAction = fileMenu->addAction(tr("Save &As..."));
-    m_saveAsAction->setShortcut(QKeySequence(tr("Ctrl+Shift+S")));
+    m_saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
 
     fileMenu->addSeparator();

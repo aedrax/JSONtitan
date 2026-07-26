@@ -41,7 +41,9 @@ void renderHighlighted(QTextEdit* editor,
 
     for (const auto& token : result.tokens) {
         QTextCharFormat format;
-        QColor color;
+        // Pre-initialize so every enumerator can be an explicit case below:
+        // a default: label would suppress -Wswitch for future TokenTypes.
+        QColor color = theme.defaultColor;
 
         switch (token.type) {
             case core::TokenType::Key:
@@ -69,7 +71,6 @@ void renderHighlighted(QTextEdit* editor,
             case core::TokenType::Colon:
             case core::TokenType::Comma:
             case core::TokenType::Whitespace:
-            default:
                 color = theme.defaultColor;
                 break;
         }

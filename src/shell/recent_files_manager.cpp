@@ -68,13 +68,13 @@ void RecentFilesManager::rebuildMenu() {
                     [this, path]() { emit recentFileSelected(path); });
         }
     } else {
-        QAction* noRecent = m_menu->addAction("No Recent Files");
+        QAction* noRecent = m_menu->addAction(tr("No Recent Files"));
         noRecent->setEnabled(false);
     }
 
     m_menu->addSeparator();
 
-    QAction* clearAction = m_menu->addAction("Clear Recent Files");
+    QAction* clearAction = m_menu->addAction(tr("Clear Recent Files"));
     clearAction->setEnabled(!m_list.empty());
 
     connect(clearAction, &QAction::triggered, this, [this]() {
