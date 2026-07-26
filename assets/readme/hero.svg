@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="340" viewBox="0 0 1200 340"
+     role="img" aria-labelledby="title desc">
+  <title id="title">JSONTitan</title>
+  <desc id="desc">JSONTitan a Qt desktop inspector that opens gigabyte-scale JSON files
+  into a searchable, editable tree. Right side shows a JSON document rendered in the
+  app's own syntax colors with a 2.1 GB size marker.</desc>
+
+  <!-- Background: the app's own window color -->
+  <rect width="1200" height="340" rx="16" fill="#1e1e2e"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="338.5" rx="15.25"
+        fill="none" stroke="#45475a" stroke-width="1.5"/>
+
+  <!-- ── Title block ─────────────────────────────────────────────── -->
+  <g id="title-block" transform="translate(64 78)">
+    <text x="0" y="0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="20" letter-spacing="6" fill="#6c7086">TITAN-CLASS JSON INSPECTOR</text>
+
+    <!-- Name with the app's depth-colored braces as the motif -->
+    <text x="-6" y="86" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="76" font-weight="700">
+      <tspan fill="#f38ba8">{</tspan><tspan fill="#cdd6f4" dx="8">JSON</tspan><tspan fill="#89b4fa">Titan</tspan><tspan fill="#f38ba8" dx="8">}</tspan>
+    </text>
+
+    <text x="0" y="138" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+          font-size="27" fill="#cdd6f4">Open gigabytes of JSON and search it,</text>
+    <text x="0" y="174" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+          font-size="27" fill="#cdd6f4">query it, edit it, while the UI never freezes.</text>
+
+    <!-- Metadata row -->
+    <g transform="translate(0 216)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+       font-size="19" fill="#a6adc8">
+      <text x="0" y="0">C++23</text>
+      <circle cx="88" cy="-6" r="2.5" fill="#45475a"/>
+      <text x="104" y="0">Qt 6 Widgets</text>
+      <circle cx="260" cy="-6" r="2.5" fill="#45475a"/>
+      <text x="276" y="0">simdjson</text>
+      <circle cx="392" cy="-6" r="2.5" fill="#45475a"/>
+      <text x="408" y="0">487 tests</text>
+    </g>
+  </g>
+
+  <!-- ── Project proof: mini document in the app's real syntax colors ── -->
+  <g id="project-proof" transform="translate(724 40)">
+    <rect x="0" y="0" width="412" height="260" rx="10" fill="#181825"/>
+    <rect x="0.75" y="0.75" width="410.5" height="258.5" rx="9.25"
+          fill="none" stroke="#45475a" stroke-width="1.5"/>
+
+    <!-- Panel header echoing the app's search bar -->
+    <rect x="14" y="14" width="288" height="34" rx="8" fill="#1e1e2e"
+          stroke="#89b4fa" stroke-width="1.5"/>
+    <text x="28" y="37" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="19" fill="#cdd6f4">$[*].info.label</text>
+    <rect x="312" y="14" width="86" height="34" rx="8" fill="#89b4fa"/>
+    <text x="355" y="37" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="19" font-weight="700" fill="#1e1e2e" text-anchor="middle">$</text>
+
+    <!-- Tree lines mirroring the repository's real 2.1 GB test document
+         (massive_data.json: 8,375,875 objects), in the app's token colors -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19">
+      <text x="28"  y="86"><tspan fill="#f38ba8">[</tspan></text>
+      <text x="48"  y="114"><tspan fill="#fab387">{</tspan><tspan fill="#89b4fa"> "id"</tspan><tspan fill="#cdd6f4">: </tspan><tspan fill="#fab387">8375874</tspan><tspan fill="#cdd6f4">,</tspan></text>
+      <text x="66"  y="142"><tspan fill="#89b4fa">"active"</tspan><tspan fill="#cdd6f4">: </tspan><tspan fill="#cba6f7">true</tspan><tspan fill="#cdd6f4">,</tspan></text>
+      <text x="66"  y="170"><tspan fill="#89b4fa">"metadata"</tspan><tspan fill="#cdd6f4">: </tspan><tspan fill="#f38ba8">null</tspan><tspan fill="#cdd6f4">,</tspan></text>
+      <text x="66"  y="198"><tspan fill="#89b4fa">"score"</tspan><tspan fill="#cdd6f4">: </tspan><tspan fill="#fab387">916.64</tspan><tspan fill="#cdd6f4">,</tspan></text>
+      <text x="66"  y="226"><tspan fill="#89b4fa">"info"</tspan><tspan fill="#cdd6f4">: </tspan><tspan fill="#f9e2af">{</tspan><tspan fill="#cdd6f4"> … </tspan><tspan fill="#f9e2af">}</tspan><tspan fill="#cdd6f4"> </tspan><tspan fill="#fab387">}</tspan><tspan fill="#cdd6f4">,</tspan></text>
+      <text x="48"  y="254"><tspan fill="#cdd6f4">×8,375,875 …</tspan></text>
+    </g>
+
+    <!-- Size marker -->
+    <g transform="translate(298 214)">
+      <rect x="0" y="0" width="100" height="32" rx="8" fill="#1e1e2e"
+            stroke="#a6e3a1" stroke-width="1.5"/>
+      <text x="50" y="22" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700" fill="#a6e3a1" text-anchor="middle">2.1 GB</text>
+    </g>
+  </g>
+</svg>

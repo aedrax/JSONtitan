@@ -1,74 +1,100 @@
-# JSONTitan
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%"
+       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 487 tests.">
+</p>
 
-JSONTitan is a high-performance, C++ Qt6-based desktop application engineered to open, navigate, and analyze extremely large JSON files without compromising system responsiveness. 
+<p align="center">
+  <img src="./assets/readme/screenshot-dark.png" width="100%"
+       alt="JSONTitan inspecting a 137 MB document with 3,761,044 nodes: a JSONPath query $.plugins.*.parameters returns 216 matches, the tree is pruned to the matching branches, and the detail panel shows the selected subtree with syntax coloring.">
+</p>
+<p align="center"><sub>
+  A real session: a 137&nbsp;MB / 3.76&nbsp;million-node document, filtered live by the
+  JSONPath query <code>$.plugins.*.parameters</code> 216 matches, highlighted and
+  navigable with <kbd>F3</kbd>.
+</sub></p>
 
-Designed for developers, data scientists, and engineers who routinely work with massive datasets, JSONTitan provides intuitive tree-based navigation, powerful search capabilities, multi-file unioning, and versatile export options.
+JSONTitan is a Qt 6 desktop app for the JSON files that break other tools.
+It opens multi-gigabyte documents into a lazy tree you can search, query with
+JSONPath, edit with undo, and export, while parsing happens on a worker thread
+you can cancel at any moment.
 
-## ✨ Features
+## Why it stays responsive
 
-* **High-Performance Large File Support:** Optimized memory management and parsing to open gigabyte-sized JSON files that crash standard text editors.
-* **Hierarchical Tree View:** Navigate complex JSON structures effortlessly. The UI parses and displays nested objects and arrays in a clean, collapsible tree view.
-* **Advanced Search & Filtering:** A lightning-fast search bar allows you to filter keys and values across the entire document, instantly highlighting and isolating relevant sub-objects.
-* **Multi-File Union:** Open and combine multiple JSON files into a single, unified workspace. This allows you to view, search, and analyze data across disparate files concurrently within the same window.
-* **Versatile Exporting:** Seamlessly convert and export your parsed JSON data (or filtered subsets) into **CSV** or **XML** formats for use in external spreadsheet tools or legacy systems.
+<p align="center">
+  <img src="./assets/readme/pipeline.svg" width="100%"
+       alt="Pipeline: the file is read and parsed by simdjson into a single memory arena on a cancellable worker thread; the UI thread materializes tree rows lazily, 100 at a time.">
+</p>
 
-## 🏛️ Architecture
+- **simdjson** parses at SIMD speed on a background thread; progress is live and cancellation takes effect mid-parse.
+- Nodes land in a single **memory arena** no per-node heap allocations, and the raw file bytes are released the moment parsing ends.
+- The tree view is **lazy**: rows materialize 100 at a time as you expand and scroll, so a 3.7-million-node document opens instantly.
+- Viewing, saving, and exporting stream **directly from the arena** nothing is ever deep-copied just to display it.
 
-This project strictly adheres to the **Functional Core, Imperative Shell** architectural pattern to ensure high testability, maintainability, and thread safety.
+Verified against this repository's own 2.1 GB, 8.4-million-record test document.
 
-* **Functional Core:** All data transformations, JSON parsing, tree-building logic, search filtering, and formatting operations (CSV/XML generation) exist within a pure, functional core. 
-  * **I/O Constraint:** State mutation and side-effects are strictly prohibited in the core. The *only* Input/Output (I/O) operation permitted within the core is appending to diagnostic log files.
-* **Imperative Shell:** The Qt6 graphical user interface, file system interactions, thread management, and memory allocations act as the imperative shell. The shell is responsible for gathering user input, feeding immutable data structures into the functional core, and displaying the resulting pure outputs back to the user.
+## What you can do
 
-## 🛠️ Prerequisites
+| | |
+|---|---|
+| **Search three ways** | Substring, regex, or a JSONPath subset (`$.store.book[*].author`, `..`, `[n]`, wildcards) with match count, <kbd>F3</kbd>/<kbd>Shift+F3</kbd> navigation, and highlighted results |
+| **Edit safely** | Inline value editing (<kbd>F2</kbd>), key rename with duplicate detection, node deletion all undoable (<kbd>Ctrl+Z</kbd>), all saved atomically so a failed write never destroys your file |
+| **Combine files** | Union multiple documents into one tree, parsed in the background; remove sources again at any time |
+| **Export anything** | Whole document or any subtree as JSON, CSV (injection-safe), or XML streamed to disk, never built in memory |
+| **Stay oriented** | Breadcrumb path bar, copy key/value/JSONPath to clipboard, type & size columns, expand-to-level controls |
+| **Trust the app** | External-change watcher with reload prompt, session restore, unsaved-changes guards everywhere |
 
-To build and run this project, you will need the following installed on your system:
+Light and dark themes follow the app's Catppuccin palette and persist across sessions:
 
-* **C++ Compiler:** Supporting C++23
-* **CMake:** Version 3.16 or newer.
-* **Qt6:** The core framework (Specifically `Core`, `Gui`, and `Widgets` modules). 
+| Dark (Mocha) | Light (Latte) |
+|---|---|
+| ![Dark theme: JSONPath query over a pruned tree](./assets/readme/screenshot-dark.png) | ![Light theme: expanded tree with type and size columns, breadcrumb, and detail panel](./assets/readme/screenshot-light.png) |
 
-## 🚀 Building from Source
+## Build and run
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/yourusername/JSONTitan.git
-   cd JSONTitan
-   ```
+Requires a C++23 compiler, CMake ≥ 3.16, and Qt 6 (`Core`, `Gui`, `Widgets`). simdjson is fetched automatically.
 
-2. **Create a build directory:**
-   ```bash
-   mkdir build && cd build
-   ```
+```bash
+git clone https://github.com/yourusername/JSONTitan.git
+cd JSONTitan
+cmake -B build && cmake --build build -j
+./build/src/shell/jsontitan_shell your-huge-file.json
+```
 
-3. **Run CMake and build:**
-   ```bash
-   cmake ..
-   cmake --build .
-   ```
+Run the test suite (487 tests: GoogleTest, RapidCheck property tests, Qt Test):
 
-4. **Run the application:**
-   ```bash
-   ./JSONTitan  # Or the respective executable name on your OS
-   ```
+```bash
+ctest --test-dir build
+```
 
-## 📖 Usage Guide
+## Keyboard reference
 
-* **Opening Files:** Use `File > Open` to load a single JSON file. To utilize the Union feature, use `File > Union Files` and select multiple JSON documents; they will populate under a single root node in the tree view.
-* **Navigating:** Expand and collapse nodes in the left-hand tree view to explore data arrays and nested objects.
-* **Searching:** Type into the top search bar. The tree view will automatically prune to show only the nodes containing the matched keys or values.
-* **Exporting:** Select a specific node (or the root node), right-click, and choose `Export to CSV` or `Export to XML`.
+| Shortcut | Action | Shortcut | Action |
+|---|---|---|---|
+| <kbd>Ctrl+O</kbd> | Open | <kbd>Ctrl+F</kbd> | Focus search |
+| <kbd>Ctrl+S</kbd> | Save (atomic) | <kbd>F3</kbd> / <kbd>Shift+F3</kbd> | Next / previous match |
+| <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Shift+Z</kbd> | Undo / redo | <kbd>F2</kbd> | Edit value inline |
+| <kbd>Del</kbd> | Delete node | <kbd>F5</kbd> | Reload from disk |
+| <kbd>Ctrl+Shift+E</kbd> / <kbd>C</kbd> | Expand / collapse all | <kbd>Esc</kbd> | Cancel a running load |
 
-## 🤝 Contributing
+## Architecture
 
-Contributions, issues, and feature requests are welcome! 
+The codebase follows **functional core, imperative shell**:
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+- `src/core` pure C++, no Qt: parsing (simdjson adapter + a streaming reference parser used as a differential-test oracle), the arena allocator, search and JSONPath engines, immutable edit/delete engines with structural sharing (which is what makes undo nearly free), and streaming exporters.
+- `src/shell` Qt 6: a lazy `QAbstractItemModel` over either tree backing, worker-thread loaders with request-generation cancellation, and focused controllers (document session, search, edit, union) around a thin main window.
 
-## 📄 License
+Everything in the core is exercised by property-based tests; the shell is tested headlessly with Qt Test.
 
-Distributed under the MIT License. See `LICENSE` for more information.
+## Limits worth knowing
+
+- Peak memory **during** parsing is a multiple of file size (input + simdjson DOM + arena coexist briefly). Steady-state drops to the arena alone once loading finishes.
+- The JSONPath engine covers the navigation subset filter expressions like `[?(@.price < 10)]` are intentionally not supported (yet) and say so explicitly.
+- Nesting is capped at 1,024 levels (matching simdjson) so hostile inputs fail with an error instead of a stack overflow.
+
+## Contributing
+
+Issues and pull requests are welcome. Fork, branch, make the tests pass (`ctest --test-dir build`), and open a PR.
+
+## License
+
+MIT.
