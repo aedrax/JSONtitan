@@ -3365,6 +3365,43 @@ TEST(XmlExporter, EscapeXmlTextAllReserved) {
     EXPECT_EQ(escapeXmlText("&<>\"'"), "&amp;&lt;&gt;&quot;&apos;");
 }
 
+TEST(XmlExporter, ControlCharactersSubstitutedNotEmittedRaw) {
+    // 0x00-0x1F (except TAB/LF/CR) are illegal in XML 1.0 even as character
+    // references; they must be replaced, not passed through.
+    std::string input = "a";
+    input += '\x01';
+    input += 'b';
+    input += '\x1F';
+    input += '\0';
+    input += 'c';
+    auto out = escapeXmlText(input);
+    EXPECT_EQ(out, "a\xEF\xBF\xBD" "b\xEF\xBF\xBD\xEF\xBF\xBD" "c");
+    // Whitespace controls stay untouched.
+    EXPECT_EQ(escapeXmlText("a\tb\nc\rd"), "a\tb\nc\rd");
+}
+
+TEST(CsvExporter, FormulaCellsNeutralized) {
+    // A string value starting with a formula trigger must not open as a
+    // formula in Excel/LibreOffice: it is quoted and prefixed with '.
+    auto root = JsonNode::makeArray("", {
+        JsonNode::makeObject("", {
+            JsonNode::makeString("a", "=HYPERLINK(\"http://evil\")"),
+            JsonNode::makeString("b", "@cmd"),
+            JsonNode::makeString("c", "-not a number"),
+            JsonNode::makeNumber("d", "-5"),
+        }),
+    });
+    auto result = exportCsv(*root);
+    const auto* csv = std::get_if<std::string>(&result);
+    ASSERT_NE(csv, nullptr);
+    EXPECT_NE(csv->find("\"'=HYPERLINK"), std::string::npos);
+    EXPECT_NE(csv->find("\"'@cmd\""), std::string::npos);
+    EXPECT_NE(csv->find("\"'-not a number\""), std::string::npos);
+    // Numeric cells stay raw so spreadsheets treat them as numbers.
+    EXPECT_NE(csv->find(",-5"), std::string::npos);
+    EXPECT_EQ(csv->find("'-5"), std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // Task 9.2: Property 14 — XML Well-Formedness
 // Validates: Requirements 7.1, 7.2

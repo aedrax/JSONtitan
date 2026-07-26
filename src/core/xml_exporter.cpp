@@ -116,7 +116,20 @@ auto escapeXmlText(const std::string& text) -> std::string {
             case '>':  result += "&gt;";   break;
             case '"':  result += "&quot;"; break;
             case '\'': result += "&apos;"; break;
-            default:   result += c;        break;
+            default: {
+                // JSON strings may contain control characters (via \u escapes)
+                // that are illegal in XML 1.0 even as character references
+                // (everything below 0x20 except TAB/LF/CR). Emitting them raw
+                // produces a file every conforming XML parser rejects, so
+                // substitute U+FFFD (as UTF-8) instead.
+                auto uc = static_cast<unsigned char>(c);
+                if (uc < 0x20 && c != '\t' && c != '\n' && c != '\r') {
+                    result += "\xEF\xBF\xBD";  // U+FFFD REPLACEMENT CHARACTER
+                } else {
+                    result += c;
+                }
+                break;
+            }
         }
     }
 

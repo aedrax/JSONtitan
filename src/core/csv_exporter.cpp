@@ -12,8 +12,22 @@ namespace {
 // Escape a CSV cell value per RFC 4180:
 // If the value contains commas, double quotes, or newlines, enclose it in
 // double quotes and double any internal double quotes.
-auto escapeCsvCell(const std::string& value) -> std::string {
-    bool needsQuoting = false;
+//
+// Additionally, when guardFormula is set, neutralize formula injection:
+// cells beginning with '=', '+', '-', '@', tab, or CR are interpreted as
+// formulas by Excel/LibreOffice. Values originating from untrusted JSON
+// strings get prefixed with a single quote (the standard neutralization)
+// and force-quoted. Numeric/boolean/null cells are exported unguarded so
+// negative numbers stay numeric.
+auto escapeCsvCell(const std::string& value, bool guardFormula = true) -> std::string {
+    bool formulaRisk = false;
+    if (guardFormula && !value.empty()) {
+        char first = value.front();
+        formulaRisk = (first == '=' || first == '+' || first == '-' ||
+                       first == '@' || first == '\t' || first == '\r');
+    }
+
+    bool needsQuoting = formulaRisk;
     for (char c : value) {
         if (c == ',' || c == '"' || c == '\n' || c == '\r') {
             needsQuoting = true;
@@ -26,8 +40,11 @@ auto escapeCsvCell(const std::string& value) -> std::string {
     }
 
     std::string result;
-    result.reserve(value.size() + 4);
+    result.reserve(value.size() + 5);
     result += '"';
+    if (formulaRisk) {
+        result += '\'';
+    }
     for (char c : value) {
         if (c == '"') {
             result += "\"\"";
@@ -220,7 +237,10 @@ auto exportCsv(const JsonNode& node) -> CsvResult {
             for (const auto& field : obj->children) {
                 if (field->key == headerKey) {
                     std::string cellValue = serializeNodeValue(*field);
-                    result += escapeCsvCell(cellValue);
+                    bool textual = field->type != NodeType::Number &&
+                                   field->type != NodeType::Boolean &&
+                                   field->type != NodeType::Null;
+                    result += escapeCsvCell(cellValue, textual);
                     found = true;
                     break;
                 }
