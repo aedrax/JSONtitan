@@ -131,6 +131,7 @@ private:
     QLabel* m_matchCountLabel = nullptr;
     QToolButton* m_caseSensitiveToggle = nullptr;
     QToolButton* m_regexToggle = nullptr;
+    QToolButton* m_jsonPathToggle = nullptr;
     QLabel* m_searchErrorLabel = nullptr;
     QTreeView* m_treeView = nullptr;
     QTextEdit* m_detailPanel = nullptr;

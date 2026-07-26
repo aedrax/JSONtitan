@@ -37,6 +37,9 @@ public:
         // Small "N matches" label next to the search bar; hidden whenever no
         // search is active.
         QLabel* matchCountLabel = nullptr;
+        // "$" JSONPath-mode toggle; mutually exclusive with regexToggle.
+        // Optional (some fixtures omit it): nullptr disables JSONPath mode.
+        QToolButton* jsonPathToggle = nullptr;
     };
 
     SearchController(Ui ui, TreeModel* treeModel, FilterProxyModel* filterProxy,
@@ -79,6 +82,9 @@ private:
     void clearMatchState();
 
     Ui m_ui;
+    // Placeholder text the search bar had at construction; restored when the
+    // JSONPath toggle (which swaps in a JSONPath hint) is unchecked.
+    QString m_defaultPlaceholder;
     TreeModel* m_treeModel = nullptr;
     FilterProxyModel* m_filterProxy = nullptr;
     DocumentSession* m_session = nullptr;

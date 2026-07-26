@@ -49,6 +49,29 @@ SearchController::SearchController(Ui ui, TreeModel* treeModel,
             this, [this]() { if (!m_ui.bar->text().isEmpty()) m_debounceTimer->start(); });
     connect(m_ui.regexToggle, &QToolButton::toggled,
             this, [this]() { if (!m_ui.bar->text().isEmpty()) m_debounceTimer->start(); });
+    if (m_ui.jsonPathToggle) {
+        m_defaultPlaceholder = m_ui.bar->placeholderText();
+        // JSONPath and regex modes are mutually exclusive: checking one
+        // unchecks the other. The case toggle is meaningless for JSONPath
+        // (member names are exact), so it is disabled while "$" is active.
+        connect(m_ui.jsonPathToggle, &QToolButton::toggled,
+                this, [this](bool checked) {
+                    if (checked && m_ui.regexToggle->isChecked()) {
+                        m_ui.regexToggle->setChecked(false);
+                    }
+                    m_ui.caseToggle->setEnabled(!checked);
+                    m_ui.bar->setPlaceholderText(
+                        checked ? tr("JSONPath query ($.store.book[*].author)")
+                                : m_defaultPlaceholder);
+                    if (!m_ui.bar->text().isEmpty()) m_debounceTimer->start();
+                });
+        connect(m_ui.regexToggle, &QToolButton::toggled,
+                this, [this](bool checked) {
+                    if (checked && m_ui.jsonPathToggle->isChecked()) {
+                        m_ui.jsonPathToggle->setChecked(false);
+                    }
+                });
+    }
     // Return in the search bar jumps to the next match.
     connect(m_ui.bar, &QLineEdit::returnPressed,
             this, &SearchController::nextMatch);
@@ -189,7 +212,12 @@ void SearchController::executeSearch() {
     jsontitan::core::SearchQuery query;
     query.caseSensitive = m_ui.caseToggle->isChecked();
 
-    if (m_ui.regexToggle->isChecked()) {
+    if (m_ui.jsonPathToggle && m_ui.jsonPathToggle->isChecked()) {
+        // JSONPath toggle is ON: evaluate the text as a JSONPath expression
+        // (caseSensitive is ignored by the engine in this mode).
+        query.pattern = text.toStdString();
+        query.mode = jsontitan::core::SearchMode::JsonPath;
+    } else if (m_ui.regexToggle->isChecked()) {
         // Regex toggle is ON: treat entire text as regex pattern
         query.pattern = text.toStdString();
         query.mode = jsontitan::core::SearchMode::Regex;

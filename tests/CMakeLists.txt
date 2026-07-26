@@ -385,6 +385,19 @@ target_link_libraries(undo_stack_tests
 
 gtest_discover_tests(undo_stack_tests)
 
+# ── JSONPath Tests (Google Test + RapidCheck, no Qt) ─────────────
+add_executable(jsonpath_tests jsonpath_tests.cpp)
+
+target_link_libraries(jsonpath_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(jsonpath_tests)
+
 # ── Deletion Engine PBT (Google Test + RapidCheck, no Qt) ────────
 add_executable(deletion_engine_pbt deletion_engine_pbt.cpp)
 

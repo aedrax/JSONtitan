@@ -10,7 +10,7 @@
 
 namespace jsontitan::core {
 
-enum class SearchMode { Substring, Regex };
+enum class SearchMode { Substring, Regex, JsonPath };
 
 struct SearchQuery {
     std::string pattern;

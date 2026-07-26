@@ -56,7 +56,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_searchController = new SearchController(
         SearchController::Ui{m_searchBar, m_caseSensitiveToggle, m_regexToggle,
                              m_searchErrorLabel, m_noResultsLabel, m_treeView,
-                             m_matchCountLabel},
+                             m_matchCountLabel, m_jsonPathToggle},
         m_treeModel, m_filterProxy, m_session, this);
 
     // Search shortcuts: Ctrl+F focuses the search bar, F3 / Shift+F3 step
@@ -457,6 +457,14 @@ void MainWindow::setupCentralWidget() {
     m_regexToggle->setChecked(false);
     m_regexToggle->setToolTip(tr("Regex Mode"));
     searchLayout->addWidget(m_regexToggle);
+
+    m_jsonPathToggle = new QToolButton(centralWidget);
+    m_jsonPathToggle->setObjectName("jsonPathToggle");
+    m_jsonPathToggle->setText(tr("$"));
+    m_jsonPathToggle->setCheckable(true);
+    m_jsonPathToggle->setChecked(false);
+    m_jsonPathToggle->setToolTip(tr("JSONPath query ($.store.book[*].author)"));
+    searchLayout->addWidget(m_jsonPathToggle);
 
     mainLayout->addLayout(searchLayout);
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -70,18 +71,23 @@ auto parseBracket(std::string_view expr, std::size_t& pos)
     }
 
     if (std::isdigit(static_cast<unsigned char>(expr[pos])) != 0) {
-        std::size_t start = pos;
+        const std::size_t start = pos;
         std::size_t value = 0;
         while (pos < expr.size() &&
                std::isdigit(static_cast<unsigned char>(expr[pos])) != 0) {
-            value = value * 10 + static_cast<std::size_t>(expr[pos] - '0');
+            const auto digit = static_cast<std::size_t>(expr[pos] - '0');
+            // Overflow guard: the draft silently wrapped huge indices around
+            // std::size_t, turning e.g. [18446744073709551616] into [0].
+            if (value > (std::numeric_limits<std::size_t>::max() - digit) / 10) {
+                return parseError(start, "Array index too large");
+            }
+            value = value * 10 + digit;
             ++pos;
         }
         if (pos >= expr.size() || expr[pos] != ']') {
             return parseError(pos, "Expected ']' after index");
         }
         ++pos;
-        (void)start;
         return JsonPathStep{.kind = JsonPathStep::Kind::Index, .index = value};
     }
 
@@ -112,6 +118,8 @@ struct WorkItem {
 };
 
 // Enumerate `item` and every descendant (pre-order) into `out`.
+// Recurses once per tree level; safe because JSON nesting is parse-capped at
+// 1024 (parser.cpp kMaxDepth / simdjson's max_depth), far below stack limits.
 void enumerateRecursive(const WorkItem& item, std::vector<WorkItem>& out) {
     out.push_back(item);
     const std::size_t count = item.node.childCount();

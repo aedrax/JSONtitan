@@ -15,6 +15,7 @@ add_library(jsontitan_core STATIC
     pretty_printer.cpp
     recent_files.cpp
     search_engine.cpp
+    jsonpath.cpp
     union_engine.cpp
     csv_exporter.cpp
     xml_exporter.cpp

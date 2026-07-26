@@ -4,6 +4,9 @@
 #include <cctype>
 #include <regex>
 
+#include "core/jsonpath.h"
+#include "core/node_view.h"
+
 namespace jsontitan::core {
 
 namespace {
@@ -161,6 +164,12 @@ auto filter(const JsonNode& root, const SearchQuery& query,
         return FilterResult{.matches = {}, .error = std::nullopt};
     }
 
+    // JSONPath mode is a structural query, not a text scan: delegate to the
+    // JSONPath engine (caseSensitive is ignored — member names are exact).
+    if (query.mode == SearchMode::JsonPath) {
+        return queryJsonPath(NodeView(root), query.pattern);
+    }
+
     std::regex regexStorage;
     CompiledQuery cq = {.query = query};
     cq.shouldCancel = &shouldCancel;
@@ -199,6 +208,12 @@ auto filter(const ArenaJsonNode& root, const SearchQuery& query,
     // Empty pattern matches nothing — return empty results (not an error)
     if (query.pattern.empty()) {
         return FilterResult{.matches = {}, .error = std::nullopt};
+    }
+
+    // JSONPath mode: same structural evaluation as the JsonNode overload —
+    // NodeView abstracts the backing, so matches carry identical index paths.
+    if (query.mode == SearchMode::JsonPath) {
+        return queryJsonPath(NodeView(root), query.pattern);
     }
 
     std::regex regexStorage;

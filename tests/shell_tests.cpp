@@ -1146,6 +1146,145 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 5c commit 1: JSONPath query mode through the SearchController
+// pipeline — "$" toggle, mode dispatch, match count, filter, error label.
+// ---------------------------------------------------------------------------
+
+class JsonPathSearchTest : public QObject {
+    Q_OBJECT
+
+private:
+    struct Fixture {
+        QLineEdit bar;
+        QToolButton caseToggle;
+        QToolButton regexToggle;
+        QToolButton jsonPathToggle;
+        QLabel errorLabel;
+        QLabel noResultsLabel;
+        QLabel matchCountLabel;
+        QTreeView tree;
+        TreeModel model;
+        FilterProxyModel proxy;
+        DocumentSession session{&model};
+        SearchController controller{
+            SearchController::Ui{&bar, &caseToggle, &regexToggle, &errorLabel,
+                                 &noResultsLabel, &tree, &matchCountLabel,
+                                 &jsonPathToggle},
+            &model, &proxy, &session};
+
+        Fixture() {
+            caseToggle.setCheckable(true);
+            regexToggle.setCheckable(true);
+            jsonPathToggle.setCheckable(true);
+            proxy.setSourceModel(&model);
+            tree.setModel(&proxy);
+        }
+    };
+
+    static std::shared_ptr<const JsonNode> makeStoreTree() {
+        // { "store": { "book": [ {author,title}, {author,title} ] },
+        //   "name": "top" }
+        return JsonNode::makeObject("", {
+            JsonNode::makeObject("store", {
+                JsonNode::makeArray("book", {
+                    JsonNode::makeObject("", {
+                        JsonNode::makeString("author", "A1"),
+                        JsonNode::makeString("title", "T1")
+                    }),
+                    JsonNode::makeObject("", {
+                        JsonNode::makeString("author", "A2"),
+                        JsonNode::makeString("title", "T2")
+                    })
+                })
+            }),
+            JsonNode::makeString("name", "top")
+        });
+    }
+
+private slots:
+    void testJsonPathQueryUpdatesMatchCountAndFilter() {
+        Fixture f;
+        f.session.setJsonRoot(makeStoreTree(), QString(), QString(), false);
+
+        f.jsonPathToggle.setChecked(true);
+        f.bar.setText("$.store.book[*].author");
+
+        QTRY_COMPARE_WITH_TIMEOUT(f.controller.matchPaths().size(),
+                                  std::size_t(2), 5000);
+        QVERIFY(f.proxy.isFiltered());
+        QCOMPARE(f.matchCountLabel.text(), QString("2 matches"));
+        QVERIFY(!f.matchCountLabel.isHidden());
+        QVERIFY(f.errorLabel.isHidden());
+
+        // The filter prunes the tree to matches + ancestors: only "store"
+        // remains at top level ("name" is filtered out).
+        QCOMPARE(f.proxy.rowCount(), 1);
+        QVERIFY(f.proxy.index(0, 0).data().toString().contains("store"));
+
+        // F3 navigation steps through the author rows (JSONPath matches have
+        // node == nullptr; navigation runs purely on ancestor index paths).
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().isValid());
+        QVERIFY(f.tree.currentIndex().data().toString().contains("author"));
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().data().toString().contains("author"));
+
+        // Auto-expand made the nested matches visible.
+        QModelIndex storeIdx = f.proxy.index(0, 0);
+        QVERIFY(f.tree.isExpanded(storeIdx));
+    }
+
+    void testJsonPathParseErrorShowsCoreErrorVerbatim() {
+        Fixture f;
+        f.session.setJsonRoot(makeStoreTree(), QString(), QString(), false);
+
+        f.jsonPathToggle.setChecked(true);
+        f.bar.setText("$[?(@.x)]");
+
+        QTRY_VERIFY_WITH_TIMEOUT(!f.errorLabel.isHidden(), 5000);
+        // The core error text is shown verbatim.
+        QCOMPARE(f.errorLabel.text(),
+                 QString("JSONPath error at position 1: "
+                         "JSONPath filter expressions are not supported"));
+        QVERIFY(f.controller.matchPaths().empty());
+        QVERIFY(f.matchCountLabel.isHidden());
+    }
+
+    void testTogglesAreMutuallyExclusiveAndCaseDisabled() {
+        Fixture f;
+
+        const QString defaultPlaceholder = f.bar.placeholderText();
+
+        // Checking JSONPath unchecks regex, disables the case toggle, and
+        // swaps in a JSONPath placeholder hint.
+        f.regexToggle.setChecked(true);
+        f.jsonPathToggle.setChecked(true);
+        QVERIFY(!f.regexToggle.isChecked());
+        QVERIFY(!f.caseToggle.isEnabled());
+        QVERIFY(f.bar.placeholderText().contains("JSONPath"));
+
+        // Checking regex unchecks JSONPath again; case toggle re-enables and
+        // the placeholder is restored.
+        f.regexToggle.setChecked(true);
+        QVERIFY(!f.jsonPathToggle.isChecked());
+        QVERIFY(f.caseToggle.isEnabled());
+        QCOMPARE(f.bar.placeholderText(), defaultPlaceholder);
+    }
+
+    void testJsonPathWithoutMatchesShowsNoResults() {
+        Fixture f;
+        f.session.setJsonRoot(makeStoreTree(), QString(), QString(), false);
+
+        f.jsonPathToggle.setChecked(true);
+        f.bar.setText("$.does.not.exist");
+
+        QTRY_VERIFY_WITH_TIMEOUT(!f.matchCountLabel.isHidden(), 5000);
+        QCOMPARE(f.matchCountLabel.text(), QString("No matches"));
+        QVERIFY(!f.noResultsLabel.isHidden());
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Task 14.2: Unit tests for ExportHandler
 // Requirements: 6.6, 7.5
 // ---------------------------------------------------------------------------
@@ -2999,6 +3138,9 @@ int main(int argc, char* argv[]) {
 
     SearchNavigationTest searchNavTest;
     status |= QTest::qExec(&searchNavTest, argc, argv);
+
+    JsonPathSearchTest jsonPathSearchTest;
+    status |= QTest::qExec(&jsonPathSearchTest, argc, argv);
 
     ExportHandlerTest exportHandlerTest;
     status |= QTest::qExec(&exportHandlerTest, argc, argv);
