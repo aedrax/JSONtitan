@@ -4,8 +4,36 @@
 #include "core/csv_exporter.h"
 #include "core/xml_exporter.h"
 
-#include <QFile>
-#include <QTextStream>
+#include <QSaveFile>
+
+namespace {
+
+// Writes content to filePath via QSaveFile: the target is only replaced after
+// the full write succeeds, so a failure never destroys an existing file.
+auto writeAtomically(const std::string& content, const QString& filePath) -> QString {
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return QStringLiteral("Failed to open file for writing: %1 (%2)")
+            .arg(filePath, file.errorString());
+    }
+
+    auto bytesWritten = file.write(content.data(),
+                                   static_cast<qint64>(content.size()));
+    if (bytesWritten != static_cast<qint64>(content.size())
+        || file.error() != QFileDevice::NoError) {
+        return QStringLiteral("Failed to write to file: %1 (%2)")
+            .arg(filePath, file.errorString());
+    }
+
+    if (!file.commit()) {
+        return QStringLiteral("Failed to save file: %1 (%2)")
+            .arg(filePath, file.errorString());
+    }
+
+    return {};
+}
+
+} // namespace
 
 auto ExportHandler::exportCsvToFile(const jsontitan::core::JsonNode& node,
                                     const QString& filePath) -> QString {
@@ -17,24 +45,10 @@ auto ExportHandler::exportCsvToFile(const jsontitan::core::JsonNode& node,
         return QString::fromStdString(error->description);
     }
 
-    // Write the CSV content to the file
+    // Write the CSV content to the file (atomic: commit() replaces the target
+    // only after the full write succeeded).
     const auto& csvContent = std::get<std::string>(result);
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        return QStringLiteral("Failed to open file for writing: %1 (%2)")
-            .arg(filePath, file.errorString());
-    }
-
-    auto bytesWritten = file.write(csvContent.data(),
-                                   static_cast<qint64>(csvContent.size()));
-    if (bytesWritten < 0 || file.error() != QFileDevice::NoError) {
-        return QStringLiteral("Failed to write to file: %1 (%2)")
-            .arg(filePath, file.errorString());
-    }
-
-    file.close();
-    return {};
+    return writeAtomically(csvContent, filePath);
 }
 
 auto ExportHandler::exportXmlToFile(const jsontitan::core::JsonNode& node,
@@ -43,22 +57,7 @@ auto ExportHandler::exportXmlToFile(const jsontitan::core::JsonNode& node,
     // Call the pure core XML exporter
     std::string xmlContent = jsontitan::core::exportXml(node, rootElementName);
 
-    // Write the XML content to the file
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        return QStringLiteral("Failed to open file for writing: %1 (%2)")
-            .arg(filePath, file.errorString());
-    }
-
-    auto bytesWritten = file.write(xmlContent.data(),
-                                   static_cast<qint64>(xmlContent.size()));
-    if (bytesWritten < 0 || file.error() != QFileDevice::NoError) {
-        return QStringLiteral("Failed to write to file: %1 (%2)")
-            .arg(filePath, file.errorString());
-    }
-
-    file.close();
-    return {};
+    return writeAtomically(xmlContent, filePath);
 }
 
 auto ExportHandler::exportCsvToFile(const jsontitan::core::ArenaJsonNode& node,
