@@ -24,6 +24,8 @@ struct SimdjsonParseOptions {
 struct SimdjsonResult {
     ArenaJsonNode* root = nullptr;
     std::optional<ParseError> error = std::nullopt;
+    /// Number of ArenaJsonNode instances constructed (0 on error).
+    std::size_t nodeCount = 0;
 };
 
 /// Parse a SourceBuffer using simdjson's DOM API.

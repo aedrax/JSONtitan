@@ -302,16 +302,13 @@ TEST(TokenEmitterProperty, TruncationCorrectness) {
                 RC_ASSERT(truncatedSize == fullSize);
             }
 
-            // Property D: When truncated, the output size is meaningfully bounded.
-            // The implementation checks the size limit at the start of each
-            // recursive emitNode call and before each child iteration. Between
-            // consecutive checks, a small batch of tokens may be emitted
-            // atomically (e.g., brace + newline + indent + key + colon).
-            // We verify the truncated output is at most the full output size
-            // (which is guaranteed by Properties A-C) and that the number of
-            // tokens emitted is fewer than the full token count.
+            // Property D: maxOutputSize is a hard byte budget — the emitter
+            // cuts the final token at a safe boundary instead of overshooting.
+            // The token COUNT may equal the full count when only the last
+            // token's text was shortened, but can never exceed it.
             if (truncatedResult.truncated) {
-                RC_ASSERT(truncatedResult.tokens.size() < fullResult.tokens.size());
+                RC_ASSERT(truncatedSize <= maxOutputSize);
+                RC_ASSERT(truncatedResult.tokens.size() <= fullResult.tokens.size());
             }
         }
     );

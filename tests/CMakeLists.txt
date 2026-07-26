@@ -162,6 +162,19 @@ target_link_libraries(qss_resource_tests
 
 add_test(NAME qss_resource_tests COMMAND qss_resource_tests)
 
+# ── NodeView Tests (Google Test + RapidCheck, no Qt) ─────────────
+add_executable(node_view_tests node_view_tests.cpp)
+
+target_link_libraries(node_view_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(node_view_tests)
+
 # ── Token Emitter Tests (Google Test + RapidCheck, no Qt) ────────
 add_executable(token_emitter_tests token_emitter_tests.cpp)
 

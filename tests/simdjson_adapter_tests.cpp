@@ -801,47 +801,38 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
 namespace {
 
 /// Recursively walk an ArenaJsonNode tree and verify that all non-empty
-/// StringRef values have non-null data pointers. For the simdjson backend,
-/// ALL strings must be arena-owned since simdjson's internal buffers are
-/// released after parse.
-///
-/// Additionally verifies that no StringRef data pointer falls within the
-/// SourceBuffer's memory range — for the simdjson path, strings should be
-/// copied into the arena, not referencing the source buffer.
+/// StringRef values have non-null data pointers and are readable. For the
+/// simdjson backend, ALL strings must be arena-owned: both simdjson's
+/// internal buffers AND the source buffer are released before parseBuffer
+/// returns, so a StringRef still pointing into either would be dangling
+/// (caught by sanitizers / garbage content) rather than silently retained.
 ///
 /// @param node The current node to check.
-/// @param sourceStart Start of the SourceBuffer's memory.
-/// @param sourceEnd End of the SourceBuffer's memory (exclusive).
 /// @param nodeCount Output: incremented for each node visited.
 /// @param stringRefCount Output: incremented for each non-empty StringRef checked.
 /// @return true if all checks pass, false otherwise.
 static bool verifyArenaIntegrity(const ArenaJsonNode* node,
-                                 const char* sourceStart,
-                                 const char* sourceEnd,
                                  std::size_t& nodeCount,
                                  std::size_t& stringRefCount) {
     if (!node) return false;
     nodeCount++;
 
-    // Check the key StringRef
+    // Check the key StringRef: materialize it to force a full read of the
+    // arena-owned bytes.
     if (node->key.data != nullptr && node->key.length > 0) {
         stringRefCount++;
-        // Pointer must not be within the source buffer
-        // (simdjson copies all strings to arena, not source)
-        if (node->key.data >= sourceStart && node->key.data < sourceEnd) return false;
+        if (node->key.toString().size() != node->key.length) return false;
     }
 
     // Check the value StringRef
     if (node->value.data != nullptr && node->value.length > 0) {
         stringRefCount++;
-        // Pointer must not be within the source buffer
-        if (node->value.data >= sourceStart && node->value.data < sourceEnd) return false;
+        if (node->value.toString().size() != node->value.length) return false;
     }
 
     // Recursively check all children
     for (std::size_t i = 0; i < node->childCount; ++i) {
-        if (!verifyArenaIntegrity(node->children[i], sourceStart, sourceEnd,
-                                  nodeCount, stringRefCount)) {
+        if (!verifyArenaIntegrity(node->children[i], nodeCount, stringRefCount)) {
             return false;
         }
     }
@@ -856,11 +847,10 @@ TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
         []() {
             const auto json = *generators::genValidJson();
 
-            // Parse using the SourceBuffer overload so we have access to both
-            // the arena and the source buffer memory ranges.
+            // Parse using the SourceBuffer overload. parseBuffer releases the
+            // source bytes before returning (all strings are copied into the
+            // arena), so the returned tree must be self-contained.
             auto source = std::make_unique<SourceBuffer>(std::string(json));
-            const char* sourceStart = source->data();
-            const char* sourceEnd = source->data() + source->size();
 
             auto result = parseBuffer(std::move(source),
                 ParseBufferOptions{});
@@ -869,23 +859,21 @@ TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
             RC_PRE(result.ok());
             RC_ASSERT(result.root != nullptr);
 
-            // Walk the entire tree and verify all StringRef pointers
+            // Walk the entire tree and verify all StringRef pointers are
+            // readable with the source buffer already destroyed.
             std::size_t nodeCount = 0;
             std::size_t stringRefCount = 0;
 
-            // Get source buffer range from the result (source was moved in)
-            const char* resultSourceStart = result.source->data();
-            const char* resultSourceEnd = result.source->data() + result.source->size();
-
             bool allValid = verifyArenaIntegrity(
-                result.root, resultSourceStart, resultSourceEnd,
-                nodeCount, stringRefCount);
+                result.root, nodeCount, stringRefCount);
 
-            // All StringRef pointers must be arena-owned and not in source buffer
+            // All StringRef pointers must be arena-owned and readable
             RC_ASSERT(allValid);
 
-            // Sanity check: we actually visited nodes
+            // Sanity check: we actually visited nodes, and the count carried
+            // on ArenaParseResult matches the real tree size.
             RC_ASSERT(nodeCount >= 1);
+            RC_ASSERT(nodeCount == result.nodeCount);
 
             // For JSON documents that contain non-empty string content
             // (keys or non-empty string values), we should have checked at

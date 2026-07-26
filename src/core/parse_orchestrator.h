@@ -13,12 +13,14 @@
 namespace jsontitan::core {
 
 // Result of parsing a complete buffer using the optimized pipeline.
-// Owns all memory (arena + source buffer) for the lifetime of the tree.
+// Owns all node memory (arena) for the lifetime of the tree. The source
+// bytes are NOT retained: convertElement copies every string into the
+// arena, so the input buffer is released as soon as parsing completes.
 struct ArenaParseResult {
     std::unique_ptr<ArenaAllocator> arena;   // Owns all node memory
-    std::unique_ptr<SourceBuffer> source;    // Owns the input bytes
     ArenaJsonNode* root = nullptr;           // Root of the parsed tree
     std::optional<ParseError> error = std::nullopt;
+    std::size_t nodeCount = 0;               // Nodes constructed during parse
 
     // Convert to the public JsonNode type (copies strings out of arena).
     [[nodiscard]] auto toParseResult() const -> ParseResult;

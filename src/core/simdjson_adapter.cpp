@@ -63,35 +63,34 @@ struct ProgressContext {
 auto convertElement(simdjson::dom::element elem,
                     StringRef key,
                     ArenaAllocator& arena,
-                    ProgressContext* progress) -> ArenaJsonNode* {
+                    ProgressContext& progress) -> ArenaJsonNode* {
     auto* node = arena.construct<ArenaJsonNode>();
     if (!node) {
         return nullptr;
     }
     node->key = key;
 
-    // Track progress / poll cancellation if context is provided.
-    if (progress) {
-        progress->nodesCreated++;
-        if (progress->nodesCreated % kProgressReportInterval == 0) {
-            if (progress->cancelCheck && progress->cancelCheck()) {
-                progress->cancelled = true;
-                return nullptr;
+    // Count every constructed node unconditionally (nodesCreated doubles as
+    // the final node count); progress/cancellation callbacks stay optional.
+    progress.nodesCreated++;
+    if (progress.nodesCreated % kProgressReportInterval == 0) {
+        if (progress.cancelCheck && progress.cancelCheck()) {
+            progress.cancelled = true;
+            return nullptr;
+        }
+        if (progress.callback && progress.estimatedTotalNodes > 0) {
+            // Progress during tree-building is mapped to [0.5, 1.0) range
+            // since simdjson parse (first half) is already done.
+            float treeBuildFraction = static_cast<float>(progress.nodesCreated) /
+                                     static_cast<float>(progress.estimatedTotalNodes);
+            if (treeBuildFraction > 1.0F) {
+                treeBuildFraction = 1.0F;
             }
-            if (progress->callback && progress->estimatedTotalNodes > 0) {
-                // Progress during tree-building is mapped to [0.5, 1.0) range
-                // since simdjson parse (first half) is already done.
-                float treeBuildFraction = static_cast<float>(progress->nodesCreated) /
-                                         static_cast<float>(progress->estimatedTotalNodes);
-                if (treeBuildFraction > 1.0F) {
-                    treeBuildFraction = 1.0F;
-                }
-                float overallProgress = 0.5F + (treeBuildFraction * 0.5F);
-                if (overallProgress > 0.99F) {
-                    overallProgress = 0.99F; // Reserve 1.0 for completion
-                }
-                progress->callback(overallProgress);
+            float overallProgress = 0.5F + (treeBuildFraction * 0.5F);
+            if (overallProgress > 0.99F) {
+                overallProgress = 0.99F; // Reserve 1.0 for completion
             }
+            progress.callback(overallProgress);
         }
     }
 
@@ -285,22 +284,20 @@ auto simdjsonParse(const SourceBuffer& source,
     }
 
     // Set up progress/cancellation tracking for the tree-building phase.
+    // The context is always passed so node counting is unconditional; the
+    // callbacks inside it stay optional.
     ProgressContext progressCtx;
-    ProgressContext* progressPtr = nullptr;
     if (options.progressCallback && source.size() > kProgressReportingThreshold) {
         progressCtx.callback = options.progressCallback;
         progressCtx.estimatedTotalNodes = source.size() / kEstimatedBytesPerNode;
-        progressCtx.nodesCreated = 0;
-        progressPtr = &progressCtx;
     }
     if (options.cancelCallback) {
         progressCtx.cancelCheck = options.cancelCallback;
-        progressPtr = &progressCtx;
     }
 
     // Walk the DOM tree and convert to ArenaJsonNode.
     StringRef rootKey = {}; // Root node has no key.
-    auto* root = convertElement(doc, rootKey, arena, progressPtr);
+    auto* root = convertElement(doc, rootKey, arena, progressCtx);
     if (progressCtx.cancelled) {
         return SimdjsonResult{nullptr, ParseError{0, "Parse cancelled"}};
     }
@@ -316,7 +313,7 @@ auto simdjsonParse(const SourceBuffer& source,
     // At this point, the simdjson parser (and its internal buffers) will be
     // destroyed when this function returns, since `parser` and `paddedInput`
     // are stack-local. All string data has been copied into the arena.
-    return SimdjsonResult{root, std::nullopt};
+    return SimdjsonResult{root, std::nullopt, progressCtx.nodesCreated};
 }
 
 } // namespace jsontitan::core

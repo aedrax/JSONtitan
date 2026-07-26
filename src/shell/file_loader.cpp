@@ -47,7 +47,10 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     // Phase 1: Read file in chunks with incremental progress
     constexpr qint64 kReadChunkSize = 1024 * 1024;  // 1 MB chunks
     std::string input;
-    input.reserve(static_cast<std::size_t>(totalSize));
+    // Reserve room for the simdjson padding up front: SourceBuffer's
+    // constructor resizes by kSimdjsonPadding bytes, and without this slack
+    // that resize would reallocate (and copy) the entire multi-GB string.
+    input.reserve(static_cast<std::size_t>(totalSize) + kSimdjsonPadding);
 
     qint64 bytesRead = 0;
     int lastProgress = 0;

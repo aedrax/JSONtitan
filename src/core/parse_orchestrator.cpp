@@ -40,9 +40,9 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
     if (source->size() == 0) {
         return ArenaParseResult{
             std::move(arena),
-            std::move(source),
             nullptr,
-            ParseError{0, "Empty input"}
+            ParseError{0, "Empty input"},
+            0
         };
     }
 
@@ -50,8 +50,14 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
     SimdjsonParseOptions sjOpts = {.progressCallback = options.progressCallback,
                                    .cancelCallback = options.cancelCallback};
     auto result = simdjsonParse(*source, *arena, sjOpts);
-    return ArenaParseResult{std::move(arena), std::move(source),
-                            result.root, result.error};
+
+    // convertElement copied every string into the arena, so nothing
+    // references the source bytes anymore — release them now instead of
+    // carrying a (potentially multi-GB) buffer for the tree's lifetime.
+    source.reset();
+
+    return ArenaParseResult{std::move(arena), result.root, result.error,
+                            result.nodeCount};
 }
 
 } // namespace jsontitan::core
