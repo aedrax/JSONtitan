@@ -2,6 +2,7 @@
 # so that shell_tests can reuse them without recompiling.
 set(SHELL_SOURCES
     main_window.cpp
+    detail_panel_presenter.cpp
     document_session.cpp
     edit_controller.cpp
     model_paths.cpp

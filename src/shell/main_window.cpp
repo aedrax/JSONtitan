@@ -16,10 +16,7 @@
 #include <filesystem>
 
 #include "core/parse_orchestrator.h"
-#include "core/pretty_printer.h"
-#include "core/token_emitter.h"
 #include "shell/drop_validator.h"
-#include "shell/syntax_highlighter.h"
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -70,6 +67,10 @@ MainWindow::MainWindow(QWidget* parent)
             m_unionController, &UnionController::unionFiles);
     connect(m_unionController, &UnionController::statusUpdated,
             this, &MainWindow::updateStatusBar);
+
+    // Detail panel rendering for the current tree selection
+    m_detailPresenter = new DetailPanelPresenter(
+        m_detailPanel, m_treeView, m_filterProxy, m_treeModel, m_session, this);
 
     showWelcomeMessage();
 
@@ -296,10 +297,6 @@ void MainWindow::setupCentralWidget() {
     mainLayout->addWidget(splitter, 1);
 
     setCentralWidget(centralWidget);
-
-    // Connect tree selection changes
-    connect(m_treeView->selectionModel(), &QItemSelectionModel::currentChanged,
-            this, &MainWindow::onTreeSelectionChanged);
 }
 
 void MainWindow::setupStatusBar() {
@@ -387,29 +384,6 @@ void MainWindow::showWelcomeMessage() {
 
 void MainWindow::updateStatusBar(const QString& fileName, int nodeCount) {
     m_statusLabel->setText(tr("%1 — %2 nodes").arg(fileName).arg(nodeCount));
-}
-
-std::optional<jsontitan::core::NodeView> MainWindow::selectedNodeView() const {
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return std::nullopt;
-    }
-
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-    if (!sourceIndex.isValid()) {
-        return std::nullopt;
-    }
-
-    // The model hands out raw pointers into whichever backing is live; a
-    // NodeView over them is valid as long as that backing is kept alive,
-    // which DocumentSession guarantees.
-    if (const auto* jn = m_treeModel->jsonNodeForIndex(sourceIndex)) {
-        return jsontitan::core::NodeView(*jn);
-    }
-    if (const auto* an = m_treeModel->arenaNodeForIndex(sourceIndex)) {
-        return jsontitan::core::NodeView(*an);
-    }
-    return std::nullopt;
 }
 
 // --- Task 16.2: File Open and background parsing ---
@@ -505,7 +479,7 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
 void MainWindow::onExportCsv() {
     // Export the selection if one resolves, otherwise the live root —
     // uniformly over both backings via NodeView (no deep copies).
-    auto node = selectedNodeView();
+    auto node = m_detailPresenter->selectedNodeView();
     if (!node) {
         node = m_session->rootView();
     }
@@ -534,7 +508,7 @@ void MainWindow::onExportCsv() {
 void MainWindow::onExportXml() {
     // Export the selection if one resolves, otherwise the live root —
     // uniformly over both backings via NodeView (no deep copies).
-    auto node = selectedNodeView();
+    auto node = m_detailPresenter->selectedNodeView();
     if (!node) {
         node = m_session->rootView();
     }
@@ -558,27 +532,6 @@ void MainWindow::onExportXml() {
     } else {
         m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
     }
-}
-
-void MainWindow::onTreeSelectionChanged() {
-    // Emit tokens directly over whichever backing the selection resolves to —
-    // no toJsonNode() deep copy for arena-backed nodes.
-    auto node = selectedNodeView();
-    if (!node && m_session->currentRoot()) {
-        // Legacy behavior: an unresolved selection over a JsonNode-backed
-        // tree falls back to showing the root.
-        node = jsontitan::core::NodeView(*m_session->currentRoot());
-    }
-    if (!node) {
-        m_detailPanel->clear();
-        return;
-    }
-
-    jsontitan::core::PrettyPrintOptions opts;
-    opts.maxOutputSize = 65536;  // 64 KB limit
-
-    auto tokenResult = jsontitan::core::emitTokens(*node, opts);
-    jsontitan::shell::renderHighlighted(m_detailPanel, tokenResult, m_syntaxTheme);
 }
 
 // --- Task 7.1: Modified flag and title management ---

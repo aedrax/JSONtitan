@@ -30,6 +30,7 @@
 #include "core/json_node.h"
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
+#include "shell/detail_panel_presenter.h"
 #include "shell/document_session.h"
 #include "shell/edit_controller.h"
 #include "shell/export_handler.h"
@@ -37,7 +38,6 @@
 #include "shell/filter_proxy_model.h"
 #include "shell/recent_files_manager.h"
 #include "shell/search_controller.h"
-#include "shell/syntax_highlighter.h"
 #include "shell/tree_model.h"
 #include "shell/union_controller.h"
 
@@ -63,7 +63,6 @@ private slots:
     void onExportXml();
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
-    void onTreeSelectionChanged();
     void onRecentFileSelected(const QString& filePath);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
 
@@ -76,9 +75,6 @@ private:
     void hideDropOverlay();
     void showWelcomeMessage();
     void updateStatusBar(const QString& fileName, int nodeCount);
-    // View of the currently selected node (either backing), or nullopt when
-    // no valid selection resolves to a node.
-    std::optional<jsontitan::core::NodeView> selectedNodeView() const;
     void updateWindowTitle(bool modified);
 
     // UI elements
@@ -123,8 +119,8 @@ private:
     // Multi-file union flows
     UnionController* m_unionController = nullptr;
 
-    // Syntax highlighting
-    jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();
+    // Detail panel rendering for the current selection
+    DetailPanelPresenter* m_detailPresenter = nullptr;
 
     // Current document state (tree backing, file identity, modified flag)
     DocumentSession* m_session = nullptr;
