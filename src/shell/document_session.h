@@ -53,6 +53,11 @@ public:
     // View of the live document root (JsonNode root or the arena root).
     std::optional<jsontitan::core::NodeView> rootView() const;
 
+    // Total node count of the live document: the parse-time count for
+    // arena-backed documents, a full tree walk (1 + descendants) for
+    // JsonNode-backed ones, 0 when nothing is loaded.
+    std::size_t nodeCount() const;
+
     bool modified() const { return m_modified; }
     void setModified(bool modified);
 

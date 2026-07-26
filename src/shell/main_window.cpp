@@ -296,6 +296,31 @@ void MainWindow::setupMenuBar() {
     // and the tree's selection model exist.
     m_deleteAction->setEnabled(false);
 
+    auto* viewMenu = menuBar()->addMenu(tr("&View"));
+
+    m_expandAllAction = viewMenu->addAction(tr("&Expand All"));
+    m_expandAllAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+    m_expandAllAction->setStatusTip(tr("Expand every node in the tree"));
+    connect(m_expandAllAction, &QAction::triggered,
+            this, &MainWindow::onExpandAll);
+
+    m_collapseAllAction = viewMenu->addAction(tr("&Collapse All"));
+    m_collapseAllAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    m_collapseAllAction->setStatusTip(tr("Collapse every node in the tree"));
+    connect(m_collapseAllAction, &QAction::triggered,
+            this, &MainWindow::onCollapseAll);
+
+    viewMenu->addSeparator();
+
+    for (int level = 1; level <= 3; ++level) {
+        auto* levelAction =
+            viewMenu->addAction(tr("Expand to Level %1").arg(level));
+        levelAction->setStatusTip(
+            tr("Expand the tree %1 level(s) deep").arg(level));
+        connect(levelAction, &QAction::triggered, this,
+                [this, level]() { expandToLevel(level); });
+    }
+
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     m_shortcutsAction = helpMenu->addAction(tr("&Keyboard Shortcuts"));
     m_shortcutsAction->setStatusTip(tr("Show the list of keyboard shortcuts"));
@@ -328,6 +353,8 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>F3</b></td><td>Next match</td></tr>"
            "<tr><td><b>Shift+F3</b></td><td>Previous match</td></tr>"
            "<tr><td><b>Ctrl+C</b></td><td>Copy selected value (tree)</td></tr>"
+           "<tr><td><b>Ctrl+Shift+E</b></td><td>Expand all</td></tr>"
+           "<tr><td><b>Ctrl+Shift+C</b></td><td>Collapse all</td></tr>"
            "<tr><td><b>Del</b></td><td>Delete selected node</td></tr>"
            "<tr><td><b>Esc</b></td><td>Cancel load in progress</td></tr>"
            "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>");
@@ -886,6 +913,58 @@ void MainWindow::onCopyPath() {
     QGuiApplication::clipboard()->setText(
         jsontitan::shell::jsonPathText(currentSelectionPath()));
     statusBar()->showMessage(tr("Path copied"), 2000);
+}
+
+// --- Phase 5b commit 3: expand controls ---
+
+void MainWindow::fetchAllRows(const QModelIndex& sourceParent) {
+    while (m_treeModel->canFetchMore(sourceParent)) {
+        m_treeModel->fetchMore(sourceParent);
+    }
+    const int rows = m_treeModel->rowCount(sourceParent);
+    for (int r = 0; r < rows; ++r) {
+        fetchAllRows(m_treeModel->index(r, 0, sourceParent));
+    }
+}
+
+void MainWindow::onExpandAll() {
+    if (!m_session->rootView()) {
+        return;
+    }
+    // Expanding a huge document forces a full fetch of every lazily-loaded
+    // row — that can take a while, so ask first.
+    constexpr std::size_t kExpandAllConfirmThreshold = 200000;
+    if (m_session->nodeCount() > kExpandAllConfirmThreshold) {
+        auto reply = QMessageBox::question(
+            this, tr("Expand All"),
+            tr("This document has %1 nodes; expanding all of them may take "
+               "a while. Continue?")
+                .arg(m_session->nodeCount()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+    jsontitan::shell::WaitCursorGuard waitCursor;
+    // expandAll only expands rows that exist; the lazily-fetched model must
+    // be fully materialized first.
+    fetchAllRows(QModelIndex());
+    m_treeView->expandAll();
+}
+
+void MainWindow::onCollapseAll() {
+    m_treeView->collapseAll();
+}
+
+void MainWindow::expandToLevel(int level) {
+    if (level < 1) {
+        return;
+    }
+    // Note the fetchMore interplay: expandToDepth only expands rows that
+    // have been fetched, but expanding a row makes the view fetch its
+    // children, so repeated use (or scrolling) converges naturally. This is
+    // deliberate — expand-to-level must stay cheap on huge documents.
+    m_treeView->expandToDepth(level - 1);
 }
 
 // --- Task 7.1: Modified flag and title management ---

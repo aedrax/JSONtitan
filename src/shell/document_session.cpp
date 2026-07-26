@@ -1,5 +1,7 @@
 #include "shell/document_session.h"
 
+#include "core/deletion_engine.h"
+
 DocumentSession::DocumentSession(TreeModel* model, QObject* parent)
     : QObject(parent), m_model(model) {}
 
@@ -82,6 +84,17 @@ std::optional<jsontitan::core::NodeView> DocumentSession::rootView() const {
         return jsontitan::core::NodeView(*m_arenaResult->root);
     }
     return std::nullopt;
+}
+
+std::size_t DocumentSession::nodeCount() const {
+    if (m_arenaResult && m_arenaResult->root) {
+        // The parse pipeline already counted the nodes — no walk needed.
+        return m_arenaResult->nodeCount;
+    }
+    if (m_currentRoot) {
+        return 1 + jsontitan::core::countDescendants(*m_currentRoot);
+    }
+    return 0;
 }
 
 void DocumentSession::setModified(bool modified) {

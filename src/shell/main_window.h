@@ -79,6 +79,8 @@ private slots:
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
     void onAbout();
     void onShowKeyboardShortcuts();
+    void onExpandAll();
+    void onCollapseAll();
 
 private:
     void setupMenuBar();
@@ -102,6 +104,14 @@ private:
 
     // NodePath of the tree view's current selection ({} when none).
     jsontitan::core::NodePath currentSelectionPath() const;
+
+    // Expand the tree to the given 1-based level (level 1 = top-level rows
+    // expanded). Uses QTreeView::expandToDepth.
+    void expandToLevel(int level);
+
+    // Force-fetch every row of the (lazily-fetched) source model under
+    // sourceParent so a subsequent expandAll can actually expand them.
+    void fetchAllRows(const QModelIndex& sourceParent);
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
@@ -132,6 +142,8 @@ private:
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
     QAction* m_deleteAction = nullptr;
+    QAction* m_expandAllAction = nullptr;
+    QAction* m_collapseAllAction = nullptr;
     QAction* m_shortcutsAction = nullptr;
     QAction* m_aboutAction = nullptr;
     QAction* m_reopenLastFileAction = nullptr;

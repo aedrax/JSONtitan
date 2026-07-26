@@ -2645,6 +2645,135 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Phase 5b commit 3: expand controls (View menu)
+// ---------------------------------------------------------------------------
+
+class ExpandControlsTest : public QObject {
+    Q_OBJECT
+
+private:
+    static QMenu* findMenu(MainWindow& window, const QString& name) {
+        for (auto* action : window.menuBar()->actions()) {
+            if (action->text().contains(name)) {
+                return action->menu();
+            }
+        }
+        return nullptr;
+    }
+
+    static QAction* findAction(QMenu* menu, const QString& name) {
+        if (!menu) {
+            return nullptr;
+        }
+        for (auto* action : menu->actions()) {
+            if (action->text().contains(name)) {
+                return action;
+            }
+        }
+        return nullptr;
+    }
+
+private slots:
+    void init() {
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTestsExpand");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void cleanup() {
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testViewMenuBetweenEditAndHelpWithActions() {
+        MainWindow window;
+
+        int editIdx = -1, viewIdx = -1, helpIdx = -1;
+        const auto menus = window.menuBar()->actions();
+        for (int i = 0; i < menus.size(); ++i) {
+            if (menus[i]->text().contains("Edit")) editIdx = i;
+            if (menus[i]->text().contains("View")) viewIdx = i;
+            if (menus[i]->text().contains("Help")) helpIdx = i;
+        }
+        QVERIFY(editIdx >= 0 && viewIdx >= 0 && helpIdx >= 0);
+        QVERIFY2(editIdx < viewIdx && viewIdx < helpIdx,
+                 "View menu must sit between Edit and Help");
+
+        QMenu* viewMenu = findMenu(window, "View");
+        QVERIFY(viewMenu != nullptr);
+
+        QAction* expandAll = findAction(viewMenu, "Expand All");
+        QVERIFY(expandAll != nullptr);
+        QCOMPARE(expandAll->shortcut(),
+                 QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+
+        QAction* collapseAll = findAction(viewMenu, "Collapse All");
+        QVERIFY(collapseAll != nullptr);
+        QCOMPARE(collapseAll->shortcut(),
+                 QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+
+        QVERIFY(findAction(viewMenu, "Expand to Level 1") != nullptr);
+        QVERIFY(findAction(viewMenu, "Expand to Level 2") != nullptr);
+        QVERIFY(findAction(viewMenu, "Expand to Level 3") != nullptr);
+    }
+
+    void testExpandCollapseBehavior() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/expand.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(R"({"a": {"b": {"c": 1}}, "arr": [{"x": true}]})");
+        }
+        QSettings().setValue("session/lastFilePath", filePath);
+
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+        window.restoreLastSession();
+
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->isVisible(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->model()->rowCount() > 0, 5000);
+
+        QMenu* viewMenu = findMenu(window, "View");
+        QAbstractItemModel* proxy = treeView->model();
+        const QModelIndex aIdx = proxy->index(0, 0);
+        QVERIFY(aIdx.isValid());
+
+        // Expand to Level 1: top-level rows expanded, deeper ones not.
+        findAction(viewMenu, "Expand to Level 1")->trigger();
+        QVERIFY(treeView->isExpanded(aIdx));
+        QTRY_VERIFY_WITH_TIMEOUT(proxy->rowCount(aIdx) > 0, 5000);
+        const QModelIndex bIdx = proxy->index(0, 0, aIdx);
+        QVERIFY(bIdx.isValid());
+        QVERIFY(!treeView->isExpanded(bIdx));
+
+        // Expand All: everything (fetch-forcing) is expanded.
+        findAction(viewMenu, "Expand All")->trigger();
+        QVERIFY(treeView->isExpanded(aIdx));
+        QVERIFY(treeView->isExpanded(bIdx));
+        const QModelIndex arrIdx = proxy->index(1, 0);
+        QVERIFY(arrIdx.isValid());
+        QVERIFY(treeView->isExpanded(arrIdx));
+        const QModelIndex elemIdx = proxy->index(0, 0, arrIdx);
+        QVERIFY(elemIdx.isValid());
+        QVERIFY(treeView->isExpanded(elemIdx));
+
+        // Collapse All: nothing stays expanded.
+        findAction(viewMenu, "Collapse All")->trigger();
+        QVERIFY(!treeView->isExpanded(aIdx));
+        QVERIFY(!treeView->isExpanded(bIdx));
+        QVERIFY(!treeView->isExpanded(arrIdx));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -2704,6 +2833,9 @@ int main(int argc, char* argv[]) {
 
     BreadcrumbTest breadcrumbTest;
     status |= QTest::qExec(&breadcrumbTest, argc, argv);
+
+    ExpandControlsTest expandControlsTest;
+    status |= QTest::qExec(&expandControlsTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
