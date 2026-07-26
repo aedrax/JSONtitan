@@ -121,6 +121,8 @@ private:
     QAction* m_exitAction = nullptr;
     QAction* m_saveAction = nullptr;
     QAction* m_saveAsAction = nullptr;
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
     QAction* m_deleteAction = nullptr;
     QAction* m_shortcutsAction = nullptr;
     QAction* m_aboutAction = nullptr;

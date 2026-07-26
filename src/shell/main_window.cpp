@@ -17,9 +17,12 @@
 #include <QVBoxLayout>
 
 #include <filesystem>
+#include <string>
+#include <variant>
 
 #include "core/parse_orchestrator.h"
 #include "shell/drop_validator.h"
+#include "shell/model_paths.h"
 #include "shell/wait_cursor.h"
 
 MainWindow::MainWindow(QWidget* parent)
@@ -77,6 +80,21 @@ MainWindow::MainWindow(QWidget* parent)
             m_editController, &EditController::saveAs);
     connect(m_deleteAction, &QAction::triggered,
             m_editController, &EditController::deleteSelectedNode);
+    connect(m_undoAction, &QAction::triggered,
+            m_editController, &EditController::undo);
+    connect(m_redoAction, &QAction::triggered,
+            m_editController, &EditController::redo);
+    connect(m_session, &DocumentSession::undoAvailabilityChanged, this,
+            [this](bool canUndo, bool canRedo) {
+                m_undoAction->setEnabled(canUndo);
+                m_redoAction->setEnabled(canRedo);
+            });
+    // Inline value editing: the model delegates edit commits to the
+    // controller, which installs the edited tree via a queued model reset.
+    m_treeModel->setEditCommitHandler(
+        [this](const QModelIndex& sourceIndex, const QString& newText) {
+            return m_editController->applyEdit(sourceIndex, newText);
+        });
     // Keep Edit > Delete's enabled state in sync with the tree selection.
     connect(m_treeView->selectionModel(),
             &QItemSelectionModel::currentChanged, this,
@@ -243,6 +261,21 @@ void MainWindow::setupMenuBar() {
     connect(m_exitAction, &QAction::triggered, this, &MainWindow::close);
 
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+
+    // Undo/Redo enabled-state tracks DocumentSession::undoAvailabilityChanged;
+    // the triggers are wired in the constructor once EditController exists.
+    m_undoAction = editMenu->addAction(tr("&Undo"));
+    m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setStatusTip(tr("Undo the last document change"));
+    m_undoAction->setEnabled(false);
+
+    m_redoAction = editMenu->addAction(tr("&Redo"));
+    m_redoAction->setShortcut(QKeySequence::Redo);
+    m_redoAction->setStatusTip(tr("Redo the last undone change"));
+    m_redoAction->setEnabled(false);
+
+    editMenu->addSeparator();
+
     m_deleteAction = editMenu->addAction(tr("&Delete"));
     m_deleteAction->setShortcut(QKeySequence::Delete);
     m_deleteAction->setStatusTip(tr("Delete the selected node"));
@@ -352,6 +385,10 @@ void MainWindow::setupCentralWidget() {
     m_treeView->setModel(m_filterProxy);
     m_treeView->setHeaderHidden(true);
     m_treeView->setAlternatingRowColors(true);
+    // Inline editing of scalar rows: F2 or double-click opens the editor
+    // (which shows the raw EditRole text, not the display string).
+    m_treeView->setEditTriggers(QAbstractItemView::EditKeyPressed |
+                                QAbstractItemView::DoubleClicked);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_treeView, &QTreeView::customContextMenuRequested,
             this, [this](const QPoint& pos) {
@@ -374,6 +411,23 @@ void MainWindow::setupCentralWidget() {
         }
         connect(deleteAction, &QAction::triggered,
                 m_editController, &EditController::deleteSelectedNode);
+
+        // "Rename Key…" only applies to object members (the path's last
+        // segment is a string key; array elements and the root have none).
+        auto* renameAction = menu->addAction(tr("Rename Key..."));
+        bool canRename = false;
+        if (proxyIndex.isValid()) {
+            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+            if (sourceIndex.isValid()) {
+                auto path = jsontitan::shell::nodePathForIndex(*m_treeModel,
+                                                               sourceIndex);
+                canRename = !path.empty() &&
+                            std::holds_alternative<std::string>(path.back());
+            }
+        }
+        renameAction->setEnabled(canRename);
+        connect(renameAction, &QAction::triggered,
+                m_editController, &EditController::renameSelectedKey);
 
         if (m_session->isUnionMode()) {
             menu->addSeparator();

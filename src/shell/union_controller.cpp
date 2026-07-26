@@ -166,6 +166,11 @@ void UnionController::removeFromUnion() {
     std::string filenameKey = nodePtr->key;
 
     auto newRoot = jsontitan::core::removeFromUnion(*m_session->currentRoot(), filenameKey);
+    // Undo bookkeeping: pre-mutation union root + the removed file's path so
+    // undo restores and reselects it. (Union trees are always JsonNode-backed.)
+    m_session->pushUndo(jsontitan::core::UndoEntry{
+        m_session->currentRoot(),
+        jsontitan::core::NodePath{filenameKey}});
     m_searchController->invalidate();
     m_session->replaceJsonRoot(newRoot);
     m_session->setModified(true);

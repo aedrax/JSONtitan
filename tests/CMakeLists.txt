@@ -345,6 +345,21 @@ target_link_libraries(controller_tests
 
 gtest_discover_tests(controller_tests)
 
+# ── Shell Editing Tests (Google Test + Qt Widgets) ───────────────
+add_executable(edit_shell_tests edit_shell_tests.cpp)
+
+target_link_libraries(edit_shell_tests
+    PRIVATE
+        jsontitan_shell_lib
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        GTest::gtest
+)
+
+gtest_discover_tests(edit_shell_tests)
+
 # ── Edit Engine Tests (Google Test + RapidCheck, no Qt) ─────────
 add_executable(edit_engine_tests edit_engine_tests.cpp)
 

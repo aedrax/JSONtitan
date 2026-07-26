@@ -3,6 +3,7 @@
 #include <QAbstractItemModel>
 #include <limits>
 
+#include <functional>
 #include <memory>
 #include <unordered_set>
 #include <variant>
@@ -29,6 +30,25 @@ public:
     int rowCount(const QModelIndex& parent) const override;
     int columnCount(const QModelIndex& parent) const override;
     QVariant data(const QModelIndex& index, int role) const override;
+
+    // Editing: scalar rows (String/Number/Boolean/Null, either backing) are
+    // editable; EditRole returns the RAW value text ("true", "null", the
+    // number/string text) rather than the composite display string.
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+
+    // Invoked by setData with the source index and the editor's raw text.
+    // Returns whether the commit was accepted. The handler is responsible
+    // for validating and installing the edited tree; the model NEVER mutates
+    // trees itself and emits nothing from setData (a synchronous model reset
+    // during the delegate's commit would destroy the editor mid-commit).
+    using EditCommitHandler =
+        std::function<bool(const QModelIndex&, const QString&)>;
+    void setEditCommitHandler(EditCommitHandler handler) {
+        m_editCommitHandler = std::move(handler);
+    }
+
+    bool setData(const QModelIndex& index, const QVariant& value,
+                 int role = Qt::EditRole) override;
 
     // Lazy loading
     bool hasChildren(const QModelIndex& parent) const override;
@@ -100,6 +120,7 @@ private:
     std::shared_ptr<const jsontitan::core::JsonNode> m_rootJsonNode;
     std::shared_ptr<jsontitan::core::ArenaParseResult> m_arenaResult;
     std::unique_ptr<InternalNode> m_rootInternal;
+    EditCommitHandler m_editCommitHandler;
 
     static constexpr int FETCH_BATCH_SIZE = 100;
 };

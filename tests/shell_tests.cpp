@@ -411,11 +411,14 @@ private slots:
         QVariant data = model.data(QModelIndex(), Qt::DisplayRole);
         QVERIFY(!data.isValid());
 
-        // Wrong role
+        // Unsupported role (EditRole is now supported: raw scalar text for
+        // inline editing)
         model.fetchMore(QModelIndex());
         QModelIndex idx = model.index(0, 0, QModelIndex());
-        QVariant editData = model.data(idx, Qt::EditRole);
-        QVERIFY(!editData.isValid());
+        QVariant toolTipData = model.data(idx, Qt::ToolTipRole);
+        QVERIFY(!toolTipData.isValid());
+        QCOMPARE(model.data(idx, Qt::EditRole).toString(),
+                 QStringLiteral("value"));
     }
 
     void testBatchFetching() {

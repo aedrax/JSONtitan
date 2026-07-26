@@ -9,6 +9,7 @@
 #include "core/json_node.h"
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
+#include "core/undo_stack.h"
 #include "shell/tree_model.h"
 
 // Holds the state of the currently loaded document — either tree backing
@@ -66,10 +67,34 @@ public:
         return m_arenaResult;
     }
 
+    // --- Undo/redo bookkeeping (shared by edit, delete, union-remove) -----
+    // The session owns the UndoStack so every mutation flow pushes into the
+    // same history. Entries hold the PRE-mutation root plus the selection to
+    // restore. The stack is cleared whenever a new document is installed
+    // (setJsonRoot / setArenaRoot) but NOT by replaceJsonRoot, which is the
+    // in-document mutation install path.
+
+    // Record the pre-mutation state.
+    void pushUndo(jsontitan::core::UndoEntry entry);
+
+    // Exchange the live {root, selection} for the most recent undo/redo
+    // entry. Returns the state to install (via the caller's install path) or
+    // std::nullopt when there is nothing to undo/redo or the document is not
+    // JsonNode-backed. Does not install anything itself.
+    std::optional<jsontitan::core::UndoEntry>
+    undo(jsontitan::core::NodePath currentSelection);
+    std::optional<jsontitan::core::UndoEntry>
+    redo(jsontitan::core::NodePath currentSelection);
+
+    bool canUndo() const { return m_undoStack.canUndo(); }
+    bool canRedo() const { return m_undoStack.canRedo(); }
+
 signals:
     // Emitted after the model has been switched to a new backing.
     void documentReplaced();
     void modifiedChanged(bool modified);
+    // Emitted whenever the undo/redo availability may have changed.
+    void undoAvailabilityChanged(bool canUndo, bool canRedo);
 
 private:
     TreeModel* m_model = nullptr;
@@ -80,4 +105,9 @@ private:
     QString m_fileName;
     bool m_isUnionMode = false;
     bool m_modified = false;
+
+    jsontitan::core::UndoStack m_undoStack;
+
+    void clearUndoStack();
+    void emitUndoAvailability();
 };

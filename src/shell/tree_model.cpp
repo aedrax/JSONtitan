@@ -124,12 +124,43 @@ int TreeModel::columnCount(const QModelIndex& /*parent*/) const {
 }
 
 QVariant TreeModel::data(const QModelIndex& index, int role) const {
-    if (!index.isValid() || role != Qt::DisplayRole)
+    if (!index.isValid() || (role != Qt::DisplayRole && role != Qt::EditRole))
         return {};
 
     auto* node = static_cast<InternalNode*>(index.internalPointer());
     if (!node)
         return {};
+
+    if (role == Qt::EditRole) {
+        // Raw scalar value text — what an inline editor should show, not the
+        // composite "key: value" display string. Containers are not editable.
+        if (auto* jn = node->jsonNode()) {
+            switch (jn->type) {
+            case NodeType::Object:
+            case NodeType::Array:
+                return {};
+            case NodeType::Null:
+                return QStringLiteral("null");
+            default:
+                return QString::fromStdString(jn->value);
+            }
+        }
+        if (auto* an = node->arenaNode()) {
+            switch (an->type) {
+            case NodeType::Object:
+            case NodeType::Array:
+                return {};
+            case NodeType::Null:
+                return QStringLiteral("null");
+            default: {
+                std::string_view valStr = an->valueView();
+                return QString::fromUtf8(valStr.data(),
+                                         static_cast<qsizetype>(valStr.size()));
+            }
+            }
+        }
+        return {};
+    }
 
     // Determine array index: if parent is an Array type, use the row
     int arrayIndex = -1;
@@ -151,6 +182,43 @@ QVariant TreeModel::data(const QModelIndex& index, int role) const {
     }
 
     return {};
+}
+
+Qt::ItemFlags TreeModel::flags(const QModelIndex& index) const {
+    Qt::ItemFlags itemFlags = QAbstractItemModel::flags(index);
+    if (!index.isValid())
+        return itemFlags;
+
+    auto* node = static_cast<InternalNode*>(index.internalPointer());
+    if (!node)
+        return itemFlags;
+
+    NodeType type;
+    if (auto* jn = node->jsonNode()) {
+        type = jn->type;
+    } else if (auto* an = node->arenaNode()) {
+        type = an->type;
+    } else {
+        return itemFlags;
+    }
+
+    if (type != NodeType::Object && type != NodeType::Array) {
+        itemFlags |= Qt::ItemIsEditable;
+    }
+    return itemFlags;
+}
+
+bool TreeModel::setData(const QModelIndex& index, const QVariant& value,
+                        int role) {
+    if (role != Qt::EditRole || !index.isValid() || !m_editCommitHandler)
+        return false;
+
+    // Delegate the commit to the injected handler. The model never mutates
+    // trees itself and deliberately emits nothing here: setData runs inside
+    // the item delegate's commit, and the handler installs the edited tree
+    // via a QUEUED model reset (a synchronous reset would destroy the editor
+    // that is still committing).
+    return m_editCommitHandler(index, value.toString());
 }
 
 bool TreeModel::hasChildren(const QModelIndex& parent) const {

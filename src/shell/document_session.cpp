@@ -22,6 +22,9 @@ void DocumentSession::setJsonRoot(
 
     m_model->setRootNode(m_currentRoot);
     emit documentReplaced();
+
+    // A brand-new document: the previous document's history is meaningless.
+    clearUndoStack();
 }
 
 void DocumentSession::setArenaRoot(
@@ -34,6 +37,9 @@ void DocumentSession::setArenaRoot(
 
     m_model->setArenaRoot(m_arenaResult);
     emit documentReplaced();
+
+    // A brand-new document: the previous document's history is meaningless.
+    clearUndoStack();
 }
 
 void DocumentSession::replaceJsonRoot(
@@ -81,4 +87,45 @@ std::optional<jsontitan::core::NodeView> DocumentSession::rootView() const {
 void DocumentSession::setModified(bool modified) {
     m_modified = modified;
     emit modifiedChanged(modified);
+}
+
+// --- Undo/redo bookkeeping -------------------------------------------------
+
+void DocumentSession::pushUndo(jsontitan::core::UndoEntry entry) {
+    m_undoStack.push(std::move(entry));
+    emitUndoAvailability();
+}
+
+std::optional<jsontitan::core::UndoEntry>
+DocumentSession::undo(jsontitan::core::NodePath currentSelection) {
+    // Undo entries only exist after a mutation, and every mutation installs
+    // a JsonNode root — an arena-backed document therefore has an empty
+    // stack. The guard is defensive.
+    if (!m_currentRoot) {
+        return std::nullopt;
+    }
+    auto restored = m_undoStack.undo(
+        jsontitan::core::UndoEntry{m_currentRoot, std::move(currentSelection)});
+    emitUndoAvailability();
+    return restored;
+}
+
+std::optional<jsontitan::core::UndoEntry>
+DocumentSession::redo(jsontitan::core::NodePath currentSelection) {
+    if (!m_currentRoot) {
+        return std::nullopt;
+    }
+    auto restored = m_undoStack.redo(
+        jsontitan::core::UndoEntry{m_currentRoot, std::move(currentSelection)});
+    emitUndoAvailability();
+    return restored;
+}
+
+void DocumentSession::clearUndoStack() {
+    m_undoStack.clear();
+    emitUndoAvailability();
+}
+
+void DocumentSession::emitUndoAvailability() {
+    emit undoAvailabilityChanged(m_undoStack.canUndo(), m_undoStack.canRedo());
 }
