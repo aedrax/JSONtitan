@@ -23,7 +23,7 @@ struct SimdjsonParseOptions {
 /// Result of parsing via the simdjson adapter.
 struct SimdjsonResult {
     ArenaJsonNode* root = nullptr;
-    std::optional<ParseError> error;
+    std::optional<ParseError> error = std::nullopt;
 };
 
 /// Parse a SourceBuffer using simdjson's DOM API.

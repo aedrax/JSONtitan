@@ -116,7 +116,7 @@ auto convertElement(simdjson::dom::element elem,
                 for (auto [k, v] : obj) {
                     // Copy the key string into the arena.
                     auto keyCopy = arena.copyString(k);
-                    StringRef childKey{keyCopy.data(), keyCopy.size()};
+                    StringRef childKey = {keyCopy.data(), keyCopy.size()};
 
                     auto* child = convertElement(v, childKey, arena, progress);
                     if (!child) {
@@ -148,7 +148,7 @@ auto convertElement(simdjson::dom::element elem,
 
                 std::size_t idx = 0;
                 for (auto v : arr) {
-                    StringRef emptyKey{};
+                    StringRef emptyKey = {};
                     auto* child = convertElement(v, emptyKey, arena, progress);
                     if (!child) {
                         return nullptr;
@@ -175,7 +175,7 @@ auto convertElement(simdjson::dom::element elem,
 
         case simdjson::dom::element_type::INT64: {
             node->type = NodeType::Number;
-            std::int64_t val{};
+            std::int64_t val = {};
             if (elem.get(val) != simdjson::SUCCESS) {
                 return nullptr;
             }
@@ -193,7 +193,7 @@ auto convertElement(simdjson::dom::element elem,
 
         case simdjson::dom::element_type::UINT64: {
             node->type = NodeType::Number;
-            std::uint64_t val{};
+            std::uint64_t val = {};
             if (elem.get(val) != simdjson::SUCCESS) {
                 return nullptr;
             }
@@ -210,7 +210,7 @@ auto convertElement(simdjson::dom::element elem,
 
         case simdjson::dom::element_type::DOUBLE: {
             node->type = NodeType::Number;
-            double val{};
+            double val = {};
             if (elem.get(val) != simdjson::SUCCESS) {
                 return nullptr;
             }
@@ -229,7 +229,7 @@ auto convertElement(simdjson::dom::element elem,
 
         case simdjson::dom::element_type::BOOL: {
             node->type = NodeType::Boolean;
-            bool val{};
+            bool val = {};
             if (elem.get(val) != simdjson::SUCCESS) {
                 return nullptr;
             }
@@ -299,7 +299,7 @@ auto simdjsonParse(const SourceBuffer& source,
     }
 
     // Walk the DOM tree and convert to ArenaJsonNode.
-    StringRef rootKey{}; // Root node has no key.
+    StringRef rootKey = {}; // Root node has no key.
     auto* root = convertElement(doc, rootKey, arena, progressPtr);
     if (progressCtx.cancelled) {
         return SimdjsonResult{nullptr, ParseError{0, "Parse cancelled"}};

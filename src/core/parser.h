@@ -29,12 +29,12 @@ struct ParserStateDeleter {
 struct ParseChunkResult {
     std::vector<std::shared_ptr<const JsonNode>> emittedNodes;
     std::unique_ptr<ParserState, ParserStateDeleter> nextState;
-    std::optional<ParseError> error;
+    std::optional<ParseError> error = std::nullopt;
 };
 
 struct ParseResult {
     std::shared_ptr<const JsonNode> root;
-    std::optional<ParseError> error;
+    std::optional<ParseError> error = std::nullopt;
 };
 
 auto makeParserState() -> std::unique_ptr<ParserState, ParserStateDeleter>;

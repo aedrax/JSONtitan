@@ -186,7 +186,7 @@ void TreeModel::fetchMore(const QModelIndex& parent) {
     int totalChildren = node->totalChildCount();
     int currentFetched = node->fetchedChildCount;
     int remaining = totalChildren - currentFetched;
-    int toFetch = std::min(remaining, FETCH_BATCH_SIZE);
+    int toFetch = (std::min)(remaining, FETCH_BATCH_SIZE);
 
     if (toFetch <= 0)
         return;
@@ -252,7 +252,7 @@ QString TreeModel::formatNodeDisplay(const JsonNode& node, int arrayIndex) {
         display += QStringLiteral("\"");
         {
             QString val = QString::fromStdString(node.value);
-            if (val.length() > 50) {
+            if (val.size() > 50) {
                 display += val.left(50) + QStringLiteral("...");
             } else {
                 display += val;
@@ -323,7 +323,7 @@ QString TreeModel::formatNodeDisplay(const ArenaJsonNode& node, int arrayIndex) 
         {
             std::string_view valStr = node.valueView();
             QString val = QString::fromUtf8(valStr.data(), static_cast<qsizetype>(valStr.size()));
-            if (val.length() > 50) {
+            if (val.size() > 50) {
                 display += val.left(50) + QStringLiteral("...");
             } else {
                 display += val;

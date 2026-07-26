@@ -23,7 +23,7 @@ RecentFilesList addRecentFile(const RecentFilesList& list,
     }
 
     RecentFilesList result;
-    result.reserve(std::min(list.size() + 1, kMaxRecentFiles));
+    result.reserve((std::min)(list.size() + 1, kMaxRecentFiles));
 
     // Place the new path at the front.
     result.push_back(filePath);

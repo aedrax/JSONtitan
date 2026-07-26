@@ -47,8 +47,8 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
     }
 
     // Parse via simdjson
-    SimdjsonParseOptions sjOpts{.progressCallback = options.progressCallback,
-                                .cancelCallback = options.cancelCallback};
+    SimdjsonParseOptions sjOpts = {.progressCallback = options.progressCallback,
+                                   .cancelCallback = options.cancelCallback};
     auto result = simdjsonParse(*source, *arena, sjOpts);
     return ArenaParseResult{std::move(arena), std::move(source),
                             result.root, result.error};

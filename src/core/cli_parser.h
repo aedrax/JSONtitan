@@ -17,7 +17,7 @@ enum class CliAction {
 struct CliParseResult {
     CliAction action = CliAction::NoAction;
     std::vector<std::string> filePaths;  // Resolved absolute paths
-    std::optional<std::string> error;    // Validation error message
+    std::optional<std::string> error = std::nullopt;  // Validation error message
 };
 
 // Pure function: parses arguments, resolves relative paths against cwd.

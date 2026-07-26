@@ -14,8 +14,8 @@ namespace jsontitan::core {
 // the API boundary.
 struct ArenaJsonNode {
     NodeType type = NodeType::Null;
-    StringRef key{};
-    StringRef value{};
+    StringRef key = {};
+    StringRef value = {};
     ArenaJsonNode** children = nullptr;
     std::size_t childCount = 0;
 

@@ -651,9 +651,9 @@ void MainWindow::executeSearch() {
         // Regex toggle is ON: treat entire text as regex pattern
         query.pattern = text.toStdString();
         query.mode = jsontitan::core::SearchMode::Regex;
-    } else if (text.startsWith('/') && text.endsWith('/') && text.length() > 2) {
+    } else if (text.startsWith('/') && text.endsWith('/') && text.size() > 2) {
         // Regex toggle is OFF but /pattern/ convention used: fallback for discoverability
-        query.pattern = text.mid(1, text.length() - 2).toStdString();
+        query.pattern = text.mid(1, text.size() - 2).toStdString();
         query.mode = jsontitan::core::SearchMode::Regex;
     } else {
         // Default: substring search

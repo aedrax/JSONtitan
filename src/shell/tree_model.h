@@ -64,7 +64,7 @@ private:
 
         // Convenience accessors
         [[nodiscard]] bool isArena() const {
-            return std::holds_alternative<const jsontitan::core::ArenaJsonNode*>(nodeData);
+            return std::get_if<const jsontitan::core::ArenaJsonNode*>(&nodeData) != nullptr;
         }
 
         [[nodiscard]] const jsontitan::core::JsonNode* jsonNode() const {
@@ -89,7 +89,7 @@ private:
             else if (auto* an = arenaNode())
                 count = an->childCount;
             constexpr auto kMax =
-                static_cast<std::size_t>(std::numeric_limits<int>::max());
+                static_cast<std::size_t>((std::numeric_limits<int>::max)());
             return static_cast<int>(count < kMax ? count : kMax);
         }
     };

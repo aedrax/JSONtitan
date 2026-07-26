@@ -43,7 +43,7 @@ auto ArenaAllocator::allocate(std::size_t size, std::size_t alignment)
     }
 
     // Current block is exhausted (or no blocks yet). Allocate a new one.
-    std::size_t minSize = std::max(m_blockSize, size + alignment);
+    std::size_t minSize = (std::max)(m_blockSize, size + alignment);
     std::size_t blockCountBefore = m_blocks.size();
     allocateNewBlock(minSize);
     if (m_blocks.size() == blockCountBefore) {
@@ -99,7 +99,7 @@ auto ArenaAllocator::totalUsed() const noexcept -> std::size_t {
 }
 
 void ArenaAllocator::allocateNewBlock(std::size_t minSize) {
-    std::size_t capacity = std::max(m_blockSize, minSize);
+    std::size_t capacity = (std::max)(m_blockSize, minSize);
     // nothrow: allocation failure must be observable as a nullptr from
     // allocate()/construct() (callers check), not a bad_alloc mid-parse.
     std::unique_ptr<std::byte[]> data(new (std::nothrow) std::byte[capacity]);
@@ -133,7 +133,9 @@ auto ThreadLocalArena::get() -> ArenaAllocator& {
 auto ThreadLocalArena::mergeAll() -> ArenaAllocator {
     std::lock_guard<std::mutex> lock(m_mutex);
     ArenaAllocator merged(m_blockSize);
-    for (auto& [id, arena] : m_arenas) {
+    // const auto&: the map entries are not mutated; unique_ptr's const
+    // operator* still yields a mutable ArenaAllocator& to move from.
+    for (const auto& [id, arena] : m_arenas) {
         merged.absorb(std::move(*arena));
     }
     m_arenas.clear();

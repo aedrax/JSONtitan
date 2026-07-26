@@ -18,7 +18,7 @@ struct ArenaParseResult {
     std::unique_ptr<ArenaAllocator> arena;   // Owns all node memory
     std::unique_ptr<SourceBuffer> source;    // Owns the input bytes
     ArenaJsonNode* root = nullptr;           // Root of the parsed tree
-    std::optional<ParseError> error;
+    std::optional<ParseError> error = std::nullopt;
 
     // Convert to the public JsonNode type (copies strings out of arena).
     [[nodiscard]] auto toParseResult() const -> ParseResult;
