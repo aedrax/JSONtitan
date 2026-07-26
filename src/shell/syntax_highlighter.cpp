@@ -24,6 +24,25 @@ auto catppuccinMochaTheme() -> SyntaxTheme {
     };
 }
 
+auto catppuccinLatteTheme() -> SyntaxTheme {
+    return SyntaxTheme{
+        .keyColor = QColor("#1e66f5"),      // Blue
+        .stringColor = QColor("#40a02b"),   // Green
+        .numberColor = QColor("#fe640b"),   // Peach
+        .booleanColor = QColor("#8839ef"), // Mauve
+        .nullColor = QColor("#d20f39"),     // Red
+        .defaultColor = QColor("#4c4f69"), // Text
+        .bracePalette = {{
+            QColor("#d20f39"),  // Red     (depth 0)
+            QColor("#fe640b"),  // Peach   (depth 1)
+            QColor("#df8e1d"),  // Yellow  (depth 2)
+            QColor("#40a02b"),  // Green   (depth 3)
+            QColor("#209fb5"),  // Sapphire(depth 4)
+            QColor("#7287fd"), // Lavender(depth 5)
+        }},
+    };
+}
+
 void renderHighlighted(QTextEdit* editor,
                        const jsontitan::core::TokenEmitResult& result,
                        const SyntaxTheme& theme) {

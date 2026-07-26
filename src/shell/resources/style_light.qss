@@ -1,0 +1,321 @@
+/*
+ * JSONTitan Light Theme — Catppuccin Latte Palette
+ *
+ * Color Palette (mirrors style_dark.qss role-for-role):
+ *   Base:     #eff1f5  (window/container backgrounds)
+ *   Mantle:   #e6e9ef  (alternate rows)
+ *   Crust:    #dce0e8  (deepest background accents)
+ *   Surface0: #ccd0da  (input fields, panels)
+ *   Surface1: #bcc0cc  (hover states, borders)
+ *   Overlay0: #9ca0b0  (scrollbar hover)
+ *   Text:     #4c4f69  (primary foreground)
+ *   Subtext0: #6c6f85  (secondary/muted text)
+ *   Blue:     #1e66f5  (focus, selections, active)
+ *   Lavender: #7287fd  (focus rings)
+ *   Red:      #d20f39  (error labels)
+ */
+
+/* === Base Widgets === */
+
+QMainWindow,
+QWidget {
+    background-color: #eff1f5;
+    color: #4c4f69;
+    font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+    font-size: 14px;
+}
+
+/* === Menu Bar === */
+
+QMenuBar {
+    background-color: #eff1f5;
+    color: #4c4f69;
+    border: none;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 4px 8px;
+}
+
+QMenuBar::item:selected {
+    background-color: #bcc0cc;
+}
+
+QMenu {
+    background-color: #eff1f5;
+    color: #4c4f69;
+    border: 1px solid #bcc0cc;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+}
+
+QMenu::item:selected {
+    background-color: #bcc0cc;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #bcc0cc;
+    margin: 4px 8px;
+}
+
+/* === Search Bar === */
+
+QLineEdit#searchBar {
+    background-color: #ccd0da;
+    color: #4c4f69;
+    border: 1px solid #bcc0cc;
+    border-radius: 6px;
+    padding: 4px 8px;
+    selection-background-color: #1e66f5;
+    selection-color: #eff1f5;
+}
+
+QLineEdit#searchBar:focus {
+    border: 1px solid #1e66f5;
+}
+
+/* === Toggle Buttons === */
+
+QToolButton {
+    background-color: transparent;
+    color: #4c4f69;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QToolButton:hover {
+    background-color: #bcc0cc;
+}
+
+QToolButton:checked {
+    background-color: #1e66f5;
+    color: #eff1f5;
+}
+
+QToolButton:checked:hover {
+    background-color: #7287fd;
+    color: #eff1f5;
+}
+
+/* === Tree View === */
+
+QTreeView {
+    background-color: #eff1f5;
+    alternate-background-color: #e6e9ef;
+    color: #4c4f69;
+    /* Transparent border reserves the pixel so gaining focus doesn't shift
+       the layout; :focus recolors it to a visible lavender ring. */
+    border: 1px solid transparent;
+}
+
+QTreeView:focus {
+    border: 1px solid #7287fd;
+}
+
+QTreeView::item {
+    padding: 2px 0px;
+}
+
+QTreeView::item:hover {
+    background-color: #bcc0cc;
+}
+
+QTreeView::item:selected {
+    background-color: #1e66f5;
+    color: #eff1f5;
+}
+
+QTreeView::branch {
+    background-color: #eff1f5;
+}
+
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {
+    image: url(:/resources/branch-closed-light.svg);
+}
+
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {
+    image: url(:/resources/branch-open-light.svg);
+}
+
+QTreeView::branch:hover {
+    background-color: #bcc0cc;
+}
+
+QTreeView::branch:selected {
+    background-color: #1e66f5;
+}
+
+/* === Detail Panel === */
+
+QTextEdit#detailPanel {
+    background-color: #ccd0da;
+    color: #4c4f69;
+    border: 1px solid transparent;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+    font-size: 13px;
+}
+
+QTextEdit#detailPanel:focus {
+    border: 1px solid #7287fd;
+}
+
+/* === Progress Bar === */
+
+QProgressBar {
+    background-color: #eff1f5;
+    border: none;
+    border-radius: 2px;
+    text-align: center;
+    color: #4c4f69;
+    max-height: 16px;
+    min-height: 16px;
+    font-size: 10px;
+}
+
+QProgressBar::chunk {
+    background-color: #1e66f5;
+    border-radius: 2px;
+}
+
+/* === Scrollbars (Vertical) === */
+
+QScrollBar:vertical {
+    background-color: #eff1f5;
+    width: 10px;
+    margin: 0px;
+    border: none;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #bcc0cc;
+    border-radius: 5px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #9ca0b0;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+/* === Scrollbars (Horizontal) === */
+
+QScrollBar:horizontal {
+    background-color: #eff1f5;
+    height: 10px;
+    margin: 0px;
+    border: none;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #bcc0cc;
+    border-radius: 5px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #9ca0b0;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* === Status Bar === */
+
+QStatusBar {
+    background-color: #eff1f5;
+    color: #4c4f69;
+    border: none;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+/* === Splitter === */
+
+QSplitter::handle {
+    background-color: #bcc0cc;
+    width: 2px;
+    height: 2px;
+}
+
+QSplitter::handle:hover {
+    background-color: #1e66f5;
+}
+
+/* === Match Count Label === */
+
+QLabel#matchCountLabel {
+    color: #6c6f85;
+    padding: 0px 6px;
+}
+
+/* === Error Label === */
+
+QLabel#searchErrorLabel {
+    color: #d20f39;
+}
+
+/* === No Results Label === */
+
+QLabel#noResultsLabel {
+    color: #6c6f85;
+    font-size: 14px;
+    qproperty-alignment: AlignCenter;
+}
+
+/* === Welcome Label === */
+
+QLabel#welcomeLabel {
+    color: #6c6f85;
+    font-size: 16px;
+    padding: 40px;
+    qproperty-alignment: AlignCenter;
+}
+
+/* === Drop Overlay === */
+
+QLabel#dropOverlay {
+    background-color: rgba(30, 102, 245, 0.85);
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    border: 2px dashed white;
+    border-radius: 8px;
+}
+
+/* === Tooltips === */
+
+QToolTip {
+    background-color: #ccd0da;
+    color: #4c4f69;
+    border: 1px solid #bcc0cc;
+    padding: 4px 6px;
+}

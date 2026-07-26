@@ -42,6 +42,7 @@
 #include "shell/filter_proxy_model.h"
 #include "shell/recent_files_manager.h"
 #include "shell/search_controller.h"
+#include "shell/theme_manager.h"
 #include "shell/tree_model.h"
 #include "shell/union_controller.h"
 
@@ -165,6 +166,7 @@ private:
     QAction* m_aboutAction = nullptr;
     QAction* m_reopenLastFileAction = nullptr;
     QAction* m_reloadAction = nullptr;
+    QAction* m_lightThemeAction = nullptr;
 
     // External file-change watching (single-file documents only)
     QFileSystemWatcher* m_fileWatcher = nullptr;
@@ -195,4 +197,7 @@ private:
 
     // Current document state (tree backing, file identity, modified flag)
     DocumentSession* m_session = nullptr;
+
+    // Application theme (QSS + syntax palette + match-highlight color)
+    ThemeManager* m_themeManager = nullptr;
 };

@@ -37,6 +37,10 @@ public:
     // Exposed statically for testing.
     static QString breadcrumbHtml(const jsontitan::core::NodePath& path);
 
+    // Installs a new syntax palette and re-renders the current selection
+    // with it. Called by MainWindow on ThemeManager::themeChanged.
+    void setSyntaxTheme(const jsontitan::shell::SyntaxTheme& theme);
+
 private slots:
     void onSelectionChanged();
     void onBreadcrumbLinkActivated(const QString& link);

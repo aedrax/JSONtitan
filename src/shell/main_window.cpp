@@ -35,10 +35,29 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1200, 800);
     setAcceptDrops(true);
 
+    // Theme first — before any widget is created — so the initial widget
+    // polish already happens with the persisted stylesheet applied.
+    m_themeManager = new ThemeManager(this);
+    m_themeManager->apply(m_themeManager->current());
+
     m_treeModel = new TreeModel(this);
     m_filterProxy = new FilterProxyModel(this);
     m_filterProxy->setSourceModel(m_treeModel);
     m_fileLoader = new FileLoader(this);
+
+    // Match-row highlight tracks the theme's accent (translucent so
+    // selection and hover still read clearly on either palette).
+    const auto matchHighlightFor = [](ThemeManager::Theme theme) {
+        return theme == ThemeManager::Theme::Light
+                   ? QColor(0x1e, 0x66, 0xf5, 50)   // Latte blue
+                   : QColor(0x89, 0xb4, 0xfa, 60);  // Mocha blue
+    };
+    m_filterProxy->setMatchHighlightColor(
+        matchHighlightFor(m_themeManager->current()));
+    connect(m_themeManager, &ThemeManager::themeChanged, this,
+            [this, matchHighlightFor](ThemeManager::Theme theme) {
+                m_filterProxy->setMatchHighlightColor(matchHighlightFor(theme));
+            });
 
     setupMenuBar();
     setupCentralWidget();
@@ -165,6 +184,12 @@ MainWindow::MainWindow(QWidget* parent)
     m_detailPresenter = new DetailPanelPresenter(
         m_detailPanel, m_breadcrumbLabel, m_treeView, m_filterProxy,
         m_treeModel, m_session, this);
+    // Syntax palette follows the theme; a change re-renders the current
+    // selection with the new colors.
+    m_detailPresenter->setSyntaxTheme(m_themeManager->syntaxTheme());
+    connect(m_themeManager, &ThemeManager::themeChanged, this, [this]() {
+        m_detailPresenter->setSyntaxTheme(m_themeManager->syntaxTheme());
+    });
 
     showWelcomeMessage();
 
@@ -374,6 +399,29 @@ void MainWindow::setupMenuBar() {
         connect(levelAction, &QAction::triggered, this,
                 [this, level]() { expandToLevel(level); });
     }
+
+    viewMenu->addSeparator();
+
+    // Theme toggle: checked = light theme. ThemeManager persists the choice
+    // (QSettings "view/theme") on every apply().
+    m_lightThemeAction = viewMenu->addAction(tr("&Light Theme"));
+    m_lightThemeAction->setCheckable(true);
+    m_lightThemeAction->setChecked(m_themeManager->current() ==
+                                   ThemeManager::Theme::Light);
+    m_lightThemeAction->setStatusTip(
+        tr("Switch between the dark and light theme"));
+    connect(m_lightThemeAction, &QAction::toggled, this, [this](bool checked) {
+        m_themeManager->apply(checked ? ThemeManager::Theme::Light
+                                      : ThemeManager::Theme::Dark);
+    });
+    // Keep the checkmark in sync when the theme changes through other paths
+    // (setChecked with an unchanged value emits no toggled signal, so this
+    // cannot loop).
+    connect(m_themeManager, &ThemeManager::themeChanged, this,
+            [this](ThemeManager::Theme theme) {
+                m_lightThemeAction->setChecked(theme ==
+                                               ThemeManager::Theme::Light);
+            });
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     m_shortcutsAction = helpMenu->addAction(tr("&Keyboard Shortcuts"));

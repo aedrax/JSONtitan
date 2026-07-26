@@ -360,6 +360,80 @@ TEST(SyntaxHighlighterIntegration, TruncatedOutputShowsIndicatorWithoutArtifacts
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5c commit 2: Catppuccin Latte (light) palette sanity
+// ---------------------------------------------------------------------------
+
+TEST(SyntaxHighlighterLatteTheme, PaletteValuesMatchExpectedHexCodes) {
+    auto theme = catppuccinLatteTheme();
+
+    EXPECT_EQ(theme.keyColor, QColor("#1e66f5"));      // Blue
+    EXPECT_EQ(theme.stringColor, QColor("#40a02b"));   // Green
+    EXPECT_EQ(theme.numberColor, QColor("#fe640b"));   // Peach
+    EXPECT_EQ(theme.booleanColor, QColor("#8839ef"));  // Mauve
+    EXPECT_EQ(theme.nullColor, QColor("#d20f39"));     // Red
+    EXPECT_EQ(theme.defaultColor, QColor("#4c4f69"));  // Text
+
+    EXPECT_EQ(theme.bracePalette[0], QColor("#d20f39"));  // Red
+    EXPECT_EQ(theme.bracePalette[1], QColor("#fe640b"));  // Peach
+    EXPECT_EQ(theme.bracePalette[2], QColor("#df8e1d"));  // Yellow
+    EXPECT_EQ(theme.bracePalette[3], QColor("#40a02b"));  // Green
+    EXPECT_EQ(theme.bracePalette[4], QColor("#209fb5"));  // Sapphire
+    EXPECT_EQ(theme.bracePalette[5], QColor("#7287fd"));  // Lavender
+}
+
+TEST(SyntaxHighlighterLatteTheme, ColorsAreDistinctValidAndNonDefault) {
+    auto theme = catppuccinLatteTheme();
+
+    std::vector<QColor> elementColors = {
+        theme.keyColor,     theme.stringColor, theme.numberColor,
+        theme.booleanColor, theme.nullColor,   theme.defaultColor,
+    };
+    for (size_t i = 0; i < elementColors.size(); ++i) {
+        EXPECT_TRUE(elementColors[i].isValid()) << "invalid color at " << i;
+        for (size_t j = i + 1; j < elementColors.size(); ++j) {
+            EXPECT_NE(elementColors[i], elementColors[j])
+                << "Element colors at index " << i << " and " << j
+                << " are identical";
+        }
+    }
+    // Every token color differs from the plain-text default.
+    for (size_t i = 0; i + 1 < elementColors.size(); ++i) {
+        EXPECT_NE(elementColors[i], theme.defaultColor);
+    }
+
+    for (size_t i = 0; i < theme.bracePalette.size(); ++i) {
+        EXPECT_TRUE(theme.bracePalette[i].isValid());
+        for (size_t j = i + 1; j < theme.bracePalette.size(); ++j) {
+            EXPECT_NE(theme.bracePalette[i], theme.bracePalette[j])
+                << "Brace palette colors at index " << i << " and " << j
+                << " are identical";
+        }
+    }
+}
+
+TEST(SyntaxHighlighterLatteTheme, DiffersFromMochaAndReadsOnLightSurface) {
+    auto latte = catppuccinLatteTheme();
+    auto mocha = catppuccinMochaTheme();
+
+    // A light palette must not just alias the dark one.
+    EXPECT_NE(latte.keyColor, mocha.keyColor);
+    EXPECT_NE(latte.stringColor, mocha.stringColor);
+    EXPECT_NE(latte.defaultColor, mocha.defaultColor);
+
+    // Minimum readability on the Latte base background (#eff1f5): Latte
+    // accents sit lower-contrast than Mocha on dark, but every color must
+    // still clear a basic legibility bar.
+    const QColor background("#eff1f5");
+    constexpr double minContrast = 2.0;
+    for (const QColor& color :
+         {latte.keyColor, latte.stringColor, latte.numberColor,
+          latte.booleanColor, latte.nullColor, latte.defaultColor}) {
+        EXPECT_GE(contrastRatio(color, background), minContrast)
+            << color.name().toStdString() << " unreadable on light surface";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Custom main: GTest needs a QApplication for QTextEdit widget tests
 // ---------------------------------------------------------------------------
 

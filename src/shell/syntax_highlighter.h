@@ -18,7 +18,8 @@ struct SyntaxTheme {
     std::array<QColor, 6> bracePalette;   // Cycling brace colors
 };
 
-auto catppuccinMochaTheme() -> SyntaxTheme;
+auto catppuccinMochaTheme() -> SyntaxTheme;  // dark
+auto catppuccinLatteTheme() -> SyntaxTheme;  // light
 
 void renderHighlighted(QTextEdit* editor,
                        const jsontitan::core::TokenEmitResult& result,

@@ -1,17 +1,19 @@
 #include "shell/filter_proxy_model.h"
 
-#include <QColor>
-
-namespace {
-
-// Translucent variant of the Catppuccin accent (#89b4fa) used for selection
-// in style.qss — light enough that selection and hover still read clearly.
-const QColor kMatchHighlight(0x89, 0xb4, 0xfa, 60);
-
-}  // namespace
-
 FilterProxyModel::FilterProxyModel(QObject* parent)
     : QSortFilterProxyModel(parent) {
+}
+
+void FilterProxyModel::setMatchHighlightColor(const QColor& color) {
+    if (m_matchHighlight == color) {
+        return;
+    }
+    m_matchHighlight = color;
+    // Rare (theme switch): a full invalidate is the simplest way to repaint
+    // every currently-highlighted row across the lazily-built tree.
+    if (m_filtered) {
+        invalidate();
+    }
 }
 
 void FilterProxyModel::applyFilter(const jsontitan::core::FilterResult& result) {
@@ -40,7 +42,7 @@ QVariant FilterProxyModel::data(const QModelIndex& index, int role) const {
             IndexPath path =
                 buildPathForIndex(sourceIndex.row(), sourceIndex.parent());
             if (m_exactMatchPaths.count(path) > 0) {
-                return kMatchHighlight;
+                return m_matchHighlight;
             }
         }
     }

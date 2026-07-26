@@ -17,6 +17,7 @@ set(SHELL_SOURCES
     save_handler.cpp
     search_worker.cpp
     syntax_highlighter.cpp
+    theme_manager.cpp
 )
 
 add_library(jsontitan_shell_lib OBJECT ${SHELL_SOURCES})

@@ -1,6 +1,4 @@
 #include <QApplication>
-#include <QDebug>
-#include <QFile>
 #include <QMetaType>
 #include <QTimer>
 
@@ -69,14 +67,8 @@ int main(int argc, char* argv[]) {
     app.setApplicationName("JSONTitan");
     app.setApplicationVersion("0.1.0");
 
-    QFile styleFile(":/resources/style.qss");
-    if (styleFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        app.setStyleSheet(QString::fromUtf8(styleFile.readAll()));
-        styleFile.close();
-    } else {
-        qWarning() << "Failed to load stylesheet from resources";
-    }
-
+    // The application stylesheet is owned by ThemeManager, constructed in
+    // the MainWindow constructor (it applies the persisted theme there).
     MainWindow window;
     window.show();
 

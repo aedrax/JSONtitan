@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QSortFilterProxyModel>
 
 #include <set>
@@ -16,6 +17,11 @@ public:
     void clearFilter();
 
     bool isFiltered() const { return m_filtered; }
+
+    // Background color for exact-match rows while filtered. Theme-dependent:
+    // MainWindow updates it on ThemeManager::themeChanged. Defaults to the
+    // dark theme's translucent accent.
+    void setMatchHighlightColor(const QColor& color);
 
     // While filtered, rows whose exact path is a match (not mere ancestors)
     // get a distinct translucent-accent background.
@@ -44,6 +50,12 @@ private:
 
     bool m_filtered = false;
     bool m_rootMatched = false;  // a match had an empty path (root itself)
+
+    // Translucent variant of the dark theme's accent (#89b4fa, as used for
+    // selection in style_dark.qss) — light enough that selection and hover
+    // still read clearly. Replaced via setMatchHighlightColor on theme
+    // changes.
+    QColor m_matchHighlight{0x89, 0xb4, 0xfa, 60};
 
     // Set of all visible paths (matched nodes + ancestors)
     // Each path is stored as a vector of child indices from root

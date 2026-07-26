@@ -34,6 +34,13 @@ DetailPanelPresenter::DetailPanelPresenter(QTextEdit* detailPanel,
     }
 }
 
+void DetailPanelPresenter::setSyntaxTheme(
+    const jsontitan::shell::SyntaxTheme& theme) {
+    m_syntaxTheme = theme;
+    // Re-render whatever is currently shown with the new palette.
+    onSelectionChanged();
+}
+
 std::optional<jsontitan::core::NodeView> DetailPanelPresenter::selectedNodeView() const {
     QModelIndex proxyIndex = m_treeView->currentIndex();
     if (!proxyIndex.isValid()) {

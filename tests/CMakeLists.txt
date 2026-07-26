@@ -146,7 +146,7 @@ target_link_libraries(integration_search_tests
 
 add_test(NAME integration_search_tests COMMAND integration_search_tests)
 
-# ── QSS Resource Tests (Qt Test — validates embedded stylesheet) ─────────
+# ── QSS Resource + ThemeManager Tests (Qt Test — embedded stylesheets) ───
 add_executable(qss_resource_tests
     qss_resource_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/resources.qrc
@@ -154,6 +154,7 @@ add_executable(qss_resource_tests
 
 target_link_libraries(qss_resource_tests
     PRIVATE
+        jsontitan_shell_lib
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
