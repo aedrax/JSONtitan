@@ -463,10 +463,14 @@ void MainWindow::hideDropOverlay() {
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    // Accept whenever at least one payload file is plausible so dropEvent
+    // gets the chance to report precisely; explain rejections right away.
     auto result = DropValidator::validate(event->mimeData());
     if (result.accepted) {
         event->acceptProposedAction();
         showDropOverlay();
+    } else {
+        statusBar()->showMessage(result.rejectReason, 3000);
     }
 }
 
@@ -479,9 +483,12 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
     auto result = DropValidator::validate(event->mimeData());
     if (!result.accepted) {
+        // Transient feedback on why the drop was rejected.
+        statusBar()->showMessage(result.rejectReason, 5000);
         return;
     }
 
+    // Ordering preserved: validate, confirm unsaved changes, then load.
     if (!m_editController->confirmDiscardChanges()) {
         return;
     }
@@ -496,15 +503,23 @@ void MainWindow::dropEvent(QDropEvent* event) {
     m_searchErrorLabel->hide();
     m_detailPanel->clear();
 
+    if (result.filePaths.size() > 1) {
+        // Multiple files: same union flow as File > Union Files / CLI.
+        m_unionController->loadUnionSynchronously(result.filePaths,
+                                                  /*recordInRecentFiles=*/true);
+        return;
+    }
+
+    const QString& filePath = result.filePaths.first();
+
     // Set current file name from the dropped file path and exit union mode
-    m_session->setFileIdentity(result.filePath,
-                               QFileInfo(result.filePath).fileName(), false);
+    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
 
     // Show progress bar and start parsing
     showLoadProgress();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
 
-    m_fileLoader->startParse(result.filePath);
+    m_fileLoader->startParse(filePath);
 }
 
 void MainWindow::showWelcomeMessage() {

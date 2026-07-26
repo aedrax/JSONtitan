@@ -1680,7 +1680,7 @@ private slots:
 
                     auto result = DropValidator::validate(&mimeData);
                     RC_ASSERT(result.accepted);
-                    RC_ASSERT(result.filePath == filePath);
+                    RC_ASSERT(result.filePaths == QStringList{filePath});
                 }
 
                 // Test rejection: filename NOT ending with .json
@@ -1697,30 +1697,36 @@ private slots:
                     QMimeData mimeData;
                     mimeData.setUrls({QUrl::fromLocalFile(filePath)});
 
+                    // Non-.json AND nonexistent (content sniff impossible):
+                    // must be rejected, with a user-facing reason.
                     auto result = DropValidator::validate(&mimeData);
                     RC_ASSERT(!result.accepted);
+                    RC_ASSERT(!result.rejectReason.isEmpty());
                 }
             });
     }
 };
 
 // ---------------------------------------------------------------------------
-// Task 1.3: Property test for multiple file rejection (Property 2)
-// Feature: drag-drop-file-open
-// Validates: Requirements 4.1
+// Task 1.3 (updated for Phase 4 commit 5): Property test for multi-file
+// acceptance (Property 2). Feature: drag-drop-file-open
+// Multi-file drops are now accepted; each plausible file is kept (in drop
+// order) and implausible ones are skipped. Nonexistent non-.json files can
+// never pass the content sniff, so exactly the .json subset survives here.
 // ---------------------------------------------------------------------------
 
 class DropValidatorMultiFilePropertyTest : public QObject {
     Q_OBJECT
 
 private slots:
-    void property2_multipleFileRejection() {
-        rc::check("Feature: drag-drop-file-open, Property 2: Multiple file rejection",
+    void property2_multipleFileAcceptance() {
+        rc::check("Feature: drag-drop-file-open, Property 2: Multi-file acceptance",
             [](void) {
                 // Generate 2-10 random filenames
                 auto fileCount = *rc::gen::inRange(2, 11);
 
                 QList<QUrl> urls;
+                QStringList expectedAccepted;
                 for (int i = 0; i < fileCount; ++i) {
                     // Randomly choose whether this file has .json extension
                     auto useJson = *rc::gen::arbitrary<bool>();
@@ -1731,23 +1737,196 @@ private slots:
                     );
                     RC_PRE(!baseName.empty());
 
-                    QString fileName = QString::fromStdString(baseName);
+                    QString fileName = QString::fromStdString(baseName)
+                        + QString::number(i);  // ensure distinct names
                     if (useJson) {
                         fileName += QStringLiteral(".json");
                     } else {
                         fileName += QStringLiteral(".txt");
                     }
 
-                    urls.append(QUrl::fromLocalFile(QStringLiteral("/tmp/") + fileName));
+                    QString path = QStringLiteral("/tmp/") + fileName;
+                    urls.append(QUrl::fromLocalFile(path));
+                    if (useJson) {
+                        expectedAccepted.append(path);
+                    }
                 }
 
                 QMimeData mimeData;
                 mimeData.setUrls(urls);
 
                 auto result = DropValidator::validate(&mimeData);
-                // Multiple files must always be rejected regardless of extensions
-                RC_ASSERT(!result.accepted);
+                if (expectedAccepted.isEmpty()) {
+                    // No plausible file at all: rejected, with a reason.
+                    RC_ASSERT(!result.accepted);
+                    RC_ASSERT(!result.rejectReason.isEmpty());
+                } else {
+                    RC_ASSERT(result.accepted);
+                    RC_ASSERT(result.filePaths == expectedAccepted);
+                }
             });
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Phase 4 commit 5: content-based acceptance (sniff) and rejection reasons
+// ---------------------------------------------------------------------------
+
+class DropValidatorContentSniffTest : public QObject {
+    Q_OBJECT
+
+private:
+    static QString writeFile(QTemporaryDir& dir, const QString& name,
+                             const QByteArray& content) {
+        const QString path = dir.path() + "/" + name;
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return {};
+        }
+        file.write(content);
+        return path;
+    }
+
+    static DropValidationResult validatePath(const QString& path) {
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl::fromLocalFile(path)});
+        return DropValidator::validate(&mimeData);
+    }
+
+private slots:
+    void testNonJsonExtensionWithJsonContentAccepted() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        // Every JSON start byte: { [ " digit - t f n (with leading blanks)
+        const QList<QByteArray> contents = {
+            "  {\"a\": 1}", "\n[1, 2]", "\"str\"", "42", "-3.5",
+            "true", "false", "null"
+        };
+        int i = 0;
+        for (const QByteArray& content : contents) {
+            const QString path = writeFile(
+                dir, QStringLiteral("data%1.dat").arg(i++), content);
+            QVERIFY(!path.isEmpty());
+            auto result = validatePath(path);
+            QVERIFY2(result.accepted, qPrintable(QString("rejected: %1").arg(
+                QString::fromUtf8(content))));
+            QCOMPARE(result.filePaths, QStringList{path});
+        }
+    }
+
+    void testNonJsonContentRejectedWithReason() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        const QString path = writeFile(dir, "notes.txt", "hello world");
+        QVERIFY(!path.isEmpty());
+        auto result = validatePath(path);
+        QVERIFY(!result.accepted);
+        QVERIFY(result.rejectReason.contains("notes.txt"));
+    }
+
+    void testDirectoryRejected() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        auto result = validatePath(dir.path());
+        QVERIFY(!result.accepted);
+        QVERIFY(!result.rejectReason.isEmpty());
+    }
+
+    void testRemoteUrlRejected() {
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl("https://example.com/data.json")});
+        auto result = DropValidator::validate(&mimeData);
+        QVERIFY(!result.accepted);
+        QVERIFY(!result.rejectReason.isEmpty());
+    }
+
+    void testMixedDropKeepsOnlyPlausibleFiles() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        const QString good = writeFile(dir, "good.dat", "{\"k\": true}");
+        const QString bad = writeFile(dir, "bad.txt", "plain text");
+        const QString json = writeFile(dir, "plain.json", "{}");
+        QVERIFY(!good.isEmpty() && !bad.isEmpty() && !json.isEmpty());
+
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl::fromLocalFile(good), QUrl::fromLocalFile(bad),
+                          QUrl::fromLocalFile(json)});
+        auto result = DropValidator::validate(&mimeData);
+        QVERIFY(result.accepted);
+        QCOMPARE(result.filePaths, (QStringList{good, json}));
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Phase 4 commit 5: multi-file drop triggers the union flow; rejected drops
+// surface a status-bar explanation.
+// ---------------------------------------------------------------------------
+
+class MainWindowMultiDropTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testMultiFileDropLoadsUnion() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString pathA = dir.path() + "/a.json";
+        const QString pathB = dir.path() + "/b.json";
+        {
+            QFile a(pathA);
+            QVERIFY(a.open(QIODevice::WriteOnly));
+            a.write(R"({"alpha": 1})");
+        }
+        {
+            QFile b(pathB);
+            QVERIFY(b.open(QIODevice::WriteOnly));
+            b.write(R"({"beta": 2})");
+        }
+
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl::fromLocalFile(pathA), QUrl::fromLocalFile(pathB)});
+
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+        QVERIFY(dragEnterEvent.isAccepted());
+
+        QDropEvent dropEvent(
+            QPointF(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dropEvent);
+
+        // Union loads synchronously: the tree is up and the status bar
+        // names the union document.
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView->isVisible());
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QVERIFY(statusLabel != nullptr);
+        QVERIFY(statusLabel->text().contains("Union (2 files)"));
+    }
+
+    void testRejectedDragShowsStatusBarReason() {
+        MainWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        QMimeData mimeData;
+        mimeData.setText("just some text");  // no URLs at all
+
+        // Qt only delivers Drop to widgets whose DragEnter was accepted, so
+        // the rejection feedback fires on drag enter (dropEvent has the same
+        // reporting for payloads that change between enter and drop).
+        QDragEnterEvent dragEnterEvent(
+            QPoint(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&window, &dragEnterEvent);
+
+        QVERIFY(!dragEnterEvent.isAccepted());
+        QVERIFY(window.statusBar()->currentMessage().contains("Drop rejected"));
     }
 };
 
@@ -2251,6 +2430,12 @@ int main(int argc, char* argv[]) {
 
     DropValidatorMultiFilePropertyTest dropMultiTest;
     status |= QTest::qExec(&dropMultiTest, argc, argv);
+
+    DropValidatorContentSniffTest dropSniffTest;
+    status |= QTest::qExec(&dropSniffTest, argc, argv);
+
+    MainWindowMultiDropTest multiDropTest;
+    status |= QTest::qExec(&multiDropTest, argc, argv);
 
     MainWindowDragDropTest dragDropTest;
     status |= QTest::qExec(&dragDropTest, argc, argv);
