@@ -185,8 +185,6 @@ FileLoader::FileLoader(QObject* parent)
                     emit progressUpdated(percentage);
                 }
             }, Qt::QueuedConnection);
-    connect(m_worker, &FileLoaderWorker::parseComplete,
-            this, &FileLoader::parseComplete, Qt::QueuedConnection);
     connect(m_worker, &FileLoaderWorker::arenaParseComplete, this,
             [this](std::shared_ptr<jsontitan::core::ArenaParseResult> result,
                    quint64 requestId) {

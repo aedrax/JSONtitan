@@ -37,7 +37,6 @@ public slots:
 
 signals:
     void progressUpdated(int percentage, quint64 requestId);
-    void parseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
     void arenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result,
                             quint64 requestId);
     void parseError(QString errorMessage, quint64 requestId);
@@ -57,7 +56,6 @@ public:
 
 signals:
     void progressUpdated(int percentage);
-    void parseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
     void arenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
     void parseError(QString errorMessage);
 

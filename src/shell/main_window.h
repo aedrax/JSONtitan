@@ -58,7 +58,6 @@ private slots:
     void onExportCsv();
     void onExportXml();
     void onSearchTextChanged(const QString& text);
-    void onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode> root);
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
     void onTreeSelectionChanged();

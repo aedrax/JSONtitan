@@ -1,7 +1,8 @@
 #include "core/csv_exporter.h"
 
+#include "core/json_escape.h"
+
 #include <algorithm>
-#include <cstdio>
 #include <set>
 #include <vector>
 
@@ -54,35 +55,6 @@ auto escapeCsvCell(const std::string& value, bool guardFormula = true) -> std::s
     }
     result += '"';
     return result;
-}
-
-// Escape a string for JSON output (compact, single-line).
-auto escapeJsonString(const std::string& s) -> std::string {
-    std::string out;
-    out.reserve(s.size() + 2);
-    out += '"';
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\t': out += "\\t";  break;
-            case '\r': out += "\\r";  break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            default:
-                if (c < 0x20) {
-                    char buf[7];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-                    out += buf;
-                } else {
-                    out += static_cast<char>(c);
-                }
-                break;
-        }
-    }
-    out += '"';
-    return out;
 }
 
 // Serialize a JsonNode to compact single-line JSON (for embedding in CSV cells).
@@ -143,23 +115,6 @@ auto serializeNodeValue(const JsonNode& node) -> std::string {
         }
     }
     return "";
-}
-
-// Check if a node is an array of objects (the only valid structure for CSV export).
-auto isArrayOfObjects(const JsonNode& node) -> bool {
-    if (node.type != NodeType::Array) {
-        return false;
-    }
-    if (node.children.empty()) {
-        // Empty array of objects is valid (produces header only)
-        return true;
-    }
-    for (const auto& child : node.children) {
-        if (child->type != NodeType::Object) {
-            return false;
-        }
-    }
-    return true;
 }
 
 // Compute the union of all keys across all objects in the array,

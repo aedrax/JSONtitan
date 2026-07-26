@@ -1,45 +1,13 @@
 #include "core/pretty_printer.h"
 
 #include "core/indent_util.h"
+#include "core/json_escape.h"
 
 #include <algorithm>
-#include <cstdio>
 
 namespace jsontitan::core {
 
 namespace {
-
-// Escape a string value for JSON output.
-// Preserves multi-byte UTF-8 sequences as-is; escapes control characters below 0x20.
-auto escapeJsonString(const std::string& s) -> std::string {
-    std::string out;
-    out.reserve(s.size() + 2);
-    out += '"';
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\t': out += "\\t";  break;
-            case '\r': out += "\\r";  break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            default:
-                if (c < 0x20) {
-                    // Control character — emit \uXXXX
-                    char buf[7];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-                    out += buf;
-                } else {
-                    // Normal ASCII or multi-byte UTF-8 byte — pass through
-                    out += static_cast<char>(c);
-                }
-                break;
-        }
-    }
-    out += '"';
-    return out;
-}
 
 void printNode(const JsonNode& node,
                const PrettyPrintOptions& options,
