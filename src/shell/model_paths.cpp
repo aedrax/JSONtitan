@@ -66,6 +66,11 @@ auto indexForPath(TreeModel& model, const jsontitan::core::NodePath& path)
                         row = r;
                         break;
                     }
+                } else if (auto* an = model.arenaNodeForIndex(childIdx)) {
+                    if (an->keyView() == *keyStr) {
+                        row = r;
+                        break;
+                    }
                 }
             }
         }
