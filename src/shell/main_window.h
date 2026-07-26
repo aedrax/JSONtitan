@@ -39,6 +39,7 @@
 #include "shell/search_controller.h"
 #include "shell/syntax_highlighter.h"
 #include "shell/tree_model.h"
+#include "shell/union_controller.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -58,13 +59,11 @@ protected:
 
 private slots:
     void onOpenFile();
-    void onUnionFiles();
     void onExportCsv();
     void onExportXml();
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
     void onTreeSelectionChanged();
-    void onRemoveFromUnion();
     void onRecentFileSelected(const QString& filePath);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
 
@@ -120,6 +119,9 @@ private:
 
     // Document-mutation flows (delete / save / unsaved-changes prompt)
     EditController* m_editController = nullptr;
+
+    // Multi-file union flows
+    UnionController* m_unionController = nullptr;
 
     // Syntax highlighting
     jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();

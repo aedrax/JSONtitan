@@ -7,6 +7,7 @@ set(SHELL_SOURCES
     model_paths.cpp
     search_controller.cpp
     tree_model.cpp
+    union_controller.cpp
     filter_proxy_model.cpp
     file_loader.cpp
     export_handler.cpp

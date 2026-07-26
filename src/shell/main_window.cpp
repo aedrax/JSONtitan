@@ -15,16 +15,10 @@
 
 #include <filesystem>
 
-#include "core/deletion_engine.h"
-#include "core/parser.h"
 #include "core/parse_orchestrator.h"
 #include "core/pretty_printer.h"
-#include "core/search_engine.h"
 #include "core/token_emitter.h"
-#include "core/union_engine.h"
 #include "shell/drop_validator.h"
-#include "shell/model_paths.h"
-#include "shell/save_handler.h"
 #include "shell/syntax_highlighter.h"
 
 MainWindow::MainWindow(QWidget* parent)
@@ -64,6 +58,18 @@ MainWindow::MainWindow(QWidget* parent)
             m_editController, &EditController::save);
     connect(m_saveAsAction, &QAction::triggered,
             m_editController, &EditController::saveAs);
+
+    // Multi-file union flows
+    m_unionController = new UnionController(
+        this,
+        UnionController::Ui{m_treeView, m_welcomeLabel, m_noResultsLabel,
+                            m_searchErrorLabel, m_searchBar, m_detailPanel},
+        m_treeModel, m_filterProxy, m_session, m_searchController,
+        m_editController, m_recentFilesManager, this);
+    connect(m_unionAction, &QAction::triggered,
+            m_unionController, &UnionController::unionFiles);
+    connect(m_unionController, &UnionController::statusUpdated,
+            this, &MainWindow::updateStatusBar);
 
     showWelcomeMessage();
 
@@ -116,76 +122,12 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
         m_fileLoader->startParse(qPath);
     } else {
         // Multiple files: use the same union logic as File > Union Files
-        std::vector<jsontitan::core::FileEntry> entries;
-
+        QStringList qPaths;
         for (const auto& path : filePaths) {
-            QString qPath = QString::fromStdString(path);
-            QFile file(qPath);
-            if (!file.open(QIODevice::ReadOnly)) {
-                QMessageBox::warning(this, tr("File Error"),
-                    tr("Cannot open file: %1").arg(qPath));
-                return;
-            }
-
-            QByteArray data = file.readAll();
-            file.close();
-
-            auto state = jsontitan::core::makeParserState();
-            auto chunk = std::span<const std::byte>(
-                reinterpret_cast<const std::byte*>(data.constData()),
-                static_cast<std::size_t>(data.size()));
-
-            auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
-            if (chunkResult.error) {
-                QMessageBox::warning(this, tr("Parse Error"),
-                    tr("Failed to parse %1:\n\n%2")
-                        .arg(QFileInfo(qPath).fileName(),
-                             QString::fromStdString(chunkResult.error->description)));
-                return;
-            }
-
-            auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
-            if (parseResult.error) {
-                QMessageBox::warning(this, tr("Parse Error"),
-                    tr("Failed to parse %1:\n\n%2")
-                        .arg(QFileInfo(qPath).fileName(),
-                             QString::fromStdString(parseResult.error->description)));
-                return;
-            }
-
-            jsontitan::core::FileEntry entry;
-            entry.filename = QFileInfo(qPath).fileName().toStdString();
-            entry.root = parseResult.root;
-            entries.push_back(std::move(entry));
+            qPaths.append(QString::fromStdString(path));
         }
-
-        auto unionRoot = jsontitan::core::unionTrees(entries);
-
-        m_searchController->invalidate();
-        // File path deliberately left as-is: union mode never reads it
-        // (Save redirects to Save As), matching pre-extraction behavior.
-        m_session->setJsonRoot(unionRoot, m_session->filePath(),
-                               tr("Union (%1 files)").arg(filePaths.size()),
-                               true);
-        m_filterProxy->clearFilter();
-
-        m_welcomeLabel->hide();
-        m_treeView->show();
-        m_noResultsLabel->hide();
-
-        int nodeCount = unionRoot
-            ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
-            : 0;
-        updateStatusBar(m_session->fileName(), nodeCount);
-
-        m_detailPanel->clear();
-        m_searchBar->clear();
-        m_searchErrorLabel->hide();
-
-        // Record all files in recent files list
-        for (const auto& path : filePaths) {
-            m_recentFilesManager->fileOpened(QString::fromStdString(path));
-        }
+        m_unionController->loadUnionSynchronously(qPaths,
+                                                  /*recordInRecentFiles=*/true);
     }
 }
 
@@ -197,7 +139,6 @@ void MainWindow::setupMenuBar() {
     connect(m_openAction, &QAction::triggered, this, &MainWindow::onOpenFile);
 
     m_unionAction = fileMenu->addAction(tr("&Union Files..."));
-    connect(m_unionAction, &QAction::triggered, this, &MainWindow::onUnionFiles);
 
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
     m_recentFilesManager = new RecentFilesManager(m_recentMenu, this);
@@ -316,7 +257,8 @@ void MainWindow::setupCentralWidget() {
         if (m_session->isUnionMode()) {
             menu->addSeparator();
             auto* removeAction = menu->addAction(tr("Remove from Union"));
-            connect(removeAction, &QAction::triggered, this, &MainWindow::onRemoveFromUnion);
+            connect(removeAction, &QAction::triggered,
+                    m_unionController, &UnionController::removeFromUnion);
         }
         menu->popup(m_treeView->viewport()->mapToGlobal(pos));
     });
@@ -556,133 +498,6 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
     m_progressBar->show();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
     m_fileLoader->startParse(filePath);
-}
-
-// --- Task 16.4: Multi-file union ---
-
-void MainWindow::onUnionFiles() {
-    if (!m_editController->confirmDiscardChanges()) {
-        return;
-    }
-
-    QStringList filePaths = QFileDialog::getOpenFileNames(
-        this, tr("Select JSON Files to Union"), QString(),
-        tr("JSON Files (*.json);;All Files (*)"));
-
-    if (filePaths.isEmpty()) {
-        return;
-    }
-
-    // Parse each file synchronously for union (they should be small enough)
-    // For large files, a more sophisticated approach would be needed.
-    std::vector<jsontitan::core::FileEntry> entries;
-
-    for (const auto& path : filePaths) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            QMessageBox::critical(this, tr("File Error"),
-                                  tr("Cannot open file: %1").arg(path));
-            return;
-        }
-
-        QByteArray data = file.readAll();
-        file.close();
-
-        // Parse using the core parser
-        auto state = jsontitan::core::makeParserState();
-        auto chunk = std::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(data.constData()),
-            static_cast<std::size_t>(data.size()));
-
-        auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
-        if (chunkResult.error) {
-            QMessageBox::critical(this, tr("Parse Error"),
-                                  tr("Failed to parse %1:\n\n%2")
-                                      .arg(QFileInfo(path).fileName(),
-                                           QString::fromStdString(chunkResult.error->description)));
-            return;
-        }
-
-        auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
-        if (parseResult.error) {
-            QMessageBox::critical(this, tr("Parse Error"),
-                                  tr("Failed to parse %1:\n\n%2")
-                                      .arg(QFileInfo(path).fileName(),
-                                           QString::fromStdString(parseResult.error->description)));
-            return;
-        }
-
-        jsontitan::core::FileEntry entry;
-        entry.filename = QFileInfo(path).fileName().toStdString();
-        entry.root = parseResult.root;
-        entries.push_back(std::move(entry));
-    }
-
-    // Union the trees
-    auto unionRoot = jsontitan::core::unionTrees(entries);
-
-    m_searchController->invalidate();
-    // File path deliberately left as-is: union mode never reads it
-    // (Save redirects to Save As), matching pre-extraction behavior.
-    m_session->setJsonRoot(unionRoot, m_session->filePath(),
-                           tr("Union (%1 files)").arg(filePaths.size()), true);
-    m_filterProxy->clearFilter();
-
-    m_welcomeLabel->hide();
-    m_treeView->show();
-    m_noResultsLabel->hide();
-
-    int nodeCount = unionRoot
-        ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
-        : 0;
-    updateStatusBar(m_session->fileName(), nodeCount);
-
-    m_detailPanel->clear();
-    m_searchBar->clear();
-    m_searchErrorLabel->hide();
-}
-
-void MainWindow::onRemoveFromUnion() {
-    if (!m_session->isUnionMode() || !m_session->currentRoot()) {
-        return;
-    }
-
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return;
-    }
-
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-    if (!sourceIndex.isValid()) {
-        return;
-    }
-
-    // Only allow removal of top-level children (direct children of union root)
-    if (sourceIndex.parent().isValid()) {
-        QMessageBox::information(this, tr("Remove from Union"),
-                                 tr("Please select a top-level file node to remove."));
-        return;
-    }
-
-    // Get the key of the selected node
-    const auto* nodePtr = m_treeModel->jsonNodeForIndex(sourceIndex);
-    if (!nodePtr) {
-        return;
-    }
-
-    std::string filenameKey = nodePtr->key;
-
-    auto newRoot = jsontitan::core::removeFromUnion(*m_session->currentRoot(), filenameKey);
-    m_searchController->invalidate();
-    m_session->replaceJsonRoot(newRoot);
-    m_filterProxy->clearFilter();
-
-    int nodeCount = newRoot
-        ? static_cast<int>(1 + jsontitan::core::countDescendants(*newRoot))
-        : 0;
-    updateStatusBar(m_session->fileName(), nodeCount);
-
-    m_detailPanel->clear();
 }
 
 // --- Task 16.5: Export actions and detail panel ---
