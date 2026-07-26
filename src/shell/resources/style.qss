@@ -104,8 +104,13 @@ QTreeView {
     background-color: #1e1e2e;
     alternate-background-color: #262637;
     color: #cdd6f4;
-    border: none;
-    outline: none;
+    /* Transparent border reserves the pixel so gaining focus doesn't shift
+       the layout; :focus recolors it to a visible lavender ring. */
+    border: 1px solid transparent;
+}
+
+QTreeView:focus {
+    border: 1px solid #b4befe;
 }
 
 QTreeView::item {
@@ -148,9 +153,13 @@ QTreeView::branch:selected {
 QTextEdit#detailPanel {
     background-color: #313244;
     color: #cdd6f4;
-    border: none;
+    border: 1px solid transparent;
     font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
     font-size: 13px;
+}
+
+QTextEdit#detailPanel:focus {
+    border: 1px solid #b4befe;
 }
 
 /* === Progress Bar === */

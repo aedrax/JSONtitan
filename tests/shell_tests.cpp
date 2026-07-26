@@ -1408,6 +1408,31 @@ private slots:
         QVERIFY2(hasShortcuts, "Help menu missing Keyboard Shortcuts action");
     }
 
+    // Phase 4 commit 6: every menu action carries a status tip
+    void testAllMenuActionsHaveStatusTips() {
+        MainWindow window;
+
+        for (auto* menuAction : window.menuBar()->actions()) {
+            QMenu* menu = menuAction->menu();
+            QVERIFY(menu != nullptr);
+            for (auto* action : menu->actions()) {
+                if (action->isSeparator()) {
+                    continue;
+                }
+                if (action->menu() != nullptr) {
+                    // Submenu (Open Recent): tip lives on the menu action.
+                    QVERIFY2(!action->statusTip().isEmpty(),
+                             qPrintable(QStringLiteral("submenu '%1' has no status tip")
+                                            .arg(action->text())));
+                    continue;
+                }
+                QVERIFY2(!action->statusTip().isEmpty(),
+                         qPrintable(QStringLiteral("action '%1' has no status tip")
+                                        .arg(action->text())));
+            }
+        }
+    }
+
     void testSearchBarHasPlaceholderText() {
         MainWindow window;
 

@@ -463,8 +463,9 @@ private slots:
 
     // -----------------------------------------------------------------------
     // Property 2c: Invalid JSON Preservation
-    // For any file containing invalid JSON, process() emits parseError
-    // containing "Parse error at byte" with a byte offset and description.
+    // For any file containing invalid JSON, process() emits parseError with
+    // line/column and the byte offset in parentheses — or, when the parser
+    // cannot locate the error (offset 0), the plain "Parse error: …" form.
     // Requirement: 3.3
     // -----------------------------------------------------------------------
     void testInvalidJsonPreservation() {
@@ -487,25 +488,39 @@ private slots:
                 RC_ASSERT(errorSpy.count() == 1);
                 RC_ASSERT(completeSpy.count() == 0);
 
-                // Error message must contain "Parse error at byte" followed by a number
+                // Error message: "Parse error at line L, column C: desc
+                // (byte N)" — or "Parse error: desc" when the parser could
+                // not locate the failure (byte offset 0).
                 QString errorMsg = errorSpy.at(0).at(0).toString();
-                RC_ASSERT(errorMsg.contains("Parse error at byte"));
+                RC_ASSERT(errorMsg.contains("Parse error"));
 
-                // Verify the message format: "Parse error at byte N: description"
-                // Extract and validate the byte offset is a non-negative number
-                QRegularExpression re(R"(Parse error at byte (\d+): (.+))");
-                auto match = re.match(errorMsg);
-                RC_ASSERT(match.hasMatch());
+                QRegularExpression lineColRe(
+                    R"(Parse error at line (\d+), column (\d+): (.+) \(byte (\d+)\))");
+                auto match = lineColRe.match(errorMsg);
+                if (match.hasMatch()) {
+                    bool ok = false;
+                    int line = match.captured(1).toInt(&ok);
+                    RC_ASSERT(ok);
+                    RC_ASSERT(line >= 1);
 
-                bool ok = false;
-                int byteOffset = match.captured(1).toInt(&ok);
-                RC_ASSERT(ok);
-                RC_ASSERT(byteOffset >= 0);
-                RC_ASSERT(byteOffset <= static_cast<int>(invalidJson.size()));
+                    int column = match.captured(2).toInt(&ok);
+                    RC_ASSERT(ok);
+                    RC_ASSERT(column >= 1);
 
-                // Description must be non-empty
-                QString description = match.captured(2);
-                RC_ASSERT(!description.isEmpty());
+                    // Description must be non-empty
+                    RC_ASSERT(!match.captured(3).isEmpty());
+
+                    int byteOffset = match.captured(4).toInt(&ok);
+                    RC_ASSERT(ok);
+                    RC_ASSERT(byteOffset >= 1);
+                    RC_ASSERT(byteOffset <= static_cast<int>(invalidJson.size()));
+                } else {
+                    // Location unavailable: plain form, no line/column.
+                    QRegularExpression plainRe(R"(Parse error: (.+))");
+                    auto plainMatch = plainRe.match(errorMsg);
+                    RC_ASSERT(plainMatch.hasMatch());
+                    RC_ASSERT(!plainMatch.captured(1).isEmpty());
+                }
             });
 
         QVERIFY2(result, "Invalid JSON preservation property failed");

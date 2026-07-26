@@ -5,7 +5,46 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <utility>
+
 using namespace jsontitan::core;
+
+namespace {
+
+// Computes the 1-based line/column of `byteOffset` by re-reading the file
+// from disk (the parsed buffer was moved into parseBuffer and is not
+// retained on error). Error path only, so the extra read is acceptable.
+// Returns {0, 0} when the file cannot be re-read.
+std::pair<qint64, qint64> lineColumnForOffset(const QString& filePath,
+                                              qint64 byteOffset) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {0, 0};
+    }
+
+    qint64 line = 1;
+    qint64 column = 1;
+    qint64 remaining = byteOffset;
+    constexpr qint64 kChunk = 1 << 20;  // 1 MB
+    while (remaining > 0) {
+        const QByteArray chunk = file.read(qMin(kChunk, remaining));
+        if (chunk.isEmpty()) {
+            break;  // file shrank since the parse — report what we have
+        }
+        remaining -= chunk.size();
+        for (const char c : chunk) {
+            if (c == '\n') {
+                ++line;
+                column = 1;
+            } else {
+                ++column;
+            }
+        }
+    }
+    return {line, column};
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // FileLoaderWorker
@@ -21,19 +60,19 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
 
     QFile file(filePath);
     if (!file.exists()) {
-        emit parseError(QStringLiteral("File not found: %1").arg(filePath), requestId);
+        emit parseError(tr("File not found: %1").arg(filePath), requestId);
         return;
     }
 
     if (!file.open(QIODevice::ReadOnly)) {
-        emit parseError(QStringLiteral("Cannot open file: %1 — %2")
+        emit parseError(tr("Cannot open file: %1 — %2")
                             .arg(filePath, file.errorString()), requestId);
         return;
     }
 
     const qint64 totalSize = file.size();
     if (totalSize == 0) {
-        emit parseError(QStringLiteral("File is empty: %1").arg(filePath), requestId);
+        emit parseError(tr("File is empty: %1").arg(filePath), requestId);
         return;
     }
 
@@ -80,11 +119,11 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     // permission revoked mid-read): parsing the truncated buffer would show
     // a misleading parse error — or silently display a truncated document.
     if (bytesRead != totalSize || file.error() != QFileDevice::NoError) {
-        emit parseError(QStringLiteral("Failed to read %1: %2")
+        emit parseError(tr("Failed to read %1: %2")
                             .arg(filePath,
                                  file.error() != QFileDevice::NoError
                                      ? file.errorString()
-                                     : QStringLiteral("unexpected end of file")),
+                                     : tr("unexpected end of file")),
                         requestId);
         return;
     }
@@ -125,10 +164,33 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     }
 
     if (arenaResult.error) {
-        emit parseError(QStringLiteral("Parse error at byte %1: %2")
-                            .arg(arenaResult.error->byteOffset)
-                            .arg(QString::fromStdString(arenaResult.error->description)),
-                        requestId);
+        const auto byteOffset =
+            static_cast<qint64>(arenaResult.error->byteOffset);
+        const QString description =
+            QString::fromStdString(arenaResult.error->description);
+        // byteOffset 0 means "location unavailable" (simdjson does not
+        // always know where it failed): no line/column prefix then.
+        if (byteOffset > 0) {
+            const auto [line, column] =
+                lineColumnForOffset(filePath, byteOffset);
+            if (line > 0) {
+                emit parseError(
+                    tr("Parse error at line %1, column %2: %3 (byte %4)")
+                        .arg(line)
+                        .arg(column)
+                        .arg(description)
+                        .arg(byteOffset),
+                    requestId);
+                return;
+            }
+            // File no longer readable — fall back to the byte-only form.
+            emit parseError(tr("Parse error at byte %1: %2")
+                                .arg(byteOffset)
+                                .arg(description),
+                            requestId);
+            return;
+        }
+        emit parseError(tr("Parse error: %1").arg(description), requestId);
         return;
     }
 
@@ -139,10 +201,10 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     emit arenaParseComplete(std::move(sharedResult), requestId);
 
     } catch (const std::bad_alloc&) {
-        emit parseError(QStringLiteral("Out of memory loading %1").arg(filePath),
+        emit parseError(tr("Out of memory loading %1").arg(filePath),
                         requestId);
     } catch (const std::exception& e) {
-        emit parseError(QStringLiteral("Failed to load %1: %2")
+        emit parseError(tr("Failed to load %1: %2")
                             .arg(filePath, QString::fromUtf8(e.what())),
                         requestId);
     }

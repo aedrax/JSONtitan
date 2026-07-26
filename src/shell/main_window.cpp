@@ -183,11 +183,16 @@ void MainWindow::setupMenuBar() {
 
     m_openAction = fileMenu->addAction(tr("&Open..."));
     m_openAction->setShortcut(QKeySequence::Open);
+    m_openAction->setStatusTip(tr("Open a JSON file"));
     connect(m_openAction, &QAction::triggered, this, &MainWindow::onOpenFile);
 
     m_unionAction = fileMenu->addAction(tr("&Union Files..."));
+    m_unionAction->setStatusTip(
+        tr("Combine several JSON files into a single tree"));
 
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
+    m_recentMenu->menuAction()->setStatusTip(
+        tr("Reopen a recently opened file"));
     m_recentFilesManager = new RecentFilesManager(m_recentMenu, this);
     connect(m_recentFilesManager, &RecentFilesManager::recentFileSelected,
             this, &MainWindow::onRecentFileSelected);
@@ -196,16 +201,22 @@ void MainWindow::setupMenuBar() {
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
     m_saveAction->setShortcut(QKeySequence::Save);
+    m_saveAction->setStatusTip(tr("Save the document to its current file"));
 
     m_saveAsAction = fileMenu->addAction(tr("Save &As..."));
     m_saveAsAction->setShortcut(QKeySequence::SaveAs);
+    m_saveAsAction->setStatusTip(tr("Save the document to a new file"));
 
     fileMenu->addSeparator();
 
     m_exportCsvAction = fileMenu->addAction(tr("Export &CSV..."));
+    m_exportCsvAction->setStatusTip(
+        tr("Export the selection (or the whole document) as CSV"));
     connect(m_exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
 
     m_exportXmlAction = fileMenu->addAction(tr("Export &XML..."));
+    m_exportXmlAction->setStatusTip(
+        tr("Export the selection (or the whole document) as XML"));
     connect(m_exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
 
     fileMenu->addSeparator();
@@ -213,6 +224,8 @@ void MainWindow::setupMenuBar() {
     // Session-restore option: persisted, default ON. CLI arguments always
     // take precedence over the restored file (see main.cpp).
     m_reopenLastFileAction = fileMenu->addAction(tr("Reopen Last File on Startup"));
+    m_reopenLastFileAction->setStatusTip(
+        tr("Automatically reopen the last file the next time JSONTitan starts"));
     m_reopenLastFileAction->setCheckable(true);
     m_reopenLastFileAction->setChecked(
         QSettings().value(QStringLiteral("session/reopenLastFile"), true).toBool());
@@ -224,6 +237,7 @@ void MainWindow::setupMenuBar() {
 
     m_exitAction = fileMenu->addAction(tr("E&xit"));
     m_exitAction->setShortcut(QKeySequence::Quit);
+    m_exitAction->setStatusTip(tr("Exit JSONTitan"));
     // close() (not QApplication::quit) so closeEvent runs the
     // unsaved-changes prompt before exiting.
     connect(m_exitAction, &QAction::triggered, this, &MainWindow::close);
@@ -231,6 +245,7 @@ void MainWindow::setupMenuBar() {
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
     m_deleteAction = editMenu->addAction(tr("&Delete"));
     m_deleteAction->setShortcut(QKeySequence::Delete);
+    m_deleteAction->setStatusTip(tr("Delete the selected node"));
     // Disabled until the tree has a valid current index; the trigger and the
     // enabled-state sync are wired in the constructor once EditController
     // and the tree's selection model exist.
@@ -238,9 +253,11 @@ void MainWindow::setupMenuBar() {
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     m_shortcutsAction = helpMenu->addAction(tr("&Keyboard Shortcuts"));
+    m_shortcutsAction->setStatusTip(tr("Show the list of keyboard shortcuts"));
     connect(m_shortcutsAction, &QAction::triggered,
             this, &MainWindow::onShowKeyboardShortcuts);
     m_aboutAction = helpMenu->addAction(tr("&About JSONTitan"));
+    m_aboutAction->setStatusTip(tr("Show version and build information"));
     connect(m_aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
 }
 
@@ -287,6 +304,8 @@ void MainWindow::setupCentralWidget() {
     m_searchBar = new QLineEdit(centralWidget);
     m_searchBar->setObjectName("searchBar");
     m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
+    m_searchBar->setToolTip(
+        tr("Search (Ctrl+F). Return/F3: next match, Shift+F3: previous match"));
     searchLayout->addWidget(m_searchBar);
 
     // Match count ("N matches") — hidden while no search is active
