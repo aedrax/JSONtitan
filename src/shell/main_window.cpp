@@ -163,8 +163,10 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
 
         m_isUnionMode = true;
         m_currentRoot = unionRoot;
+        m_arenaResult.reset();  // Search must target the union, not a previously opened file
         m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
 
+        invalidateActiveSearch();
         m_treeModel->setRootNode(unionRoot);
         m_filterProxy->clearFilter();
 
@@ -533,6 +535,7 @@ void MainWindow::onParseComplete(std::shared_ptr<const jsontitan::core::JsonNode
     m_currentRoot = root;
     m_arenaResult.reset();  // Clear arena result when using union/legacy path
 
+    invalidateActiveSearch();
     m_treeModel->setRootNode(root);
     m_filterProxy->clearFilter();
 
@@ -564,6 +567,7 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     m_arenaResult = result;
     m_currentRoot.reset();  // Clear legacy root when using arena path
 
+    invalidateActiveSearch();
     m_treeModel->setArenaRoot(result);
     m_filterProxy->clearFilter();
 
@@ -624,8 +628,9 @@ void MainWindow::onSearchTextChanged(const QString& text) {
     m_noResultsLabel->hide();
 
     if (text.isEmpty()) {
-        // Clear filter immediately — no debounce needed
-        m_debounceTimer->stop();
+        // Clear filter immediately — no debounce needed. Also invalidate any
+        // in-flight search so its result cannot re-apply the filter afterwards.
+        invalidateActiveSearch();
         m_filterProxy->clearFilter();
         m_treeView->show();
         return;
@@ -637,6 +642,13 @@ void MainWindow::onSearchTextChanged(const QString& text) {
 
     // Restart debounce timer — coalesces rapid keystrokes
     m_debounceTimer->start();
+}
+
+void MainWindow::invalidateActiveSearch() {
+    // Any in-flight worker result now fails the generation check in
+    // onSearchComplete, and no debounced search fires against stale UI state.
+    ++m_searchGeneration;
+    m_debounceTimer->stop();
 }
 
 void MainWindow::executeSearch() {
@@ -767,8 +779,10 @@ void MainWindow::onUnionFiles() {
 
     m_isUnionMode = true;
     m_currentRoot = unionRoot;
+    m_arenaResult.reset();  // Search must target the union, not a previously opened file
     m_currentFileName = tr("Union (%1 files)").arg(filePaths.size());
 
+    invalidateActiveSearch();
     m_treeModel->setRootNode(unionRoot);
     m_filterProxy->clearFilter();
 
@@ -816,6 +830,7 @@ void MainWindow::onRemoveFromUnion() {
 
     auto newRoot = jsontitan::core::removeFromUnion(*m_currentRoot, filenameKey);
     m_currentRoot = newRoot;
+    invalidateActiveSearch();
     m_treeModel->setRootNode(newRoot);
     m_filterProxy->clearFilter();
 
@@ -1112,6 +1127,7 @@ void MainWindow::onDeleteNode() {
         return;  // Shouldn't happen since we guard against root deletion
     }
     m_currentRoot = newTree;
+    invalidateActiveSearch();
     m_treeModel->setRootNode(newTree);
     m_filterProxy->clearFilter();
 
