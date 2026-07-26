@@ -38,22 +38,6 @@ MainWindow::MainWindow(QWidget* parent)
     m_filterProxy->setSourceModel(m_treeModel);
     m_fileLoader = new FileLoader(this);
 
-    // Initialize debounce timer (single-shot, 250ms)
-    m_debounceTimer = new QTimer(this);
-    m_debounceTimer->setSingleShot(true);
-    m_debounceTimer->setInterval(250);
-    connect(m_debounceTimer, &QTimer::timeout, this, &MainWindow::executeSearch);
-
-    // Initialize background search worker on dedicated thread
-    m_searchThread = new QThread(this);
-    m_searchWorker = new SearchWorker();
-    m_searchWorker->moveToThread(m_searchThread);
-
-    connect(m_searchWorker, &SearchWorker::searchComplete,
-            this, &MainWindow::onSearchComplete, Qt::QueuedConnection);
-
-    m_searchThread->start();
-
     setupMenuBar();
     setupCentralWidget();
     setupStatusBar();
@@ -64,6 +48,13 @@ MainWindow::MainWindow(QWidget* parent)
     m_session = new DocumentSession(m_treeModel, this);
     connect(m_session, &DocumentSession::modifiedChanged,
             this, &MainWindow::updateWindowTitle);
+
+    // Search pipeline — owns the debounce timer, the worker thread, and the
+    // generation counter; wired with raw widget/model pointers.
+    m_searchController = new SearchController(
+        SearchController::Ui{m_searchBar, m_caseSensitiveToggle, m_regexToggle,
+                             m_searchErrorLabel, m_noResultsLabel, m_treeView},
+        m_treeModel, m_filterProxy, m_session, this);
 
     showWelcomeMessage();
 
@@ -76,11 +67,7 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onParseError);
 }
 
-MainWindow::~MainWindow() {
-    m_searchThread->quit();
-    m_searchThread->wait();
-    delete m_searchWorker;
-}
+MainWindow::~MainWindow() = default;
 
 void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
     if (filePaths.empty()) {
@@ -165,7 +152,7 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
 
         auto unionRoot = jsontitan::core::unionTrees(entries);
 
-        invalidateActiveSearch();
+        m_searchController->invalidate();
         // File path deliberately left as-is: union mode never reads it
         // (Save redirects to Save As), matching pre-extraction behavior.
         m_session->setJsonRoot(unionRoot, m_session->filePath(),
@@ -252,8 +239,6 @@ void MainWindow::setupCentralWidget() {
     m_searchBar = new QLineEdit(centralWidget);
     m_searchBar->setObjectName("searchBar");
     m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
-    connect(m_searchBar, &QLineEdit::textChanged,
-            this, &MainWindow::onSearchTextChanged);
     searchLayout->addWidget(m_searchBar);
 
     m_caseSensitiveToggle = new QToolButton(centralWidget);
@@ -262,8 +247,6 @@ void MainWindow::setupCentralWidget() {
     m_caseSensitiveToggle->setCheckable(true);
     m_caseSensitiveToggle->setChecked(false);
     m_caseSensitiveToggle->setToolTip(tr("Case Sensitive"));
-    connect(m_caseSensitiveToggle, &QToolButton::toggled,
-            this, [this]() { if (!m_searchBar->text().isEmpty()) m_debounceTimer->start(); });
     searchLayout->addWidget(m_caseSensitiveToggle);
 
     m_regexToggle = new QToolButton(centralWidget);
@@ -272,8 +255,6 @@ void MainWindow::setupCentralWidget() {
     m_regexToggle->setCheckable(true);
     m_regexToggle->setChecked(false);
     m_regexToggle->setToolTip(tr("Regex Mode"));
-    connect(m_regexToggle, &QToolButton::toggled,
-            this, [this]() { if (!m_searchBar->text().isEmpty()) m_debounceTimer->start(); });
     searchLayout->addWidget(m_regexToggle);
 
     mainLayout->addLayout(searchLayout);
@@ -511,7 +492,7 @@ void MainWindow::onProgressUpdated(int percentage) {
 void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
     m_progressBar->hide();
 
-    invalidateActiveSearch();
+    m_searchController->invalidate();
     // File identity was already recorded at parse start; keep it.
     m_session->setArenaRoot(result, m_session->filePath(), m_session->fileName());
     m_filterProxy->clearFilter();
@@ -567,110 +548,6 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
     m_progressBar->show();
     m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
     m_fileLoader->startParse(filePath);
-}
-
-// --- Task 16.3: Search bar wiring ---
-
-void MainWindow::onSearchTextChanged(const QString& text) {
-    m_searchErrorLabel->hide();
-    m_noResultsLabel->hide();
-
-    if (text.isEmpty()) {
-        // Clear filter immediately — no debounce needed. Also invalidate any
-        // in-flight search so its result cannot re-apply the filter afterwards.
-        invalidateActiveSearch();
-        m_filterProxy->clearFilter();
-        m_treeView->show();
-        return;
-    }
-
-    if (!m_session->currentRoot() && !m_session->arenaResult()) {
-        return;
-    }
-
-    // Restart debounce timer — coalesces rapid keystrokes
-    m_debounceTimer->start();
-}
-
-void MainWindow::invalidateActiveSearch() {
-    // Any in-flight worker result now fails the generation check in
-    // onSearchComplete, and no debounced search fires against stale UI state.
-    ++m_searchGeneration;
-    m_debounceTimer->stop();
-    // Also tell the worker directly (atomic) so a running search aborts
-    // instead of scanning the rest of the tree for a doomed result.
-    if (m_searchWorker) {
-        m_searchWorker->updateLatestGeneration(m_searchGeneration);
-    }
-}
-
-void MainWindow::executeSearch() {
-    QString text = m_searchBar->text();
-    if (text.isEmpty() || (!m_session->currentRoot() && !m_session->arenaResult())) {
-        return;
-    }
-
-    // Increment generation counter to track this search request; the direct
-    // update lets the worker abort any older search immediately.
-    ++m_searchGeneration;
-    m_searchWorker->updateLatestGeneration(m_searchGeneration);
-
-    // Build SearchQuery from current UI state
-    jsontitan::core::SearchQuery query;
-    query.caseSensitive = m_caseSensitiveToggle->isChecked();
-
-    if (m_regexToggle->isChecked()) {
-        // Regex toggle is ON: treat entire text as regex pattern
-        query.pattern = text.toStdString();
-        query.mode = jsontitan::core::SearchMode::Regex;
-    } else if (text.startsWith('/') && text.endsWith('/') && text.size() > 2) {
-        // Regex toggle is OFF but /pattern/ convention used: fallback for discoverability
-        query.pattern = text.mid(1, text.size() - 2).toStdString();
-        query.mode = jsontitan::core::SearchMode::Regex;
-    } else {
-        // Default: substring search
-        query.pattern = text.toStdString();
-        query.mode = jsontitan::core::SearchMode::Substring;
-    }
-
-    // Dispatch search to background worker — use arena path when available
-    if (m_session->arenaResult()) {
-        QMetaObject::invokeMethod(m_searchWorker, "executeArenaSearch",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(jsontitan::core::SearchQuery, query),
-                                  Q_ARG(std::shared_ptr<jsontitan::core::ArenaParseResult>, m_session->arenaResult()),
-                                  Q_ARG(uint64_t, m_searchGeneration));
-    } else {
-        QMetaObject::invokeMethod(m_searchWorker, "executeSearch",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(jsontitan::core::SearchQuery, query),
-                                  Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, m_session->currentRoot()),
-                                  Q_ARG(uint64_t, m_searchGeneration));
-    }
-}
-
-void MainWindow::onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation) {
-    // Discard stale results from previous searches
-    if (generation != m_searchGeneration) {
-        return;
-    }
-
-    if (result.error) {
-        m_searchErrorLabel->setText(
-            QString::fromStdString(result.error->description));
-        m_searchErrorLabel->show();
-        return;
-    }
-
-    if (result.matches.empty()) {
-        m_filterProxy->applyFilter(result);
-        m_noResultsLabel->show();
-        m_treeView->hide();
-    } else {
-        m_noResultsLabel->hide();
-        m_treeView->show();
-        m_filterProxy->applyFilter(result);
-    }
 }
 
 // --- Task 16.4: Multi-file union ---
@@ -736,7 +613,7 @@ void MainWindow::onUnionFiles() {
     // Union the trees
     auto unionRoot = jsontitan::core::unionTrees(entries);
 
-    invalidateActiveSearch();
+    m_searchController->invalidate();
     // File path deliberately left as-is: union mode never reads it
     // (Save redirects to Save As), matching pre-extraction behavior.
     m_session->setJsonRoot(unionRoot, m_session->filePath(),
@@ -788,7 +665,7 @@ void MainWindow::onRemoveFromUnion() {
     std::string filenameKey = nodePtr->key;
 
     auto newRoot = jsontitan::core::removeFromUnion(*m_session->currentRoot(), filenameKey);
-    invalidateActiveSearch();
+    m_searchController->invalidate();
     m_session->replaceJsonRoot(newRoot);
     m_filterProxy->clearFilter();
 
@@ -971,7 +848,7 @@ void MainWindow::onDeleteNode() {
     if (!newTree) {
         return;  // Shouldn't happen since we guard against root deletion
     }
-    invalidateActiveSearch();
+    m_searchController->invalidate();
     m_session->replaceJsonRoot(newTree);
     m_filterProxy->clearFilter();
 

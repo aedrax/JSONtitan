@@ -4,6 +4,7 @@ set(SHELL_SOURCES
     main_window.cpp
     document_session.cpp
     model_paths.cpp
+    search_controller.cpp
     tree_model.cpp
     filter_proxy_model.cpp
     file_loader.cpp

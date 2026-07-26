@@ -35,7 +35,7 @@
 #include "shell/file_loader.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/recent_files_manager.h"
-#include "shell/search_worker.h"
+#include "shell/search_controller.h"
 #include "shell/syntax_highlighter.h"
 #include "shell/tree_model.h"
 
@@ -60,14 +60,11 @@ private slots:
     void onUnionFiles();
     void onExportCsv();
     void onExportXml();
-    void onSearchTextChanged(const QString& text);
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
     void onTreeSelectionChanged();
     void onRemoveFromUnion();
     void onRecentFileSelected(const QString& filePath);
-    void executeSearch();
-    void onSearchComplete(jsontitan::core::FilterResult result, uint64_t generation);
     void onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result);
     void onDeleteNode();
     void onSave();
@@ -87,9 +84,6 @@ private:
     std::optional<jsontitan::core::NodeView> selectedNodeView() const;
     void updateWindowTitle(bool modified);
     bool confirmDiscardChanges();
-    // Invalidates any in-flight or pending search so its (stale) result is
-    // discarded. Must be called whenever the displayed tree is replaced.
-    void invalidateActiveSearch();
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
@@ -124,13 +118,8 @@ private:
     // Background loader
     FileLoader* m_fileLoader = nullptr;
 
-    // Debounce timer for search
-    QTimer* m_debounceTimer = nullptr;
-    uint64_t m_searchGeneration = 0;
-
-    // Background search worker
-    SearchWorker* m_searchWorker = nullptr;
-    QThread* m_searchThread = nullptr;
+    // Search pipeline (debounce, worker thread, invalidation)
+    SearchController* m_searchController = nullptr;
 
     // Syntax highlighting
     jsontitan::shell::SyntaxTheme m_syntaxTheme = jsontitan::shell::catppuccinMochaTheme();
