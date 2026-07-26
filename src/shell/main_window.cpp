@@ -296,6 +296,9 @@ void MainWindow::setupCentralWidget() {
     connect(m_treeView, &QTreeView::customContextMenuRequested,
             this, [this](const QPoint& pos) {
         auto* menu = new QMenu(m_treeView);
+        // popup() menus are not deleted on dismissal; without this attribute
+        // every right-click would leak a QMenu (and its actions) until exit.
+        menu->setAttribute(Qt::WA_DeleteOnClose);
         auto* exportCsvAction = menu->addAction(tr("Export as CSV..."));
         connect(exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
         auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
