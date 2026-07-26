@@ -48,6 +48,16 @@ auto streamAtomically(
 
 } // namespace
 
+auto ExportHandler::exportJsonToFile(jsontitan::core::NodeView node,
+                                     const QString& filePath) -> QString {
+    return streamAtomically(
+        [node](const jsontitan::core::ByteSink& sink) {
+            // Default options: pretty print, 2-space indent, trailing newline.
+            return jsontitan::core::exportJsonStream(node, sink);
+        },
+        filePath);
+}
+
 auto ExportHandler::exportCsvToFile(jsontitan::core::NodeView node,
                                     const QString& filePath) -> QString {
     return streamAtomically(

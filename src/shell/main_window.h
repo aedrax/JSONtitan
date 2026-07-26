@@ -68,6 +68,7 @@ protected:
 
 private slots:
     void onOpenFile();
+    void onExportJson();
     void onExportCsv();
     void onExportXml();
     void onCopyValue();
@@ -134,6 +135,7 @@ private:
     QAction* m_openAction = nullptr;
     QAction* m_unionAction = nullptr;
     QMenu* m_recentMenu = nullptr;
+    QAction* m_exportJsonAction = nullptr;
     QAction* m_exportCsvAction = nullptr;
     QAction* m_exportXmlAction = nullptr;
     QAction* m_exitAction = nullptr;

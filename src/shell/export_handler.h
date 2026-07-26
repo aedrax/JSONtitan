@@ -8,6 +8,13 @@
 
 class ExportHandler {
 public:
+    // Export the given subtree (either backing, via NodeView) as
+    // pretty-printed JSON (2-space indent, trailing newline) and stream it
+    // to filePath through an atomic QSaveFile write.
+    // Returns an empty QString on success, or a descriptive error message on failure.
+    static auto exportJsonToFile(jsontitan::core::NodeView node,
+                                 const QString& filePath) -> QString;
+
     // Export the given subtree (either backing, via NodeView) to CSV and
     // stream it to filePath through an atomic QSaveFile write.
     // Returns an empty QString on success, or a descriptive error message on failure.

@@ -239,6 +239,11 @@ void MainWindow::setupMenuBar() {
 
     fileMenu->addSeparator();
 
+    m_exportJsonAction = fileMenu->addAction(tr("Export &JSON..."));
+    m_exportJsonAction->setStatusTip(
+        tr("Export the selection (or the whole document) as JSON"));
+    connect(m_exportJsonAction, &QAction::triggered, this, &MainWindow::onExportJson);
+
     m_exportCsvAction = fileMenu->addAction(tr("Export &CSV..."));
     m_exportCsvAction->setStatusTip(
         tr("Export the selection (or the whole document) as CSV"));
@@ -468,6 +473,8 @@ void MainWindow::setupCentralWidget() {
                 this, &MainWindow::onCopyPath);
 
         menu->addSeparator();
+        auto* exportJsonAction = menu->addAction(tr("Export as JSON..."));
+        connect(exportJsonAction, &QAction::triggered, this, &MainWindow::onExportJson);
         auto* exportCsvAction = menu->addAction(tr("Export as CSV..."));
         connect(exportCsvAction, &QAction::triggered, this, &MainWindow::onExportCsv);
         auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
@@ -809,6 +816,37 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
 }
 
 // --- Task 16.5: Export actions and detail panel ---
+
+void MainWindow::onExportJson() {
+    // Export the selection if one resolves, otherwise the live root —
+    // uniformly over both backings via NodeView (no deep copies).
+    auto node = m_detailPresenter->selectedNodeView();
+    if (!node) {
+        node = m_session->rootView();
+    }
+    if (!node) {
+        QMessageBox::information(this, tr("Export JSON"),
+                                 tr("No data to export. Please open a file first."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Export JSON"), QString(),
+        tr("JSON Files (*.json);;All Files (*)"));
+
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    jsontitan::shell::WaitCursorGuard waitCursor;
+    QString error = ExportHandler::exportJsonToFile(*node, filePath);
+    waitCursor.restore();
+    if (!error.isEmpty()) {
+        QMessageBox::critical(this, tr("Export Error"), error);
+    } else {
+        m_statusLabel->setText(tr("Exported JSON to %1").arg(QFileInfo(filePath).fileName()));
+    }
+}
 
 void MainWindow::onExportCsv() {
     // Export the selection if one resolves, otherwise the live root —

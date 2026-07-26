@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include "core/json_exporter.h"
 #include "core/json_node.h"
 #include "core/node_view.h"
 #include "core/parse_orchestrator.h"
+#include "shell/export_handler.h"
 #include "shell/save_handler.h"
 
 using namespace jsontitan::core;
@@ -144,6 +146,80 @@ TEST(SaveHandler, ArenaBackedSaveMatchesJsonNodeSave) {
 
     EXPECT_FALSE(arenaBytes.isEmpty());
     EXPECT_EQ(arenaBytes, legacyBytes);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5b commit 4: export selected subtree as JSON
+// ---------------------------------------------------------------------------
+
+// Exporting a subtree NodeView to a file matches the string-returning
+// exportJson API (same defaults: pretty print, 2-space indent, trailing
+// newline).
+TEST(ExportJson, SubtreeMatchesStringExporter) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    auto meta = JsonNode::makeObject("meta", {
+        JsonNode::makeBool("ok", true),
+        JsonNode::makeNull("n"),
+        JsonNode::makeArray("items", {
+            JsonNode::makeNumber("", "1"),
+            JsonNode::makeString("", "two")
+        })
+    });
+    auto root = JsonNode::makeObject("", {
+        meta,
+        JsonNode::makeString("other", "ignored")
+    });
+    (void)root;  // the export targets the subtree, not the root
+
+    QString filePath = tempDir.path() + "/subtree.json";
+    QString error = ExportHandler::exportJsonToFile(NodeView(*meta), filePath);
+    ASSERT_TRUE(error.isEmpty()) << error.toStdString();
+
+    QFile file(filePath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    QByteArray content = file.readAll();
+
+    std::string expected = exportJson(*meta);
+    EXPECT_EQ(content.toStdString(), expected);
+    EXPECT_TRUE(content.endsWith('\n'));
+}
+
+// Arena-backed subtrees export byte-identically to their JsonNode
+// conversion (exportJsonToFile streams over NodeView for either backing).
+TEST(ExportJson, ArenaSubtreeMatchesJsonNodeSubtree) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    const std::string json =
+        R"({"meta":{"ok":true,"n":null},"tags":["a","b",3]})";
+    auto arenaResult = parseBuffer(std::string(json), ParseBufferOptions{});
+    ASSERT_TRUE(arenaResult.ok());
+    ASSERT_GE(arenaResult.root->childCount, std::size_t(2));
+
+    const auto* arenaSubtree = arenaResult.root->children[1];  // "tags"
+    QString filePath = tempDir.path() + "/arena_subtree.json";
+    QString error =
+        ExportHandler::exportJsonToFile(NodeView(*arenaSubtree), filePath);
+    ASSERT_TRUE(error.isEmpty()) << error.toStdString();
+
+    QFile file(filePath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    QByteArray content = file.readAll();
+
+    auto jsonRoot = arenaResult.root->toJsonNode();
+    ASSERT_NE(jsonRoot, nullptr);
+    std::string expected = exportJson(*jsonRoot->children[1]);
+    EXPECT_EQ(content.toStdString(), expected);
+}
+
+// Write failures surface as error strings, mirroring the CSV/XML handlers.
+TEST(ExportJson, ReturnsErrorOnFileWriteFailure) {
+    auto tree = makeSimpleTree();
+    QString error = ExportHandler::exportJsonToFile(
+        NodeView(*tree), "/nonexistent_directory_xyz/impossible/out.json");
+    EXPECT_FALSE(error.isEmpty());
 }
 
 int main(int argc, char** argv) {
