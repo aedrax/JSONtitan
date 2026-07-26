@@ -23,6 +23,7 @@
 #include "core/token_emitter.h"
 #include "core/union_engine.h"
 #include "shell/drop_validator.h"
+#include "shell/model_paths.h"
 #include "shell/save_handler.h"
 #include "shell/syntax_highlighter.h"
 
@@ -960,32 +961,8 @@ void MainWindow::onDeleteNode() {
 
     // Compute the NodePath by walking up the QModelIndex parent chain.
     // This works regardless of whether the model is arena-backed or JsonNode-backed.
-    jsontitan::core::NodePath path;
-    QModelIndex walkIndex = sourceIndex;
-    while (walkIndex.isValid() && walkIndex.parent().isValid()) {
-        QModelIndex parentIndex = walkIndex.parent();
-        // Determine if the parent is an Object or Array
-        jsontitan::core::NodeType parentType = jsontitan::core::NodeType::Object;
-        if (auto* jn = m_treeModel->jsonNodeForIndex(parentIndex)) {
-            parentType = jn->type;
-        } else if (auto* an = m_treeModel->arenaNodeForIndex(parentIndex)) {
-            parentType = an->type;
-        }
-
-        if (parentType == jsontitan::core::NodeType::Array) {
-            path.insert(path.begin(), static_cast<std::size_t>(walkIndex.row()));
-        } else {
-            // Object: get the key from the child node
-            std::string key;
-            if (auto* jn = m_treeModel->jsonNodeForIndex(walkIndex)) {
-                key = jn->key;
-            } else if (auto* an = m_treeModel->arenaNodeForIndex(walkIndex)) {
-                key = std::string(an->keyView());
-            }
-            path.insert(path.begin(), key);
-        }
-        walkIndex = parentIndex;
-    }
+    jsontitan::core::NodePath path =
+        jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
 
     if (path.empty()) {
         return;
@@ -1047,50 +1024,16 @@ void MainWindow::onDeleteNode() {
     // After model reset, we need to re-resolve the parent index
     // The parent path is everything except the last segment
     QModelIndex newParentIndex;  // invalid = root
-    // Walk down from root to find the parent
-    QModelIndex current;  // starts as invalid (root)
-    bool walkComplete = true;
-    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
-        // The model was just reset, so nothing is fetched yet: rows must be
-        // fetched BEFORE the by-key scan below, or rowCount is 0, the key is
-        // never found, and the walk silently stops at the wrong level.
-        while (m_treeModel->canFetchMore(current)) {
-            m_treeModel->fetchMore(current);
-        }
-
-        int row = -1;
-        if (auto* idx = std::get_if<std::size_t>(&path[i])) {
-            row = static_cast<int>(*idx);
-        } else {
-            // Find the row by key
-            auto* keyStr = std::get_if<std::string>(&path[i]);
-            int rowCount = m_treeModel->rowCount(current);
-            for (int r = 0; r < rowCount; ++r) {
-                QModelIndex childIdx = m_treeModel->index(r, 0, current);
-                if (auto* jn = m_treeModel->jsonNodeForIndex(childIdx)) {
-                    if (jn->key == *keyStr) {
-                        row = r;
-                        break;
-                    }
-                }
-            }
-        }
-        if (row < 0) {
-            walkComplete = false;
-            break;
-        }
-        current = m_treeModel->index(row, 0, current);
-        if (!current.isValid()) {
-            walkComplete = false;
-            break;
+    if (path.size() > 1) {
+        jsontitan::core::NodePath parentPath(path.begin(), path.end() - 1);
+        newParentIndex =
+            jsontitan::shell::indexForPath(*m_treeModel, parentPath);
+        if (!newParentIndex.isValid()) {
+            // The parent could not be re-resolved; selecting deletedRow under
+            // the wrong (shallower) parent would highlight an unrelated node.
+            return;
         }
     }
-    if (!walkComplete) {
-        // The parent could not be re-resolved; selecting deletedRow under
-        // the wrong (shallower) parent would highlight an unrelated node.
-        return;
-    }
-    newParentIndex = current;
 
     // Ensure parent's children are fetched
     while (m_treeModel->canFetchMore(newParentIndex)) {
