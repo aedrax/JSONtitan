@@ -45,6 +45,14 @@ public:
     std::optional<jsontitan::core::EditError>
     applyRename(const jsontitan::core::NodePath& path, const QString& newKey);
 
+signals:
+    // Emitted immediately before / after our own write of the document to
+    // disk (Save and Save As), so the owner can pause file-change watching
+    // around it — QSaveFile's commit renames over the watched file, which
+    // would otherwise look like an external modification.
+    void aboutToSave();
+    void saved();
+
 public slots:
     void deleteSelectedNode();
     void save();

@@ -2774,6 +2774,157 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Phase 5b commit 5: watch file for external changes; reload action
+// ---------------------------------------------------------------------------
+
+class FileWatchTest : public QObject {
+    Q_OBJECT
+
+private:
+    static void writeFile(const QString& path, const QByteArray& content) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(content);
+    }
+
+    // Loads `path` into the window via the session-restore flow and waits
+    // for the tree to come up.
+    static void loadFile(MainWindow& window, const QString& path) {
+        QSettings().setValue("session/lastFilePath", path);
+        window.show();
+        QApplication::processEvents();
+        window.restoreLastSession();
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->isVisible(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->model()->rowCount() > 0, 5000);
+    }
+
+    static QAction* fileMenuAction(MainWindow& window, const QString& name) {
+        for (auto* menuAction : window.menuBar()->actions()) {
+            if (!menuAction->text().contains("File")) {
+                continue;
+            }
+            for (auto* action : menuAction->menu()->actions()) {
+                if (action->text().contains(name)) {
+                    return action;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+private slots:
+    void init() {
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTestsFileWatch");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void cleanup() {
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testReloadActionPresentAndInitiallyDisabled() {
+        MainWindow window;
+        QAction* reload = fileMenuAction(window, "from Disk");
+        QVERIFY(reload != nullptr);
+        QCOMPARE(reload->shortcut(), QKeySequence(Qt::Key_F5));
+        QVERIFY(!reload->isEnabled());
+
+        auto* bar = window.findChild<QWidget*>("fileChangedBar");
+        QVERIFY(bar != nullptr);
+        QVERIFY(!bar->isVisible());
+    }
+
+    void testExternalModificationShowsBar() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/watched.json";
+        writeFile(filePath, R"({"a": 1})");
+
+        MainWindow window;
+        loadFile(window, filePath);
+
+        QAction* reload = fileMenuAction(window, "from Disk");
+        QVERIFY(reload != nullptr);
+        QVERIFY(reload->isEnabled());
+
+        auto* bar = window.findChild<QWidget*>("fileChangedBar");
+        QVERIFY(bar != nullptr);
+        QVERIFY(!bar->isVisible());
+
+        // External modification: the bar appears after the 500 ms debounce.
+        writeFile(filePath, R"({"a": 1, "b": 2})");
+        QTRY_VERIFY_WITH_TIMEOUT(bar->isVisible(), 5000);
+
+        // Dismiss hides it without reloading.
+        auto* dismiss =
+            window.findChild<QPushButton*>("fileChangedDismissButton");
+        QVERIFY(dismiss != nullptr);
+        dismiss->click();
+        QVERIFY(!bar->isVisible());
+    }
+
+    void testReloadReparsesCurrentFile() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/reload.json";
+        writeFile(filePath, R"({"a": 1})");
+
+        MainWindow window;
+        loadFile(window, filePath);
+
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QVERIFY(statusLabel != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(statusLabel->text().contains("2 nodes"), 5000);
+
+        // Grow the file, then reload: the node count reflects the new
+        // content ({} root + 3 members = 4 nodes).
+        writeFile(filePath, R"({"a": 1, "b": 2, "c": 3})");
+        QAction* reload = fileMenuAction(window, "from Disk");
+        QVERIFY(reload != nullptr);
+        reload->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(statusLabel->text().contains("4 nodes"), 5000);
+
+        // A successful reload leaves the bar hidden.
+        auto* bar = window.findChild<QWidget*>("fileChangedBar");
+        QVERIFY(!bar->isVisible());
+    }
+
+    void testOwnSaveDoesNotShowBar() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString filePath = tempDir.path() + "/saved.json";
+        writeFile(filePath, R"({"a": 1})");
+
+        MainWindow window;
+        loadFile(window, filePath);
+
+        // Save rewrites the file (pretty-printed) via QSaveFile's
+        // rename-over — exactly what an external editor does.
+        QAction* save = fileMenuAction(window, "&Save");
+        QVERIFY(save != nullptr);
+        save->trigger();
+
+        // Wait well past the 500 ms debounce: the bar must not appear.
+        auto* bar = window.findChild<QWidget*>("fileChangedBar");
+        QVERIFY(bar != nullptr);
+        QTest::qWait(1500);
+        QVERIFY(!bar->isVisible());
+
+        // The watcher is live again afterwards: an external change is
+        // still detected.
+        writeFile(filePath, R"({"a": 1, "b": 2})");
+        QTRY_VERIFY_WITH_TIMEOUT(bar->isVisible(), 5000);
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -2836,6 +2987,9 @@ int main(int argc, char* argv[]) {
 
     ExpandControlsTest expandControlsTest;
     status |= QTest::qExec(&expandControlsTest, argc, argv);
+
+    FileWatchTest fileWatchTest;
+    status |= QTest::qExec(&fileWatchTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);

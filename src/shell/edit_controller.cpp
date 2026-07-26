@@ -405,11 +405,14 @@ void EditController::save() {
     }
 
     jsontitan::shell::WaitCursorGuard waitCursor;
+    emit aboutToSave();
     QString error = SaveHandler::saveToFile(*root, m_session->filePath());
     waitCursor.restore();
     if (error.isEmpty()) {
         m_session->setModified(false);
-    } else {
+    }
+    emit saved();
+    if (!error.isEmpty()) {
         QMessageBox::critical(m_dialogParent, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
                 .arg(m_session->filePath(), error));
@@ -448,6 +451,7 @@ void EditController::saveAs() {
     }
 
     jsontitan::shell::WaitCursorGuard waitCursor;
+    emit aboutToSave();
     QString error = SaveHandler::saveToFile(*root, chosenPath);
     waitCursor.restore();
     if (error.isEmpty()) {
@@ -457,7 +461,11 @@ void EditController::saveAs() {
                                    QFileInfo(chosenPath).fileName(),
                                    m_session->isUnionMode());
         m_session->setModified(false);
-    } else {
+    }
+    // Emitted after the identity update so the owner re-watches the file the
+    // session now points at.
+    emit saved();
+    if (!error.isEmpty()) {
         QMessageBox::critical(m_dialogParent, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
                 .arg(chosenPath, error));

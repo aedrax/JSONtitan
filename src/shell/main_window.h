@@ -5,6 +5,7 @@
 #include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QFileSystemWatcher>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QLabel>
@@ -82,6 +83,8 @@ private slots:
     void onShowKeyboardShortcuts();
     void onExpandAll();
     void onCollapseAll();
+    void onReload();
+    void onWatchedFileChanged(const QString& path);
 
 private:
     void setupMenuBar();
@@ -114,6 +117,15 @@ private:
     // sourceParent so a subsequent expandAll can actually expand them.
     void fetchAllRows(const QModelIndex& sourceParent);
 
+    // External-change watching of the current single file. Started after a
+    // successful single-file parse; stopped for union mode / welcome. Our
+    // own saves are bracketed via EditController::aboutToSave/saved so they
+    // never surface as external changes.
+    void startWatchingCurrentFile();
+    void stopWatchingFile();
+    void showFileChangedBar();
+    void hideFileChangedBar();
+
     // UI elements
     QLineEdit* m_searchBar = nullptr;
     QLabel* m_matchCountLabel = nullptr;
@@ -130,6 +142,8 @@ private:
     QLabel* m_noResultsLabel = nullptr;
     QLabel* m_dropOverlay = nullptr;
     QSplitter* m_mainSplitter = nullptr;
+    QWidget* m_fileChangedBar = nullptr;
+    QLabel* m_fileChangedLabel = nullptr;
 
     // Menu actions
     QAction* m_openAction = nullptr;
@@ -149,6 +163,12 @@ private:
     QAction* m_shortcutsAction = nullptr;
     QAction* m_aboutAction = nullptr;
     QAction* m_reopenLastFileAction = nullptr;
+    QAction* m_reloadAction = nullptr;
+
+    // External file-change watching (single-file documents only)
+    QFileSystemWatcher* m_fileWatcher = nullptr;
+    QTimer* m_fileChangeDebounce = nullptr;
+    bool m_suppressWatchNotifications = false;
 
     // Recent files
     RecentFilesManager* m_recentFilesManager = nullptr;

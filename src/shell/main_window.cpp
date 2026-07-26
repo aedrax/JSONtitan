@@ -126,6 +126,40 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_unionController, &UnionController::loadFinished,
             this, &MainWindow::hideLoadProgress);
 
+    // External file-change watching: debounced (editors fire bursts of
+    // events per save), paused around our own saves, single-file mode only.
+    m_fileWatcher = new QFileSystemWatcher(this);
+    connect(m_fileWatcher, &QFileSystemWatcher::fileChanged,
+            this, &MainWindow::onWatchedFileChanged);
+    m_fileChangeDebounce = new QTimer(this);
+    m_fileChangeDebounce->setSingleShot(true);
+    m_fileChangeDebounce->setInterval(500);
+    connect(m_fileChangeDebounce, &QTimer::timeout, this, [this]() {
+        if (!m_suppressWatchNotifications) {
+            showFileChangedBar();
+        }
+    });
+    connect(m_editController, &EditController::aboutToSave, this, [this]() {
+        // QSaveFile's commit renames over the watched file; without the
+        // pause our own save would surface as an external change (and the
+        // rename drops the path from the watcher anyway).
+        m_suppressWatchNotifications = true;
+        m_fileChangeDebounce->stop();
+        const QStringList watched = m_fileWatcher->files();
+        if (!watched.isEmpty()) {
+            m_fileWatcher->removePaths(watched);
+        }
+    });
+    connect(m_editController, &EditController::saved, this, [this]() {
+        m_suppressWatchNotifications = false;
+        // Re-watch the file the session points at NOW — Save As may have
+        // changed the identity.
+        startWatchingCurrentFile();
+    });
+    // Union documents have no single backing file to watch.
+    connect(m_unionController, &UnionController::loadStarted,
+            this, &MainWindow::stopWatchingFile);
+
     // Detail panel rendering for the current tree selection
     m_detailPresenter = new DetailPanelPresenter(
         m_detailPanel, m_breadcrumbLabel, m_treeView, m_filterProxy,
@@ -236,6 +270,13 @@ void MainWindow::setupMenuBar() {
     m_saveAsAction = fileMenu->addAction(tr("Save &As..."));
     m_saveAsAction->setShortcut(QKeySequence::SaveAs);
     m_saveAsAction->setStatusTip(tr("Save the document to a new file"));
+
+    m_reloadAction = fileMenu->addAction(tr("Re&load from Disk"));
+    m_reloadAction->setShortcut(QKeySequence(Qt::Key_F5));
+    m_reloadAction->setStatusTip(tr("Reload the current file from disk"));
+    // Enabled once a single file is loaded (startWatchingCurrentFile).
+    m_reloadAction->setEnabled(false);
+    connect(m_reloadAction, &QAction::triggered, this, &MainWindow::onReload);
 
     fileMenu->addSeparator();
 
@@ -353,6 +394,7 @@ void MainWindow::onShowKeyboardShortcuts() {
         tr("<tr><td><b>Ctrl+O</b></td><td>Open file</td></tr>"
            "<tr><td><b>Ctrl+S</b></td><td>Save</td></tr>"
            "<tr><td><b>Ctrl+Shift+S</b></td><td>Save As</td></tr>"
+           "<tr><td><b>F5</b></td><td>Reload file from disk</td></tr>"
            "<tr><td><b>Ctrl+F</b></td><td>Focus search bar</td></tr>"
            "<tr><td><b>Return</b></td><td>Next match (in search bar)</td></tr>"
            "<tr><td><b>F3</b></td><td>Next match</td></tr>"
@@ -425,6 +467,29 @@ void MainWindow::setupCentralWidget() {
     auto* treeLayout = new QVBoxLayout(treeContainer);
     treeLayout->setContentsMargins(0, 0, 0, 0);
     treeLayout->setSpacing(0);
+
+    // Non-modal "file changed on disk" bar above the tree (hidden until the
+    // watcher reports an external modification).
+    m_fileChangedBar = new QWidget(treeContainer);
+    m_fileChangedBar->setObjectName("fileChangedBar");
+    auto* fileChangedLayout = new QHBoxLayout(m_fileChangedBar);
+    fileChangedLayout->setContentsMargins(6, 4, 6, 4);
+    fileChangedLayout->setSpacing(6);
+    m_fileChangedLabel = new QLabel(m_fileChangedBar);
+    m_fileChangedLabel->setObjectName("fileChangedLabel");
+    fileChangedLayout->addWidget(m_fileChangedLabel, 1);
+    auto* fileChangedReload = new QPushButton(tr("Reload"), m_fileChangedBar);
+    fileChangedReload->setObjectName("fileChangedReloadButton");
+    connect(fileChangedReload, &QPushButton::clicked,
+            this, &MainWindow::onReload);
+    fileChangedLayout->addWidget(fileChangedReload);
+    auto* fileChangedDismiss = new QPushButton(tr("Dismiss"), m_fileChangedBar);
+    fileChangedDismiss->setObjectName("fileChangedDismissButton");
+    connect(fileChangedDismiss, &QPushButton::clicked,
+            this, &MainWindow::hideFileChangedBar);
+    fileChangedLayout->addWidget(fileChangedDismiss);
+    m_fileChangedBar->hide();
+    treeLayout->addWidget(m_fileChangedBar);
 
     m_treeView = new QTreeView(treeContainer);
     m_treeView->setModel(m_filterProxy);
@@ -758,6 +823,10 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     // Clear modified flag on file open
     m_session->setModified(false);
 
+    // Watch the freshly loaded file for external changes (also clears any
+    // pending "file changed" bar from the previous document).
+    startWatchingCurrentFile();
+
     // Record file in recent files list
     if (!m_session->filePath().isEmpty()) {
         m_recentFilesManager->fileOpened(m_session->filePath());
@@ -1003,6 +1072,79 @@ void MainWindow::expandToLevel(int level) {
     // children, so repeated use (or scrolling) converges naturally. This is
     // deliberate — expand-to-level must stay cheap on huge documents.
     m_treeView->expandToDepth(level - 1);
+}
+
+// --- Phase 5b commit 5: external file-change watching and reload ---
+
+void MainWindow::startWatchingCurrentFile() {
+    m_fileChangeDebounce->stop();
+    hideFileChangedBar();
+    const QStringList watched = m_fileWatcher->files();
+    if (!watched.isEmpty()) {
+        m_fileWatcher->removePaths(watched);
+    }
+
+    const bool singleFileLoaded =
+        !m_session->isUnionMode() && !m_session->filePath().isEmpty() &&
+        m_session->rootView().has_value();
+    m_reloadAction->setEnabled(singleFileLoaded);
+    if (singleFileLoaded && QFile::exists(m_session->filePath())) {
+        m_fileWatcher->addPath(m_session->filePath());
+    }
+}
+
+void MainWindow::stopWatchingFile() {
+    m_fileChangeDebounce->stop();
+    hideFileChangedBar();
+    const QStringList watched = m_fileWatcher->files();
+    if (!watched.isEmpty()) {
+        m_fileWatcher->removePaths(watched);
+    }
+    m_reloadAction->setEnabled(false);
+}
+
+void MainWindow::onWatchedFileChanged(const QString& path) {
+    // Editors typically save by renaming a temp file over the original,
+    // which drops the (now-replaced) path from the watcher — re-add it as
+    // soon as the new file exists so subsequent changes are still seen.
+    if (!m_fileWatcher->files().contains(path) && QFile::exists(path)) {
+        m_fileWatcher->addPath(path);
+    }
+    if (m_suppressWatchNotifications) {
+        return;
+    }
+    // Restart on every event: coalesces the bursts editors fire per save.
+    m_fileChangeDebounce->start();
+}
+
+void MainWindow::showFileChangedBar() {
+    m_fileChangedLabel->setText(
+        tr("%1 changed on disk").arg(m_session->fileName()));
+    m_fileChangedBar->show();
+}
+
+void MainWindow::hideFileChangedBar() {
+    m_fileChangedBar->hide();
+}
+
+void MainWindow::onReload() {
+    if (m_session->isUnionMode() || m_session->filePath().isEmpty()) {
+        return;
+    }
+    const QString filePath = m_session->filePath();
+    if (!QFile::exists(filePath)) {
+        QMessageBox::warning(this, tr("Reload"),
+                             tr("The file \"%1\" no longer exists.")
+                                 .arg(filePath));
+        return;
+    }
+    if (!m_editController->confirmDiscardChanges()) {
+        return;
+    }
+    hideFileChangedBar();
+    showLoadProgress();
+    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
+    m_fileLoader->startParse(filePath);
 }
 
 // --- Task 7.1: Modified flag and title management ---
