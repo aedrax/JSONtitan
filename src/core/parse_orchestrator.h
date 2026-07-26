@@ -43,6 +43,9 @@ struct ParseBufferOptions {
     unsigned maxThreads = 0;  // 0 = use hardware_concurrency() (custom backend only)
     SimdLevel simdLevel = detectSimdLevel();       // custom backend only
     std::function<void(float)> progressCallback = nullptr;  // Optional progress reporting (0.0–1.0)
+    // Optional cooperative cancellation: polled periodically during parsing;
+    // returning true aborts the parse with a "Parse cancelled" error.
+    std::function<bool()> cancelCallback = nullptr;
 };
 
 // Parse a complete buffer using the parallel pipeline.

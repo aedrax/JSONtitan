@@ -153,7 +153,8 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
 
     // Route to simdjson backend when selected
     if (options.backend == ParserBackend::Simdjson) {
-        SimdjsonParseOptions sjOpts{.progressCallback = options.progressCallback};
+        SimdjsonParseOptions sjOpts{.progressCallback = options.progressCallback,
+                                    .cancelCallback = options.cancelCallback};
         auto result = simdjsonParse(*source, *arena, sjOpts);
         return ArenaParseResult{std::move(arena), std::move(source),
                                 result.root, result.error};

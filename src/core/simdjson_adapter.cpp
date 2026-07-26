@@ -46,11 +46,14 @@ constexpr std::size_t kEstimatedBytesPerNode = 50;
 // How often (in nodes) to report intermediate progress.
 constexpr std::size_t kProgressReportInterval = 1000;
 
-// Context passed through the recursive tree-building to track progress.
+// Context passed through the recursive tree-building to track progress and
+// poll for cooperative cancellation.
 struct ProgressContext {
     std::function<void(float)> callback;
+    std::function<bool()> cancelCheck;
     std::size_t estimatedTotalNodes = 0;
     std::size_t nodesCreated = 0;
+    bool cancelled = false;
 };
 
 // Convert a simdjson DOM element into an ArenaJsonNode tree, recursively.
@@ -66,22 +69,28 @@ auto convertElement(simdjson::dom::element elem,
     }
     node->key = key;
 
-    // Track progress if context is provided.
-    if (progress && progress->callback && progress->estimatedTotalNodes > 0) {
+    // Track progress / poll cancellation if context is provided.
+    if (progress) {
         progress->nodesCreated++;
         if (progress->nodesCreated % kProgressReportInterval == 0) {
-            // Progress during tree-building is mapped to [0.5, 1.0) range
-            // since simdjson parse (first half) is already done.
-            float treeBuildFraction = static_cast<float>(progress->nodesCreated) /
-                                     static_cast<float>(progress->estimatedTotalNodes);
-            if (treeBuildFraction > 1.0F) {
-                treeBuildFraction = 1.0F;
+            if (progress->cancelCheck && progress->cancelCheck()) {
+                progress->cancelled = true;
+                return nullptr;
             }
-            float overallProgress = 0.5F + (treeBuildFraction * 0.5F);
-            if (overallProgress > 0.99F) {
-                overallProgress = 0.99F; // Reserve 1.0 for completion
+            if (progress->callback && progress->estimatedTotalNodes > 0) {
+                // Progress during tree-building is mapped to [0.5, 1.0) range
+                // since simdjson parse (first half) is already done.
+                float treeBuildFraction = static_cast<float>(progress->nodesCreated) /
+                                         static_cast<float>(progress->estimatedTotalNodes);
+                if (treeBuildFraction > 1.0F) {
+                    treeBuildFraction = 1.0F;
+                }
+                float overallProgress = 0.5F + (treeBuildFraction * 0.5F);
+                if (overallProgress > 0.99F) {
+                    overallProgress = 0.99F; // Reserve 1.0 for completion
+                }
+                progress->callback(overallProgress);
             }
-            progress->callback(overallProgress);
         }
     }
 
@@ -274,7 +283,7 @@ auto simdjsonParse(const SourceBuffer& source,
         options.progressCallback(0.5F);
     }
 
-    // Set up progress tracking for tree-building phase on large documents.
+    // Set up progress/cancellation tracking for the tree-building phase.
     ProgressContext progressCtx;
     ProgressContext* progressPtr = nullptr;
     if (options.progressCallback && source.size() > kProgressReportingThreshold) {
@@ -283,10 +292,17 @@ auto simdjsonParse(const SourceBuffer& source,
         progressCtx.nodesCreated = 0;
         progressPtr = &progressCtx;
     }
+    if (options.cancelCallback) {
+        progressCtx.cancelCheck = options.cancelCallback;
+        progressPtr = &progressCtx;
+    }
 
     // Walk the DOM tree and convert to ArenaJsonNode.
     StringRef rootKey{}; // Root node has no key.
     auto* root = convertElement(doc, rootKey, arena, progressPtr);
+    if (progressCtx.cancelled) {
+        return SimdjsonResult{nullptr, ParseError{0, "Parse cancelled"}};
+    }
     if (!root) {
         return SimdjsonResult{nullptr, ParseError{0, "Memory allocation failed during tree construction"}};
     }

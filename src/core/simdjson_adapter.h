@@ -15,6 +15,9 @@ struct SimdjsonParseOptions {
     /// Optional progress callback invoked with values in [0.0, 1.0].
     /// If nullptr, progress reporting is skipped.
     std::function<void(float)> progressCallback = nullptr;
+    /// Optional cooperative cancellation: polled every few thousand nodes
+    /// during tree construction; returning true aborts with "Parse cancelled".
+    std::function<bool()> cancelCallback = nullptr;
 };
 
 /// Result of parsing via the simdjson adapter.
