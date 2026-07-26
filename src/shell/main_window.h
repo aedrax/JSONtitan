@@ -79,6 +79,7 @@ private:
 
     // UI elements
     QLineEdit* m_searchBar = nullptr;
+    QLabel* m_matchCountLabel = nullptr;
     QToolButton* m_caseSensitiveToggle = nullptr;
     QToolButton* m_regexToggle = nullptr;
     QLabel* m_searchErrorLabel = nullptr;

@@ -10,11 +10,13 @@
 #include "core/json_node.h"
 #include "core/search_engine.h"
 #include "core/xml_exporter.h"
+#include "shell/document_session.h"
 #include "shell/drop_validator.h"
 #include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
 #include "shell/recent_files_manager.h"
+#include "shell/search_controller.h"
 #include "shell/tree_model.h"
 
 using namespace jsontitan::core;
@@ -917,6 +919,172 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 4 commit 1: match-row background highlight in FilterProxyModel
+// ---------------------------------------------------------------------------
+
+class FilterProxyHighlightTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void testExactMatchRowGetsBackgroundHighlight() {
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeObject("person", {
+                JsonNode::makeString("name", "Alice"),
+                JsonNode::makeNumber("age", "30")
+            }),
+            JsonNode::makeString("other", "value")
+        });
+        sourceModel.setRootNode(root);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        jsontitan::core::FilterResult result;
+        result.matches.push_back({{0, 0}, root->children[0]->children[0]});
+        proxy.applyFilter(result);
+
+        QModelIndex personIdx = proxy.index(0, 0, QModelIndex());
+        QVERIFY(personIdx.isValid());
+        QModelIndex nameIdx = proxy.index(0, 0, personIdx);
+        QVERIFY(nameIdx.isValid());
+
+        // The exact match row carries a translucent background color…
+        QVariant bg = proxy.data(nameIdx, Qt::BackgroundRole);
+        QVERIFY(bg.canConvert<QColor>());
+        QColor color = bg.value<QColor>();
+        QVERIFY(color.isValid());
+        QVERIFY(color.alpha() < 255);
+
+        // …while the mere ancestor row does not.
+        QVERIFY(!proxy.data(personIdx, Qt::BackgroundRole).isValid());
+
+        // Clearing the filter removes the highlight.
+        proxy.clearFilter();
+        QModelIndex clearedPersonIdx = proxy.index(0, 0, QModelIndex());
+        QModelIndex clearedNameIdx = proxy.index(0, 0, clearedPersonIdx);
+        QVERIFY(!proxy.data(clearedNameIdx, Qt::BackgroundRole).isValid());
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Phase 4 commit 1: search match navigation (F3 / Shift+F3 / Return) and the
+// match-count label, driven through the real SearchController pipeline.
+// ---------------------------------------------------------------------------
+
+class SearchNavigationTest : public QObject {
+    Q_OBJECT
+
+private:
+    struct Fixture {
+        QLineEdit bar;
+        QToolButton caseToggle;
+        QToolButton regexToggle;
+        QLabel errorLabel;
+        QLabel noResultsLabel;
+        QLabel matchCountLabel;
+        QTreeView tree;
+        TreeModel model;
+        FilterProxyModel proxy;
+        DocumentSession session{&model};
+        SearchController controller{
+            SearchController::Ui{&bar, &caseToggle, &regexToggle, &errorLabel,
+                                 &noResultsLabel, &tree, &matchCountLabel},
+            &model, &proxy, &session};
+
+        Fixture() {
+            proxy.setSourceModel(&model);
+            tree.setModel(&proxy);
+        }
+    };
+
+private slots:
+    void testMatchCountNavigationAndAutoExpand() {
+        Fixture f;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("alpha", "needle one"),
+            JsonNode::makeString("other", "nothing here"),
+            JsonNode::makeObject("nested", {
+                JsonNode::makeString("inner", "needle two")
+            }),
+            JsonNode::makeString("last", "needle three")
+        });
+        f.session.setJsonRoot(root, QString(), QString(), false);
+
+        f.bar.setText("needle");
+
+        // Wait for debounce + worker round-trip.
+        QTRY_COMPARE_WITH_TIMEOUT(f.controller.matchPaths().size(),
+                                  std::size_t(3), 5000);
+        QVERIFY(f.proxy.isFiltered());
+        QCOMPARE(f.matchCountLabel.text(), QString("3 matches"));
+        QVERIFY(!f.matchCountLabel.isHidden());
+
+        // Auto-expand: the ancestor of the nested match is expanded so the
+        // match is visible.
+        QModelIndex nestedProxyIdx;
+        for (int r = 0; r < f.proxy.rowCount(); ++r) {
+            QModelIndex idx = f.proxy.index(r, 0, QModelIndex());
+            if (idx.data().toString().contains("nested")) {
+                nestedProxyIdx = idx;
+            }
+        }
+        QVERIFY(nestedProxyIdx.isValid());
+        QVERIFY(f.tree.isExpanded(nestedProxyIdx));
+
+        // Navigation: matches sorted by path — alpha [0], inner [2,0], last [3].
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().isValid());
+        QVERIFY(f.tree.currentIndex().data().toString().contains("alpha"));
+
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().data().toString().contains("inner"));
+
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().data().toString().contains("last"));
+
+        // Wrap-around forward…
+        f.controller.nextMatch();
+        QVERIFY(f.tree.currentIndex().data().toString().contains("alpha"));
+
+        // …and backward.
+        f.controller.prevMatch();
+        QVERIFY(f.tree.currentIndex().data().toString().contains("last"));
+    }
+
+    void testNavigationIsNoOpWithoutMatches() {
+        Fixture f;
+
+        // Nothing loaded, nothing searched: navigation must not crash and
+        // must not select anything.
+        f.controller.nextMatch();
+        f.controller.prevMatch();
+        QVERIFY(!f.tree.currentIndex().isValid());
+        QVERIFY(f.matchCountLabel.isHidden());
+    }
+
+    void testClearingSearchHidesMatchCount() {
+        Fixture f;
+
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("alpha", "needle one")
+        });
+        f.session.setJsonRoot(root, QString(), QString(), false);
+
+        f.bar.setText("needle");
+        QTRY_COMPARE_WITH_TIMEOUT(f.controller.matchPaths().size(),
+                                  std::size_t(1), 5000);
+        QCOMPARE(f.matchCountLabel.text(), QString("1 match"));
+
+        f.bar.clear();
+        QVERIFY(f.matchCountLabel.isHidden());
+        QVERIFY(f.controller.matchPaths().empty());
+        QVERIFY(!f.proxy.isFiltered());
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Task 14.2: Unit tests for ExportHandler
 // Requirements: 6.6, 7.5
 // ---------------------------------------------------------------------------
@@ -1805,6 +1973,12 @@ int main(int argc, char* argv[]) {
 
     FilterProxyModelTest filterProxyTest;
     status |= QTest::qExec(&filterProxyTest, argc, argv);
+
+    FilterProxyHighlightTest highlightTest;
+    status |= QTest::qExec(&highlightTest, argc, argv);
+
+    SearchNavigationTest searchNavTest;
+    status |= QTest::qExec(&searchNavTest, argc, argv);
 
     ExportHandlerTest exportHandlerTest;
     status |= QTest::qExec(&exportHandlerTest, argc, argv);

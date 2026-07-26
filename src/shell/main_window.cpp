@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QShortcut>
 #include <QSplitter>
 #include <QVBoxLayout>
 
@@ -44,8 +45,24 @@ MainWindow::MainWindow(QWidget* parent)
     // generation counter; wired with raw widget/model pointers.
     m_searchController = new SearchController(
         SearchController::Ui{m_searchBar, m_caseSensitiveToggle, m_regexToggle,
-                             m_searchErrorLabel, m_noResultsLabel, m_treeView},
+                             m_searchErrorLabel, m_noResultsLabel, m_treeView,
+                             m_matchCountLabel},
         m_treeModel, m_filterProxy, m_session, this);
+
+    // Search shortcuts: Ctrl+F focuses the search bar, F3 / Shift+F3 step
+    // through matches (Return in the search bar also steps forward).
+    auto* findShortcut = new QShortcut(QKeySequence::Find, this);
+    connect(findShortcut, &QShortcut::activated, this, [this]() {
+        m_searchBar->setFocus();
+        m_searchBar->selectAll();
+    });
+    auto* nextMatchShortcut = new QShortcut(QKeySequence(Qt::Key_F3), this);
+    connect(nextMatchShortcut, &QShortcut::activated,
+            m_searchController, &SearchController::nextMatch);
+    auto* prevMatchShortcut =
+        new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
+    connect(prevMatchShortcut, &QShortcut::activated,
+            m_searchController, &SearchController::prevMatch);
 
     // Document-mutation flows (delete / save / unsaved-changes prompt)
     m_editController = new EditController(this, m_treeView, m_treeModel,
@@ -189,6 +206,12 @@ void MainWindow::setupCentralWidget() {
     m_searchBar->setObjectName("searchBar");
     m_searchBar->setPlaceholderText(tr("Search keys and values... (supports regex with /pattern/)"));
     searchLayout->addWidget(m_searchBar);
+
+    // Match count ("N matches") — hidden while no search is active
+    m_matchCountLabel = new QLabel(centralWidget);
+    m_matchCountLabel->setObjectName("matchCountLabel");
+    m_matchCountLabel->hide();
+    searchLayout->addWidget(m_matchCountLabel);
 
     m_caseSensitiveToggle = new QToolButton(centralWidget);
     m_caseSensitiveToggle->setObjectName("caseSensitiveToggle");

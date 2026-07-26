@@ -1,5 +1,15 @@
 #include "shell/filter_proxy_model.h"
 
+#include <QColor>
+
+namespace {
+
+// Translucent variant of the Catppuccin accent (#89b4fa) used for selection
+// in style.qss — light enough that selection and hover still read clearly.
+const QColor kMatchHighlight(0x89, 0xb4, 0xfa, 60);
+
+}  // namespace
+
 FilterProxyModel::FilterProxyModel(QObject* parent)
     : QSortFilterProxyModel(parent) {
 }
@@ -18,7 +28,23 @@ void FilterProxyModel::clearFilter() {
     m_filtered = false;
     m_rootMatched = false;
     m_visiblePaths.clear();
+    m_exactMatchPaths.clear();
     invalidateFilter();
+}
+
+QVariant FilterProxyModel::data(const QModelIndex& index, int role) const {
+    if (role == Qt::BackgroundRole && m_filtered && index.isValid() &&
+        !m_exactMatchPaths.empty()) {
+        QModelIndex sourceIndex = mapToSource(index);
+        if (sourceIndex.isValid()) {
+            IndexPath path =
+                buildPathForIndex(sourceIndex.row(), sourceIndex.parent());
+            if (m_exactMatchPaths.count(path) > 0) {
+                return kMatchHighlight;
+            }
+        }
+    }
+    return QSortFilterProxyModel::data(index, role);
 }
 
 bool FilterProxyModel::filterAcceptsRow(int sourceRow,
@@ -41,6 +67,7 @@ bool FilterProxyModel::filterAcceptsRow(int sourceRow,
 
 void FilterProxyModel::buildVisiblePaths(const jsontitan::core::FilterResult& result) {
     m_visiblePaths.clear();
+    m_exactMatchPaths.clear();
     m_rootMatched = false;
 
     for (const auto& match : result.matches) {
@@ -54,6 +81,7 @@ void FilterProxyModel::buildVisiblePaths(const jsontitan::core::FilterResult& re
 
         // Add the full path (the matched node itself)
         m_visiblePaths.insert(indices);
+        m_exactMatchPaths.insert(indices);
 
         // Add all ancestor prefixes so the structural context is preserved
         // For a path [0, 2, 1], we add [0], [0, 2], and [0, 2, 1]

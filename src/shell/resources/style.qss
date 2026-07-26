@@ -257,6 +257,13 @@ QSplitter::handle:hover {
     background-color: #89b4fa;
 }
 
+/* === Match Count Label === */
+
+QLabel#matchCountLabel {
+    color: #a6adc8;
+    padding: 0px 6px;
+}
+
 /* === Error Label === */
 
 QLabel#searchErrorLabel {
