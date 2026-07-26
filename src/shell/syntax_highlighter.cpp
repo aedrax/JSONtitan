@@ -34,6 +34,10 @@ void renderHighlighted(QTextEdit* editor,
     editor->clear();
 
     QTextCursor cursor(editor->document());
+    // Batch all insertions into one edit block: without it every token
+    // triggers its own document-change signal and layout pass, which stalls
+    // the UI for outputs with thousands of tokens.
+    cursor.beginEditBlock();
 
     for (const auto& token : result.tokens) {
         QTextCharFormat format;
@@ -79,6 +83,8 @@ void renderHighlighted(QTextEdit* editor,
         defaultFormat.setForeground(theme.defaultColor);
         cursor.insertText(QStringLiteral("\n\n... (output truncated)"), defaultFormat);
     }
+
+    cursor.endEditBlock();
 }
 
 } // namespace jsontitan::shell
