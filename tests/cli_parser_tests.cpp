@@ -215,10 +215,11 @@ private slots:
         };
         window.openFromCliArgs(paths);
 
-        // Union mode is synchronous, so the tree should be populated immediately
+        // Union parsing runs on the worker thread: wait for the async
+        // completion to install the tree and hide the welcome label.
         auto* welcomeLabel = window.findChild<QLabel*>("welcomeLabel");
         QVERIFY(welcomeLabel != nullptr);
-        QVERIFY(welcomeLabel->isHidden());
+        QTRY_VERIFY_WITH_TIMEOUT(welcomeLabel->isHidden(), 5000);
 
         auto* treeView = window.findChild<QTreeView*>();
         QVERIFY(treeView != nullptr);

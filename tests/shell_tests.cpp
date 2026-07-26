@@ -1929,13 +1929,15 @@ private slots:
             QPointF(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&window, &dropEvent);
 
-        // Union loads synchronously: the tree is up and the status bar
-        // names the union document.
-        auto* treeView = window.findChild<QTreeView*>();
-        QVERIFY(treeView->isVisible());
+        // Union now loads on the worker thread: wait for the async
+        // completion, after which the tree is up and the status bar names
+        // the union document.
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QVERIFY(statusLabel != nullptr);
-        QVERIFY(statusLabel->text().contains("Union (2 files)"));
+        QTRY_VERIFY_WITH_TIMEOUT(statusLabel->text().contains("Union (2 files)"),
+                                 5000);
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView->isVisible());
     }
 
     void testRejectedDragShowsStatusBarReason() {

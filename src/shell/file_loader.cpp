@@ -1,11 +1,14 @@
 #include "shell/file_loader.h"
 
+#include "core/json_node.h"
 #include "core/parse_orchestrator.h"
+#include "core/union_engine.h"
 
 #include <QFile>
 #include <QFileInfo>
 
 #include <utility>
+#include <vector>
 
 using namespace jsontitan::core;
 
@@ -53,50 +56,43 @@ std::pair<qint64, qint64> lineColumnForOffset(const QString& filePath,
 FileLoaderWorker::FileLoaderWorker(QObject* parent)
     : QObject(parent) {}
 
-void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
-    if (isStale(requestId)) {
-        return;
-    }
+bool FileLoaderWorker::readWholeFile(
+    const QString& filePath, quint64 requestId, std::string& out,
+    QString& errorMessage, const std::function<void(float)>& onProgress) {
+    errorMessage.clear();
 
     QFile file(filePath);
     if (!file.exists()) {
-        emit parseError(tr("File not found: %1").arg(filePath), requestId);
-        return;
+        errorMessage = tr("File not found: %1").arg(filePath);
+        return false;
     }
 
     if (!file.open(QIODevice::ReadOnly)) {
-        emit parseError(tr("Cannot open file: %1 — %2")
-                            .arg(filePath, file.errorString()), requestId);
-        return;
+        errorMessage = tr("Cannot open file: %1 — %2")
+                           .arg(filePath, file.errorString());
+        return false;
     }
 
     const qint64 totalSize = file.size();
     if (totalSize == 0) {
-        emit parseError(tr("File is empty: %1").arg(filePath), requestId);
-        return;
+        errorMessage = tr("File is empty: %1").arg(filePath);
+        return false;
     }
 
-    emit progressUpdated(0, requestId);
+    onProgress(0.0f);
 
-    // Everything below allocates proportionally to the file size; a file
-    // larger than available memory must surface as an error dialog, not a
-    // std::terminate from an exception escaping the worker slot.
-    try {
-
-    // Phase 1: Read file in chunks with incremental progress
+    // Read the file in chunks with incremental progress.
     constexpr qint64 kReadChunkSize = 1024 * 1024;  // 1 MB chunks
-    std::string input;
+    out.clear();
     // Reserve room for the simdjson padding up front: SourceBuffer's
     // constructor resizes by kSimdjsonPadding bytes, and without this slack
     // that resize would reallocate (and copy) the entire multi-GB string.
-    input.reserve(static_cast<std::size_t>(totalSize) + kSimdjsonPadding);
+    out.reserve(static_cast<std::size_t>(totalSize) + kSimdjsonPadding);
 
     qint64 bytesRead = 0;
-    int lastProgress = 0;
-
     while (bytesRead < totalSize) {
         if (isStale(requestId)) {
-            return;
+            return false;  // errorMessage stays empty: silent abort
         }
 
         QByteArray chunk = file.read(kReadChunkSize);
@@ -104,33 +100,56 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
             break;  // EOF or error
         }
 
-        input.append(chunk.constData(), static_cast<std::size_t>(chunk.size()));
+        out.append(chunk.constData(), static_cast<std::size_t>(chunk.size()));
         bytesRead += chunk.size();
-
-        // Calculate progress in [0, 50] range
-        int progress = static_cast<int>((bytesRead * 50) / totalSize);
-        if (progress != lastProgress) {
-            emit progressUpdated(progress, requestId);
-            lastProgress = progress;
-        }
+        onProgress(static_cast<float>(bytesRead) /
+                   static_cast<float>(totalSize));
     }
 
     // A short read is an I/O error (removable media, network share,
     // permission revoked mid-read): parsing the truncated buffer would show
     // a misleading parse error — or silently display a truncated document.
     if (bytesRead != totalSize || file.error() != QFileDevice::NoError) {
-        emit parseError(tr("Failed to read %1: %2")
-                            .arg(filePath,
-                                 file.error() != QFileDevice::NoError
-                                     ? file.errorString()
-                                     : tr("unexpected end of file")),
-                        requestId);
+        errorMessage = tr("Failed to read %1: %2")
+                           .arg(filePath,
+                                file.error() != QFileDevice::NoError
+                                    ? file.errorString()
+                                    : tr("unexpected end of file"));
+        return false;
+    }
+
+    onProgress(1.0f);
+    return true;
+}
+
+void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
+    if (isStale(requestId)) {
         return;
     }
 
-    // Ensure we emit 50 at the end of read phase
-    if (lastProgress != 50) {
-        emit progressUpdated(50, requestId);
+    // Everything below allocates proportionally to the file size; a file
+    // larger than available memory must surface as an error dialog, not a
+    // std::terminate from an exception escaping the worker slot.
+    try {
+
+    // Phase 1: Read file in chunks; fractions map to the [0, 50] range.
+    std::string input;
+    QString readError;
+    int lastProgress = -1;
+    const bool readOk = readWholeFile(
+        filePath, requestId, input, readError,
+        [this, requestId, &lastProgress](float fraction) {
+            int progress = static_cast<int>(fraction * 50.0f);
+            if (progress != lastProgress) {
+                emit progressUpdated(progress, requestId);
+                lastProgress = progress;
+            }
+        });
+    if (!readOk) {
+        if (!readError.isEmpty()) {
+            emit parseError(readError, requestId);
+        }
+        return;  // error or stale request
     }
 
     // Cancellation check after read
@@ -210,6 +229,114 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     }
 }
 
+void FileLoaderWorker::processUnion(const QStringList& filePaths,
+                                    quint64 requestId) {
+    if (isStale(requestId)) {
+        return;
+    }
+
+    const int fileCount = static_cast<int>(filePaths.size());
+    if (fileCount == 0) {
+        return;
+    }
+
+    std::vector<jsontitan::core::FileEntry> entries;
+    entries.reserve(static_cast<std::size_t>(fileCount));
+
+    // Progress: file i of N owns the slice [i, i+1] * 100/N — read fills the
+    // first half of the slice, parse the second half.
+    int lastProgress = -1;
+    auto emitSliceProgress = [this, requestId, fileCount, &lastProgress](
+                                 int fileIndex, float halfOffset,
+                                 float fraction) {
+        const float slice = 100.0f / static_cast<float>(fileCount);
+        const float base = slice * static_cast<float>(fileIndex);
+        int progress =
+            static_cast<int>(base + (halfOffset + fraction * 0.5f) * slice);
+        if (progress != lastProgress) {
+            emit progressUpdated(progress, requestId);
+            lastProgress = progress;
+        }
+    };
+
+    for (int i = 0; i < fileCount; ++i) {
+        // Staleness check between files: a superseding request aborts the
+        // whole union silently.
+        if (isStale(requestId)) {
+            return;
+        }
+
+        const QString& filePath = filePaths.at(i);
+        const QString fileName = QFileInfo(filePath).fileName();
+
+        try {
+            std::string input;
+            QString readError;
+            const bool readOk = readWholeFile(
+                filePath, requestId, input, readError,
+                [&](float fraction) { emitSliceProgress(i, 0.0f, fraction); });
+            if (!readOk) {
+                if (!readError.isEmpty()) {
+                    emit unionParseError(fileName, readError, requestId);
+                }
+                return;  // error or stale request
+            }
+
+            ParseBufferOptions parseOptions;
+            parseOptions.progressCallback = [&](float coreProgress) {
+                if (isStale(requestId)) {
+                    return;
+                }
+                emitSliceProgress(i, 0.5f, coreProgress);
+            };
+            parseOptions.cancelCallback = [this, requestId]() {
+                return isStale(requestId);
+            };
+
+            // The arena lives only inside this scope: the tree is converted
+            // to a JsonNode tree immediately and the arena dropped before
+            // the next file is read.
+            auto arenaResult = parseBuffer(std::move(input), parseOptions);
+
+            if (isStale(requestId)) {
+                return;
+            }
+
+            if (arenaResult.error) {
+                emit unionParseError(
+                    fileName,
+                    QString::fromStdString(arenaResult.error->description),
+                    requestId);
+                return;
+            }
+
+            jsontitan::core::FileEntry entry;
+            entry.filename = fileName.toStdString();
+            entry.root = arenaResult.root->toJsonNode();
+            entries.push_back(std::move(entry));
+        } catch (const std::bad_alloc&) {
+            emit unionParseError(fileName, tr("Out of memory loading %1").arg(filePath),
+                                 requestId);
+            return;
+        } catch (const std::exception& e) {
+            emit unionParseError(fileName,
+                                 tr("Failed to load %1: %2")
+                                     .arg(filePath, QString::fromUtf8(e.what())),
+                                 requestId);
+            return;
+        }
+    }
+
+    if (isStale(requestId)) {
+        return;
+    }
+
+    auto unionRoot = jsontitan::core::unionTrees(entries);
+
+    emit progressUpdated(100, requestId);
+    emit unionParseComplete(std::move(unionRoot), filePaths, requestId);
+}
+
 quint64 FileLoaderWorker::beginRequest() {
     return m_latestRequest.fetch_add(1, std::memory_order_relaxed) + 1;
 }
@@ -234,8 +361,9 @@ FileLoader::FileLoader(QObject* parent)
     : QObject(parent)
     , m_workerThread(new QThread(this))
     , m_worker(new FileLoaderWorker()) {
-    // Register metatype for cross-thread signal/slot
+    // Register metatypes for cross-thread signal/slot
     qRegisterMetaType<std::shared_ptr<jsontitan::core::ArenaParseResult>>();
+    qRegisterMetaType<std::shared_ptr<const jsontitan::core::JsonNode>>();
 
     // Move worker to the background thread
     m_worker->moveToThread(m_workerThread);
@@ -263,6 +391,20 @@ FileLoader::FileLoader(QObject* parent)
                     emit parseError(errorMessage);
                 }
             }, Qt::QueuedConnection);
+    connect(m_worker, &FileLoaderWorker::unionParseComplete, this,
+            [this](std::shared_ptr<const jsontitan::core::JsonNode> root,
+                   const QStringList& filePaths, quint64 requestId) {
+                if (requestId == m_activeRequest) {
+                    emit unionParseComplete(std::move(root), filePaths);
+                }
+            }, Qt::QueuedConnection);
+    connect(m_worker, &FileLoaderWorker::unionParseError, this,
+            [this](const QString& fileName, const QString& errorMessage,
+                   quint64 requestId) {
+                if (requestId == m_activeRequest) {
+                    emit unionParseError(fileName, errorMessage);
+                }
+            }, Qt::QueuedConnection);
 
     // Clean up worker when thread finishes
     connect(m_workerThread, &QThread::finished,
@@ -286,6 +428,17 @@ void FileLoader::startParse(const QString& filePath) {
     QMetaObject::invokeMethod(m_worker, "process",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath),
+                              Q_ARG(quint64, m_activeRequest));
+}
+
+void FileLoader::startUnionParse(const QStringList& filePaths) {
+    // beginRequest() atomically invalidates any in-progress parse (single
+    // file or union) and returns the id for the new one.
+    m_activeRequest = m_worker->beginRequest();
+
+    QMetaObject::invokeMethod(m_worker, "processUnion",
+                              Qt::QueuedConnection,
+                              Q_ARG(QStringList, filePaths),
                               Q_ARG(quint64, m_activeRequest));
 }
 

@@ -1,19 +1,12 @@
 #include "shell/union_controller.h"
 
-#include <QFile>
 #include <QFileDialog>
-#include <QFileInfo>
 #include <QMessageBox>
 
-#include <cstddef>
-#include <span>
 #include <string>
-#include <vector>
 
 #include "core/deletion_engine.h"
-#include "core/parser.h"
 #include "core/union_engine.h"
-#include "shell/wait_cursor.h"
 
 UnionController::UnionController(QWidget* dialogParent, Ui ui,
                                  TreeModel* treeModel,
@@ -22,6 +15,7 @@ UnionController::UnionController(QWidget* dialogParent, Ui ui,
                                  SearchController* searchController,
                                  EditController* editController,
                                  RecentFilesManager* recentFilesManager,
+                                 FileLoader* fileLoader,
                                  QObject* parent)
     : QObject(parent),
       m_dialogParent(dialogParent),
@@ -31,70 +25,43 @@ UnionController::UnionController(QWidget* dialogParent, Ui ui,
       m_session(session),
       m_searchController(searchController),
       m_editController(editController),
-      m_recentFilesManager(recentFilesManager) {}
+      m_recentFilesManager(recentFilesManager),
+      m_fileLoader(fileLoader) {
+    connect(m_fileLoader, &FileLoader::unionParseComplete,
+            this, &UnionController::onUnionParseComplete);
+    connect(m_fileLoader, &FileLoader::unionParseError,
+            this, &UnionController::onUnionParseError);
+}
 
-// --- Task 16.4: Multi-file union ---
+// --- Task 16.4 / Phase 5a C8: multi-file union on the worker thread ---
 
-void UnionController::loadUnionSynchronously(const QStringList& filePaths,
-                                             bool recordInRecentFiles) {
-    // Parse each file synchronously for union (they should be small enough)
-    // For large files, a more sophisticated approach would be needed.
-    // Synchronous multi-file parse blocks the UI thread — show a wait
-    // cursor for the duration (restored early before any error dialog).
-    jsontitan::shell::WaitCursorGuard waitCursor;
-    std::vector<jsontitan::core::FileEntry> entries;
-
-    for (const auto& path : filePaths) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            waitCursor.restore();
-            QMessageBox::critical(m_dialogParent, tr("File Error"),
-                                  tr("Cannot open file: %1").arg(path));
-            return;
-        }
-
-        QByteArray data = file.readAll();
-        file.close();
-
-        // Parse using the core parser
-        auto state = jsontitan::core::makeParserState();
-        auto chunk = std::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(data.constData()),
-            static_cast<std::size_t>(data.size()));
-
-        auto chunkResult = jsontitan::core::parseChunk(*state, chunk);
-        if (chunkResult.error) {
-            waitCursor.restore();
-            QMessageBox::critical(m_dialogParent, tr("Parse Error"),
-                                  tr("Failed to parse %1:\n\n%2")
-                                      .arg(QFileInfo(path).fileName(),
-                                           QString::fromStdString(chunkResult.error->description)));
-            return;
-        }
-
-        auto parseResult = jsontitan::core::finalizeParse(*chunkResult.nextState);
-        if (parseResult.error) {
-            waitCursor.restore();
-            QMessageBox::critical(m_dialogParent, tr("Parse Error"),
-                                  tr("Failed to parse %1:\n\n%2")
-                                      .arg(QFileInfo(path).fileName(),
-                                           QString::fromStdString(parseResult.error->description)));
-            return;
-        }
-
-        jsontitan::core::FileEntry entry;
-        entry.filename = QFileInfo(path).fileName().toStdString();
-        entry.root = parseResult.root;
-        entries.push_back(std::move(entry));
+void UnionController::loadUnion(const QStringList& filePaths,
+                                bool recordInRecentFiles) {
+    if (filePaths.isEmpty()) {
+        return;
     }
 
-    // Union the trees
-    auto unionRoot = jsontitan::core::unionTrees(entries);
+    // startUnionParse supersedes any in-flight parse (single-file or union);
+    // cancelParse first makes the intent explicit and drops stale results
+    // even if the worker is between cancellation checks.
+    m_fileLoader->cancelParse();
+
+    m_recordInRecentFiles = recordInRecentFiles;
+
+    emit loadStarted();
+    m_fileLoader->startUnionParse(filePaths);
+}
+
+void UnionController::onUnionParseComplete(
+    std::shared_ptr<const jsontitan::core::JsonNode> root,
+    const QStringList& filePaths) {
+    emit loadFinished();
 
     m_searchController->invalidate();
     // File path deliberately left as-is: union mode never reads it
     // (Save redirects to Save As), matching pre-extraction behavior.
-    m_session->setJsonRoot(unionRoot, m_session->filePath(),
+    // setJsonRoot also clears the undo history (new-document install).
+    m_session->setJsonRoot(root, m_session->filePath(),
                            tr("Union (%1 files)").arg(filePaths.size()), true);
     m_filterProxy->clearFilter();
 
@@ -102,8 +69,8 @@ void UnionController::loadUnionSynchronously(const QStringList& filePaths,
     m_ui.tree->show();
     m_ui.noResultsLabel->hide();
 
-    int nodeCount = unionRoot
-        ? static_cast<int>(1 + jsontitan::core::countDescendants(*unionRoot))
+    int nodeCount = root
+        ? static_cast<int>(1 + jsontitan::core::countDescendants(*root))
         : 0;
     emit statusUpdated(m_session->fileName(), nodeCount);
 
@@ -111,12 +78,20 @@ void UnionController::loadUnionSynchronously(const QStringList& filePaths,
     m_ui.searchBar->clear();
     m_ui.searchErrorLabel->hide();
 
-    // Record all files in recent files list (CLI entry point only)
-    if (recordInRecentFiles) {
+    // Record all files in recent files list (CLI/drop entry points only)
+    if (m_recordInRecentFiles) {
         for (const auto& path : filePaths) {
             m_recentFilesManager->fileOpened(path);
         }
     }
+}
+
+void UnionController::onUnionParseError(const QString& fileName,
+                                        const QString& errorMessage) {
+    emit loadFinished();
+    QMessageBox::critical(m_dialogParent, tr("Parse Error"),
+                          tr("Failed to parse %1:\n\n%2")
+                              .arg(fileName, errorMessage));
 }
 
 void UnionController::unionFiles() {
@@ -132,7 +107,7 @@ void UnionController::unionFiles() {
         return;
     }
 
-    loadUnionSynchronously(filePaths, /*recordInRecentFiles=*/false);
+    loadUnion(filePaths, /*recordInRecentFiles=*/false);
 }
 
 void UnionController::removeFromUnion() {

@@ -227,6 +227,131 @@ private slots:
         QCOMPARE(users->childCount, std::size_t(2));
     }
 
+    // -----------------------------------------------------------------------
+    // Phase 5a C8: union parsing on the worker thread
+    // -----------------------------------------------------------------------
+
+    void testUnionParseTwoFilesCompletes() {
+        QString file1 = writeTempFile(R"({"alpha": 1})");
+        QString file2 = writeTempFile(R"({"beta": {"nested": true}})");
+        QVERIFY(!file1.isEmpty());
+        QVERIFY(!file2.isEmpty());
+
+        FileLoader loader;
+        QSignalSpy completeSpy(&loader, &FileLoader::unionParseComplete);
+        QSignalSpy errorSpy(&loader, &FileLoader::unionParseError);
+        QSignalSpy progressSpy(&loader, &FileLoader::progressUpdated);
+
+        loader.startUnionParse({file1, file2});
+
+        QVERIFY(completeSpy.wait(5000));
+        QCOMPARE(completeSpy.count(), 1);
+        QCOMPARE(errorSpy.count(), 0);
+
+        // Union root: object whose top-level children are the two files
+        // (keyed by basename, in argument order) per union_engine semantics.
+        auto root = completeSpy.at(0).at(0)
+                        .value<std::shared_ptr<const JsonNode>>();
+        QVERIFY(root != nullptr);
+        QCOMPARE(root->type, NodeType::Object);
+        QCOMPARE(root->children.size(), std::size_t(2));
+        QCOMPARE(QString::fromStdString(root->children[0]->key),
+                 QFileInfo(file1).fileName());
+        QCOMPARE(QString::fromStdString(root->children[1]->key),
+                 QFileInfo(file2).fileName());
+
+        // Each file's tree hangs under its filename node.
+        QCOMPARE(root->children[0]->children.size(), std::size_t(1));
+        QCOMPARE(root->children[0]->children[0]->key, std::string("alpha"));
+        QCOMPARE(root->children[1]->children.size(), std::size_t(1));
+        QCOMPARE(root->children[1]->children[0]->key, std::string("beta"));
+
+        // The completion reports the requested file list.
+        QCOMPARE(completeSpy.at(0).at(1).toStringList(),
+                 (QStringList{file1, file2}));
+
+        // Progress ends at 100 and never decreases.
+        QVERIFY(progressSpy.count() >= 1);
+        QCOMPARE(progressSpy.last().at(0).toInt(), 100);
+        int prev = 0;
+        for (const auto& args : progressSpy) {
+            int p = args.at(0).toInt();
+            QVERIFY(p >= prev);
+            prev = p;
+        }
+    }
+
+    void testUnionParseErrorNamesOffendingFile() {
+        QString good = writeTempFile(R"({"ok": 1})");
+        QString bad = writeTempFile(R"({"broken": )");
+        QVERIFY(!good.isEmpty());
+        QVERIFY(!bad.isEmpty());
+
+        FileLoader loader;
+        QSignalSpy completeSpy(&loader, &FileLoader::unionParseComplete);
+        QSignalSpy errorSpy(&loader, &FileLoader::unionParseError);
+
+        loader.startUnionParse({good, bad});
+
+        QVERIFY(errorSpy.wait(5000));
+        QCOMPARE(errorSpy.count(), 1);
+        QCOMPARE(completeSpy.count(), 0);
+
+        // The error names the offending file (basename) with a non-empty
+        // description.
+        QCOMPARE(errorSpy.at(0).at(0).toString(), QFileInfo(bad).fileName());
+        QVERIFY(!errorSpy.at(0).at(1).toString().isEmpty());
+
+        // No late completion arrives either.
+        QTest::qWait(200);
+        QCoreApplication::processEvents();
+        QCOMPARE(completeSpy.count(), 0);
+    }
+
+    void testUnionSupersededByNewRequest() {
+        QString a = writeTempFile(R"({"a": 1})");
+        QString b = writeTempFile(R"({"b": 2})");
+        QString c = writeTempFile(R"({"c": 3})");
+        QString d = writeTempFile(R"({"d": 4})");
+
+        FileLoader loader;
+        QSignalSpy completeSpy(&loader, &FileLoader::unionParseComplete);
+        QSignalSpy errorSpy(&loader, &FileLoader::unionParseError);
+
+        // The second request supersedes the first: at most the second's
+        // result is forwarded.
+        loader.startUnionParse({a, b});
+        loader.startUnionParse({c, d});
+
+        QVERIFY(completeSpy.wait(5000));
+        QTest::qWait(200);
+        QCoreApplication::processEvents();
+
+        QCOMPARE(completeSpy.count(), 1);
+        QCOMPARE(errorSpy.count(), 0);
+        QCOMPARE(completeSpy.at(0).at(1).toStringList(), (QStringList{c, d}));
+    }
+
+    void testUnionStaleRequestEmitsNothing() {
+        // Worker-level staleness: a request superseded before processUnion
+        // runs produces no signals at all (the between-files check pattern).
+        QString file = writeTempFile(R"({"x": 1})");
+        QVERIFY(!file.isEmpty());
+
+        FileLoaderWorker worker;
+        QSignalSpy completeSpy(&worker, &FileLoaderWorker::unionParseComplete);
+        QSignalSpy errorSpy(&worker, &FileLoaderWorker::unionParseError);
+        QSignalSpy progressSpy(&worker, &FileLoaderWorker::progressUpdated);
+
+        quint64 firstRequest = worker.beginRequest();
+        worker.beginRequest();  // supersede
+        worker.processUnion({file}, firstRequest);
+
+        QCOMPARE(completeSpy.count(), 0);
+        QCOMPARE(errorSpy.count(), 0);
+        QCOMPARE(progressSpy.count(), 0);
+    }
+
     void testMultipleSequentialParses() {
         // Test that starting a new parse after one completes works correctly
         QByteArray json1 = "{\"first\": true}";

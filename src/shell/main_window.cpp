@@ -108,11 +108,20 @@ MainWindow::MainWindow(QWidget* parent)
         UnionController::Ui{m_treeView, m_welcomeLabel, m_noResultsLabel,
                             m_searchErrorLabel, m_searchBar, m_detailPanel},
         m_treeModel, m_filterProxy, m_session, m_searchController,
-        m_editController, m_recentFilesManager, this);
+        m_editController, m_recentFilesManager, m_fileLoader, this);
     connect(m_unionAction, &QAction::triggered,
             m_unionController, &UnionController::unionFiles);
     connect(m_unionController, &UnionController::statusUpdated,
             this, &MainWindow::updateStatusBar);
+    // Union loads run on the worker thread now: reuse the single-file
+    // load-progress UI (progress bar + cancel button).
+    connect(m_unionController, &UnionController::loadStarted,
+            this, [this]() {
+                showLoadProgress();
+                m_statusLabel->setText(tr("Parsing union..."));
+            });
+    connect(m_unionController, &UnionController::loadFinished,
+            this, &MainWindow::hideLoadProgress);
 
     // Detail panel rendering for the current tree selection
     m_detailPresenter = new DetailPanelPresenter(
@@ -191,8 +200,7 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
         for (const auto& path : filePaths) {
             qPaths.append(QString::fromStdString(path));
         }
-        m_unionController->loadUnionSynchronously(qPaths,
-                                                  /*recordInRecentFiles=*/true);
+        m_unionController->loadUnion(qPaths, /*recordInRecentFiles=*/true);
     }
 }
 
@@ -578,8 +586,8 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
     if (result.filePaths.size() > 1) {
         // Multiple files: same union flow as File > Union Files / CLI.
-        m_unionController->loadUnionSynchronously(result.filePaths,
-                                                  /*recordInRecentFiles=*/true);
+        m_unionController->loadUnion(result.filePaths,
+                                     /*recordInRecentFiles=*/true);
         return;
     }
 
