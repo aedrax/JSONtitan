@@ -543,6 +543,53 @@ private slots:
         QCOMPARE(proxy.rowCount(QModelIndex()), 3);
     }
 
+    void testMatchBeyondFetchWindowBecomesVisible() {
+        // Regression: matches past the lazily-fetched first batch (100 rows)
+        // used to be silently invisible because filterAcceptsRow was never
+        // asked about unfetched rows. applyFilter must force-fetch matched
+        // paths itself — no manual fetchAll here, mirroring real usage.
+        std::vector<std::shared_ptr<const JsonNode>> children;
+        for (int i = 0; i < 250; ++i) {
+            children.push_back(JsonNode::makeString(
+                "key" + std::to_string(i), "value" + std::to_string(i)));
+        }
+        auto root = JsonNode::makeObject("", std::move(children));
+
+        TreeModel sourceModel;
+        sourceModel.setRootNode(root);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        jsontitan::core::FilterResult result;
+        result.matches.push_back({{200}, nullptr});  // child index 200 > batch size
+        proxy.applyFilter(result);
+
+        QCOMPARE(proxy.rowCount(QModelIndex()), 1);
+        QCOMPARE(proxy.index(0, 0, QModelIndex()).data().toString(),
+                 sourceModel.index(200, 0, QModelIndex()).data().toString());
+    }
+
+    void testRootOnlyMatchShowsWholeTree() {
+        // Regression: a match on the root itself (empty ancestor path) used
+        // to produce a completely empty tree with no feedback.
+        TreeModel sourceModel;
+        auto root = JsonNode::makeObject("", {
+            JsonNode::makeString("name", "Alice"),
+            JsonNode::makeNumber("age", "30")
+        });
+        sourceModel.setRootNode(root);
+
+        FilterProxyModel proxy;
+        proxy.setSourceModel(&sourceModel);
+
+        jsontitan::core::FilterResult result;
+        result.matches.push_back({{}, root});  // root match: empty path
+        proxy.applyFilter(result);
+
+        QCOMPARE(proxy.rowCount(QModelIndex()), 2);
+    }
+
     void testApplyFilterHidesNonMatchingRows() {
         // Build a tree: root { name: "Alice", age: 30, city: "NYC" }
         TreeModel sourceModel;

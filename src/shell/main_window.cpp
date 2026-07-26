@@ -1161,7 +1161,15 @@ void MainWindow::onDeleteNode() {
     QModelIndex newParentIndex;  // invalid = root
     // Walk down from root to find the parent
     QModelIndex current;  // starts as invalid (root)
+    bool walkComplete = true;
     for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        // The model was just reset, so nothing is fetched yet: rows must be
+        // fetched BEFORE the by-key scan below, or rowCount is 0, the key is
+        // never found, and the walk silently stops at the wrong level.
+        while (m_treeModel->canFetchMore(current)) {
+            m_treeModel->fetchMore(current);
+        }
+
         int row = -1;
         if (auto* idx = std::get_if<std::size_t>(&path[i])) {
             row = static_cast<int>(*idx);
@@ -1179,13 +1187,20 @@ void MainWindow::onDeleteNode() {
                 }
             }
         }
-        if (row < 0) break;
-        // Ensure rows are fetched
-        while (m_treeModel->canFetchMore(current)) {
-            m_treeModel->fetchMore(current);
+        if (row < 0) {
+            walkComplete = false;
+            break;
         }
         current = m_treeModel->index(row, 0, current);
-        if (!current.isValid()) break;
+        if (!current.isValid()) {
+            walkComplete = false;
+            break;
+        }
+    }
+    if (!walkComplete) {
+        // The parent could not be re-resolved; selecting deletedRow under
+        // the wrong (shallower) parent would highlight an unrelated node.
+        return;
     }
     newParentIndex = current;
 

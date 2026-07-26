@@ -27,6 +27,10 @@ private:
     // Build the set of visible paths from a FilterResult
     void buildVisiblePaths(const jsontitan::core::FilterResult& result);
 
+    // Force the (lazily-fetched) source model to expose every row on every
+    // visible path, so filterAcceptsRow can actually be asked about them
+    void ensureMatchesFetched();
+
     // Check if a given source path (built from row + parent) is in the visible set
     bool isPathVisible(int sourceRow, const QModelIndex& sourceParent) const;
 
@@ -34,6 +38,7 @@ private:
     IndexPath buildPathForIndex(int sourceRow, const QModelIndex& sourceParent) const;
 
     bool m_filtered = false;
+    bool m_rootMatched = false;  // a match had an empty path (root itself)
 
     // Set of all visible paths (matched nodes + ancestors)
     // Each path is stored as a vector of child indices from root
