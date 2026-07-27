@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  QT_VERSION: "6.8.3"
+  # 6.9+ required on macOS: Qt 6.8's prebuilt OpenGL config links the AGL
+  # framework, which was removed from the SDK in Xcode 16.3.
+  QT_VERSION: "6.9.3"
 
 jobs:
   linux:
