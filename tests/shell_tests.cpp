@@ -3203,6 +3203,90 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// File > New and the structural Edit actions at the window level
+// ---------------------------------------------------------------------------
+
+class StructuralEditWindowTest : public QObject {
+    Q_OBJECT
+
+private:
+    static QAction* editAction(MainWindow& window, const QString& text) {
+        for (auto* menuAction : window.menuBar()->actions()) {
+            if (!menuAction->text().contains("Edit") && !menuAction->text().contains("File")) {
+                continue;
+            }
+            for (auto* action : menuAction->menu()->actions()) {
+                if (action->text() == text) {
+                    return action;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+private slots:
+    void init() {
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTestsStructural");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testNewDocumentStartsEmptyAndUntitled() {
+        MainWindow window;
+        window.show();
+        auto* newAction = editAction(window, "&New");
+        QVERIFY(newAction != nullptr);
+        newAction->trigger();
+
+        auto* treeView = window.findChild<QTreeView*>();
+        QVERIFY(treeView->isVisible());
+        QCOMPARE(treeView->model()->rowCount(), 0);
+        QVERIFY(window.windowTitle().contains("Untitled"));
+        QVERIFY(!window.windowTitle().startsWith("*"));
+
+        // Nothing selected: actions target the (empty object) root.
+        QVERIFY(editAction(window, "Add &Child...")->isEnabled());
+        QVERIFY(editAction(window, "&Paste")->isEnabled());
+        QVERIFY(editAction(window, "&Sort Keys")->isEnabled());
+        QVERIFY(!editAction(window, "&Insert After...")->isEnabled());
+        QVERIFY(!editAction(window, "Dupli&cate")->isEnabled());
+    }
+
+    void testPasteAfterSelectionInArray() {
+        QTemporaryDir dir;
+        const QString filePath = dir.path() + "/paste.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("[1, 3]");
+        }
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({filePath.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->isVisible(), 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QVERIFY(editAction(window, "Move Do&wn")->isEnabled());
+        QVERIFY(!editAction(window, "Move &Up")->isEnabled());
+        QVERIFY(!editAction(window, "Rena&me Key...")->isEnabled());  // array element
+
+        QGuiApplication::clipboard()->setText(R"({"two": 2})");
+        editAction(window, "&Paste")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 3, 5000);
+        QVERIFY(window.windowTitle().startsWith("*"));
+
+        // The pasted object sits at index 1 and is selected.
+        QCOMPARE(treeView->currentIndex().row(), 1);
+        // (Rows are fetched lazily, so check for children, not their count.)
+        QVERIFY(treeView->model()->hasChildren(treeView->currentIndex()));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -3274,6 +3358,9 @@ int main(int argc, char* argv[]) {
 
     GoToPathTest goToPathTest;
     status |= QTest::qExec(&goToPathTest, argc, argv);
+
+    StructuralEditWindowTest structuralEditTest;
+    status |= QTest::qExec(&structuralEditTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);

@@ -74,6 +74,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
+    void onNewDocument();
     void onOpenFile();
     void onExportJson();
     void onExportCsv();
@@ -116,6 +117,10 @@ private:
     // NodePath of the tree view's current selection ({} when none).
     jsontitan::core::NodePath currentSelectionPath() const;
 
+    // Enable/disable the structural edit actions for the current row (or
+    // the root when no row is selected).
+    void updateEditActions();
+
     // Expand the tree to the given 1-based level (level 1 = top-level rows
     // expanded). Uses QTreeView::expandToDepth.
     void expandToLevel(int level);
@@ -154,6 +159,7 @@ private:
     QLabel* m_fileChangedLabel = nullptr;
 
     // Menu actions
+    QAction* m_newAction = nullptr;
     QAction* m_openAction = nullptr;
     QAction* m_unionAction = nullptr;
     QMenu* m_recentMenu = nullptr;
@@ -166,6 +172,16 @@ private:
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
     QAction* m_deleteAction = nullptr;
+    QAction* m_renameKeyAction = nullptr;
+    QAction* m_addChildAction = nullptr;
+    QAction* m_insertAfterAction = nullptr;
+    QAction* m_editAsJsonAction = nullptr;
+    QAction* m_pasteAction = nullptr;
+    QAction* m_pasteAsChildAction = nullptr;
+    QAction* m_duplicateAction = nullptr;
+    QAction* m_moveUpAction = nullptr;
+    QAction* m_moveDownAction = nullptr;
+    QAction* m_sortKeysAction = nullptr;
     QAction* m_expandAllAction = nullptr;
     QAction* m_collapseAllAction = nullptr;
     QAction* m_goToPathAction = nullptr;

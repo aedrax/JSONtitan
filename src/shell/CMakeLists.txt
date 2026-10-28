@@ -7,6 +7,7 @@ set(SHELL_SOURCES
     document_session.cpp
     edit_controller.cpp
     model_paths.cpp
+    node_input_dialog.cpp
     search_controller.cpp
     tree_model.cpp
     union_controller.cpp

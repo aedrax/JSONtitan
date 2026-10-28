@@ -122,12 +122,33 @@ MainWindow::MainWindow(QWidget* parent)
         [this](const QModelIndex& sourceIndex, const QString& newText) {
             return m_editController->applyEdit(sourceIndex, newText);
         });
-    // Keep Edit > Delete's enabled state in sync with the tree selection.
+    connect(m_renameKeyAction, &QAction::triggered,
+            m_editController, &EditController::renameSelectedKey);
+    connect(m_addChildAction, &QAction::triggered,
+            m_editController, &EditController::addChild);
+    connect(m_insertAfterAction, &QAction::triggered,
+            m_editController, &EditController::insertAfter);
+    connect(m_editAsJsonAction, &QAction::triggered,
+            m_editController, &EditController::editAsJson);
+    connect(m_duplicateAction, &QAction::triggered,
+            m_editController, &EditController::duplicateSelected);
+    connect(m_pasteAction, &QAction::triggered,
+            m_editController, &EditController::paste);
+    connect(m_pasteAsChildAction, &QAction::triggered,
+            m_editController, &EditController::pasteAsChild);
+    connect(m_moveUpAction, &QAction::triggered,
+            m_editController, &EditController::moveSelectedUp);
+    connect(m_moveDownAction, &QAction::triggered,
+            m_editController, &EditController::moveSelectedDown);
+    connect(m_sortKeysAction, &QAction::triggered,
+            m_editController, &EditController::sortSelectedKeys);
+    // Keep the Edit actions' enabled state in sync with the tree selection
+    // and the document.
     connect(m_treeView->selectionModel(),
             &QItemSelectionModel::currentChanged, this,
-            [this](const QModelIndex& current, const QModelIndex&) {
-                m_deleteAction->setEnabled(current.isValid());
-            });
+            [this]() { updateEditActions(); });
+    connect(m_session, &DocumentSession::documentReplaced,
+            this, &MainWindow::updateEditActions);
 
     // Multi-file union flows
     m_unionController = new UnionController(
@@ -196,6 +217,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     showWelcomeMessage();
+    updateEditActions();
 
     // Connect file loader signals
     connect(m_fileLoader, &FileLoader::progressUpdated,
@@ -281,6 +303,11 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
 
 void MainWindow::setupMenuBar() {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
+
+    m_newAction = fileMenu->addAction(tr("&New"));
+    m_newAction->setShortcut(QKeySequence::New);
+    m_newAction->setStatusTip(tr("Start a new, empty JSON document"));
+    connect(m_newAction, &QAction::triggered, this, &MainWindow::onNewDocument);
 
     m_openAction = fileMenu->addAction(tr("&Open..."));
     m_openAction->setShortcut(QKeySequence::Open);
@@ -392,9 +419,65 @@ void MainWindow::setupMenuBar() {
 
     editMenu->addSeparator();
 
+    // Structural edits. Triggers are wired in the constructor once
+    // EditController exists; enabled state follows updateEditActions().
+    const auto addEditAction = [editMenu](const QString& text,
+                                          const QKeySequence& shortcut,
+                                          const QString& tip) {
+        auto* action = editMenu->addAction(text);
+        action->setShortcut(shortcut);
+        action->setStatusTip(tip);
+        action->setEnabled(false);
+        return action;
+    };
+    m_addChildAction = addEditAction(
+        tr("Add &Child..."), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I),
+        tr("Add a member or element to the selected object or array"));
+    m_insertAfterAction = addEditAction(
+        tr("&Insert After..."), QKeySequence(Qt::CTRL | Qt::Key_I),
+        tr("Insert a new sibling after the selected node"));
+    m_editAsJsonAction = addEditAction(
+        tr("Edit as &JSON..."), QKeySequence(Qt::CTRL | Qt::Key_E),
+        tr("Edit the selected node (or the whole document) as JSON text"));
+    m_duplicateAction = addEditAction(
+        tr("Dupli&cate"), QKeySequence(Qt::CTRL | Qt::Key_D),
+        tr("Insert a copy of the selected node after it"));
+
+    editMenu->addSeparator();
+
+    // Paste shortcuts only fire while the tree has focus, so Ctrl+V keeps
+    // pasting text in the search bar (the actions are also added to the
+    // tree in setupCentralWidget).
+    m_pasteAction = addEditAction(
+        tr("&Paste"), QKeySequence::Paste,
+        tr("Insert the clipboard's JSON after the selected node"));
+    m_pasteAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    m_pasteAsChildAction = addEditAction(
+        tr("Paste as C&hild"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V),
+        tr("Insert the clipboard's JSON into the selected object or array"));
+    m_pasteAsChildAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+
+    editMenu->addSeparator();
+
+    m_moveUpAction = addEditAction(
+        tr("Move &Up"), QKeySequence(Qt::ALT | Qt::Key_Up),
+        tr("Move the selected node before its previous sibling"));
+    m_moveDownAction = addEditAction(
+        tr("Move Do&wn"), QKeySequence(Qt::ALT | Qt::Key_Down),
+        tr("Move the selected node after its next sibling"));
+    m_sortKeysAction = addEditAction(
+        tr("&Sort Keys"), QKeySequence(),
+        tr("Sort object keys alphabetically in the selected node (or the "
+           "whole document)"));
+
+    editMenu->addSeparator();
+
+    m_renameKeyAction = addEditAction(tr("Rena&me Key..."), QKeySequence(),
+                                      tr("Rename the selected object member"));
+
     m_deleteAction = editMenu->addAction(tr("&Delete"));
     m_deleteAction->setShortcut(QKeySequence::Delete);
-    m_deleteAction->setStatusTip(tr("Delete the selected node"));
+    m_deleteAction->setStatusTip(tr("Delete the selected node(s)"));
     // Disabled until the tree has a valid current index; the trigger and the
     // enabled-state sync are wired in the constructor once EditController
     // and the tree's selection model exist.
@@ -472,8 +555,9 @@ void MainWindow::onAbout() {
         this, tr("About JSONTitan"),
         tr("<h3>JSONTitan %1</h3>"
            "<p>A fast viewer and editor for large JSON documents: "
-           "background parsing, search with filtering, multi-file union, "
-           "node deletion, and CSV/XML export.</p>"
+           "background parsing, search and JSONPath queries, structural "
+           "editing with undo, multi-file union, and JSON/CSV/XML "
+           "export.</p>"
            "<p>Built with Qt %2.</p>")
             .arg(QStringLiteral("0.1.0"),
                  QString::fromLatin1(qVersion())));
@@ -481,7 +565,8 @@ void MainWindow::onAbout() {
 
 void MainWindow::onShowKeyboardShortcuts() {
     const QString rows =
-        tr("<tr><td><b>Ctrl+O</b></td><td>Open file</td></tr>"
+        tr("<tr><td><b>Ctrl+N</b></td><td>New document</td></tr>"
+           "<tr><td><b>Ctrl+O</b></td><td>Open file</td></tr>"
            "<tr><td><b>Ctrl+S</b></td><td>Save</td></tr>"
            "<tr><td><b>Ctrl+Shift+S</b></td><td>Save As</td></tr>"
            "<tr><td><b>F5</b></td><td>Reload file from disk</td></tr>"
@@ -493,7 +578,16 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>Ctrl+C</b></td><td>Copy selected value (tree)</td></tr>"
            "<tr><td><b>Ctrl+Shift+E</b></td><td>Expand all</td></tr>"
            "<tr><td><b>Ctrl+Shift+C</b></td><td>Collapse all</td></tr>"
-           "<tr><td><b>Del</b></td><td>Delete selected node</td></tr>"
+           "<tr><td><b>F2</b></td><td>Edit value inline</td></tr>"
+           "<tr><td><b>Ctrl+E</b></td><td>Edit as JSON</td></tr>"
+           "<tr><td><b>Ctrl+Shift+I</b></td><td>Add child</td></tr>"
+           "<tr><td><b>Ctrl+I</b></td><td>Insert after</td></tr>"
+           "<tr><td><b>Ctrl+D</b></td><td>Duplicate</td></tr>"
+           "<tr><td><b>Ctrl+V</b></td><td>Paste after (tree)</td></tr>"
+           "<tr><td><b>Ctrl+Shift+V</b></td><td>Paste as child (tree)</td></tr>"
+           "<tr><td><b>Alt+Up / Alt+Down</b></td><td>Move node up / down</td></tr>"
+           "<tr><td><b>Ctrl+Z / Ctrl+Shift+Z</b></td><td>Undo / redo</td></tr>"
+           "<tr><td><b>Del</b></td><td>Delete selected node(s)</td></tr>"
            "<tr><td><b>Esc</b></td><td>Cancel load in progress</td></tr>"
            "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>");
     QMessageBox::information(
@@ -595,6 +689,12 @@ void MainWindow::setupCentralWidget() {
     // Headers are visible now that the model has Type/Size columns.
     m_treeView->setHeaderHidden(false);
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    // Shift/Ctrl-click selects several rows (Delete removes them all); every
+    // other action follows the current row.
+    m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    // Tree-scoped shortcuts (see setupMenuBar).
+    m_treeView->addAction(m_pasteAction);
+    m_treeView->addAction(m_pasteAsChildAction);
     m_treeView->setAlternatingRowColors(true);
     // Inline editing of scalar rows: F2 or double-click opens the editor
     // (which shows the raw EditRole text, not the display string).
@@ -646,33 +746,25 @@ void MainWindow::setupCentralWidget() {
         auto* exportXmlAction = menu->addAction(tr("Export as XML..."));
         connect(exportXmlAction, &QAction::triggered, this, &MainWindow::onExportXml);
 
+        // Structural edits share the Edit menu's actions, whose enabled
+        // state already follows the current row (a right-click makes the
+        // clicked row current).
         menu->addSeparator();
-        auto* deleteAction = menu->addAction(tr("Delete"));
-        // Every row is deletable: top-level rows are the root's children,
-        // not the root (the root itself is never a selectable row).
-        QModelIndex proxyIndex = clickedIndex;
-        if (!proxyIndex.isValid()) {
-            deleteAction->setEnabled(false);
-        }
-        connect(deleteAction, &QAction::triggered,
-                m_editController, &EditController::deleteSelectedNode);
+        menu->addAction(m_addChildAction);
+        menu->addAction(m_insertAfterAction);
+        menu->addAction(m_editAsJsonAction);
+        menu->addAction(m_duplicateAction);
+        menu->addAction(m_pasteAction);
+        menu->addAction(m_pasteAsChildAction);
 
-        // "Rename Key…" only applies to object members (the path's last
-        // segment is a string key; array elements and the root have none).
-        auto* renameAction = menu->addAction(tr("Rename Key..."));
-        bool canRename = false;
-        if (proxyIndex.isValid()) {
-            QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-            if (sourceIndex.isValid()) {
-                auto path = jsontitan::shell::nodePathForIndex(*m_treeModel,
-                                                               sourceIndex);
-                canRename = !path.empty() &&
-                            std::holds_alternative<std::string>(path.back());
-            }
-        }
-        renameAction->setEnabled(canRename);
-        connect(renameAction, &QAction::triggered,
-                m_editController, &EditController::renameSelectedKey);
+        menu->addSeparator();
+        menu->addAction(m_moveUpAction);
+        menu->addAction(m_moveDownAction);
+        menu->addAction(m_sortKeysAction);
+
+        menu->addSeparator();
+        menu->addAction(m_renameKeyAction);
+        menu->addAction(m_deleteAction);
 
         if (m_session->isUnionMode()) {
             menu->addSeparator();
@@ -705,8 +797,9 @@ void MainWindow::setupCentralWidget() {
     m_welcomeLabel->setAlignment(Qt::AlignCenter);
     m_welcomeLabel->setWordWrap(true);
     m_welcomeLabel->setText(tr("Welcome to JSONTitan\n\n"
-                               "Open a JSON file using File > Open\n"
-                               "or combine multiple files with File > Union Files"));
+                               "Open a JSON file using File > Open,\n"
+                               "combine multiple files with File > Union Files,\n"
+                               "or start from scratch with File > New"));
     treeLayout->addWidget(m_welcomeLabel);
 
     splitter->addWidget(treeContainer);
@@ -870,6 +963,72 @@ void MainWindow::showWelcomeMessage() {
 
 void MainWindow::updateStatusBar(const QString& fileName, int nodeCount) {
     m_statusLabel->setText(tr("%1 — %2 nodes").arg(fileName).arg(nodeCount));
+}
+
+void MainWindow::onNewDocument() {
+    if (!m_editController->confirmDiscardChanges()) {
+        return;
+    }
+    // Drop any in-flight load so its result cannot replace the new document.
+    m_fileLoader->cancelParse();
+    hideLoadProgress();
+    stopWatchingFile();
+
+    m_searchBar->clear();
+    m_searchErrorLabel->hide();
+    m_detailPanel->clear();
+
+    // An empty object; no file path, so the first Save asks where to write.
+    m_session->setJsonRoot(jsontitan::core::JsonNode::makeObject({}, {}),
+                           QString(), tr("Untitled"), false);
+    m_filterProxy->clearFilter();
+    m_session->setModified(false);
+
+    m_welcomeLabel->hide();
+    m_noResultsLabel->hide();
+    m_treeView->show();
+    m_treeView->setFocus();
+    updateStatusBar(m_session->fileName(), 1);
+}
+
+void MainWindow::updateEditActions() {
+    if (!m_session || !m_detailPresenter) {
+        return;  // still constructing
+    }
+    using jsontitan::core::NodeType;
+    const auto root = m_session->rootView();
+    const QModelIndex proxyIndex = m_treeView->currentIndex();
+    const QModelIndex sourceIndex =
+        proxyIndex.isValid() ? m_filterProxy->mapToSource(proxyIndex) : QModelIndex();
+    const bool hasRow = sourceIndex.isValid();
+
+    // The node actions apply to: the current row, else the document root.
+    const auto target = hasRow ? m_detailPresenter->selectedNodeView() : root;
+    const bool targetIsContainer =
+        target && (target->type() == NodeType::Object ||
+                   target->type() == NodeType::Array);
+
+    bool canRename = false;
+    bool canMoveDown = false;
+    if (hasRow) {
+        const auto path = jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
+        canRename = !path.empty() && std::holds_alternative<std::string>(path.back());
+        const QModelIndex parent = sourceIndex.parent();
+        canMoveDown = sourceIndex.row() + 1 < m_treeModel->rowCount(parent) ||
+                      m_treeModel->canFetchMore(parent);
+    }
+
+    m_addChildAction->setEnabled(targetIsContainer);
+    m_insertAfterAction->setEnabled(hasRow);
+    m_editAsJsonAction->setEnabled(root.has_value());
+    m_duplicateAction->setEnabled(hasRow);
+    m_pasteAction->setEnabled(hasRow || targetIsContainer);
+    m_pasteAsChildAction->setEnabled(hasRow && targetIsContainer);
+    m_moveUpAction->setEnabled(hasRow && sourceIndex.row() > 0);
+    m_moveDownAction->setEnabled(canMoveDown);
+    m_sortKeysAction->setEnabled(targetIsContainer);
+    m_renameKeyAction->setEnabled(canRename);
+    m_deleteAction->setEnabled(hasRow);
 }
 
 // --- Task 16.2: File Open and background parsing ---

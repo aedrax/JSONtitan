@@ -16,12 +16,14 @@
 #include <QToolButton>
 #include <QTreeView>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "core/edit_engine.h"
+#include "core/json_exporter.h"
 #include "core/json_node.h"
 #include "core/parse_orchestrator.h"
 #include "shell/document_session.h"
@@ -502,4 +504,156 @@ TEST(EditControllerEditing, JsonRootInstallResetsFormat) {
     h.session.setJsonRoot(makeJsonFixture(), QString(), QStringLiteral("Union"), true);
     EXPECT_EQ(h.session.format(), JsonFormat::Json);
     EXPECT_FALSE(h.session.hadComments());
+}
+
+// ---------------------------------------------------------------------------
+// Structural edits: insert / replace / move / duplicate / sort / multi-delete
+// ---------------------------------------------------------------------------
+
+namespace {
+
+auto compactJson(const std::shared_ptr<const JsonNode>& root) -> std::string {
+    return exportJson(*root, {.mode = IndentMode::Compact, .trailingNewline = false});
+}
+
+auto valueOf(const char* text) -> std::shared_ptr<const JsonNode> {
+    auto parsed = parseValueInput(text);
+    EXPECT_TRUE(parsed.has_value());
+    return parsed ? *parsed : nullptr;
+}
+
+}  // namespace
+
+TEST(EditControllerStructure, InsertOnArenaBackingSelectsNewNodeAndUndoes) {
+    Harness h;
+    auto arena = parseBuffer(R"({"a": 1, "list": [1, 2]})");
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.json"), QStringLiteral("t.json"));
+    fetchAll(h.model);
+
+    // Object member at the end of the root.
+    EXPECT_FALSE(h.edit->applyInsert({}, SIZE_MAX, QStringLiteral("obj"),
+                                     valueOf(R"({"x": true})")).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"a":1,"list":[1,2],"obj":{"x":true}})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("obj")}));
+    EXPECT_TRUE(h.session.modified());
+
+    // Array element in the middle.
+    EXPECT_FALSE(h.edit->applyInsert({std::string("list")}, 1, QString(),
+                                     valueOf("\"mid\"")).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"a":1,"list":[1,"mid",2],"obj":{"x":true}})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("list"), std::size_t{1}}));
+
+    // Duplicate key is rejected without installing anything.
+    auto rootBefore = h.session.currentRoot();
+    auto duplicate = h.edit->applyInsert({}, SIZE_MAX, QStringLiteral("a"), valueOf("2"));
+    ASSERT_TRUE(duplicate.has_value());
+    EXPECT_EQ(duplicate->code, EditErrorCode::DuplicateKey);
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), rootBefore.get());
+
+    // Each insert is one undo step.
+    h.edit->undo();
+    pumpEvents();
+    h.edit->undo();
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()), R"({"a":1,"list":[1,2]})");
+}
+
+TEST(EditControllerStructure, ReplaceTurnsScalarIntoContainer) {
+    Harness h;
+    h.session.setJsonRoot(makeJsonFixture(), QStringLiteral("/tmp/t.json"),
+                          QStringLiteral("t.json"), false);
+    fetchAll(h.model);
+
+    EXPECT_FALSE(h.edit->applyReplace({std::string("a")}, valueOf("[1, [2]]")).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"a":[1,[2]],"b":{"c":"x"},"flag":true,"nil":null})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("a")}));
+
+    // The whole document.
+    EXPECT_FALSE(h.edit->applyReplace({}, valueOf("[]")).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()), "[]");
+
+    h.edit->undo();
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"a":[1,[2]],"b":{"c":"x"},"flag":true,"nil":null})");
+}
+
+TEST(EditControllerStructure, MoveDuplicateAndSort) {
+    Harness h;
+    auto arena = parseBuffer(R"({"z": [1, 2, 3], "a": {"d": 0, "c": 0}})");
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.json"), QStringLiteral("t.json"));
+    fetchAll(h.model);
+
+    // Move an array element down; the selection follows it.
+    EXPECT_FALSE(h.edit->applyMove({std::string("z"), std::size_t{0}}, +1).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"z":[2,1,3],"a":{"d":0,"c":0}})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("z"), std::size_t{1}}));
+
+    // Moving past the end is a no-op that pushes nothing.
+    auto rootBefore = h.session.currentRoot();
+    EXPECT_FALSE(h.edit->applyMove({std::string("a")}, +1).has_value());
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), rootBefore.get());
+
+    // Duplicate an object member: unique "<key> copy" key, right after it.
+    EXPECT_FALSE(h.edit->applyDuplicate({std::string("a")}).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"z":[2,1,3],"a":{"d":0,"c":0},"a copy":{"d":0,"c":0}})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("a copy")}));
+
+    // Sort the whole document.
+    EXPECT_FALSE(h.edit->applySortKeys({}).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"a":{"c":0,"d":0},"a copy":{"c":0,"d":0},"z":[2,1,3]})");
+
+    // Sorting again changes nothing and adds no undo step.
+    rootBefore = h.session.currentRoot();
+    EXPECT_FALSE(h.edit->applySortKeys({}).has_value());
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), rootBefore.get());
+
+    h.edit->undo();  // sort
+    pumpEvents();
+    h.edit->undo();  // duplicate
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"z":[2,1,3],"a":{"d":0,"c":0}})");
+}
+
+TEST(EditControllerStructure, MultiSelectionDeleteIsOneUndoStep) {
+    Harness h;
+    h.tree.setSelectionMode(QAbstractItemView::ExtendedSelection);
+    auto arena = parseBuffer(R"({"keep": 1, "list": [0, 1, 2, 3], "drop": 2})");
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.json"), QStringLiteral("t.json"));
+    fetchAll(h.model);
+
+    h.edit->applyDeletePaths({{std::string("list"), std::size_t{1}},
+                              {std::string("list"), std::size_t{3}},
+                              {std::string("drop")}});
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()), R"({"keep":1,"list":[0,2]})");
+
+    h.edit->undo();
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"keep":1,"list":[0,1,2,3],"drop":2})");
+    EXPECT_FALSE(h.session.canUndo());
 }

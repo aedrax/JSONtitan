@@ -279,7 +279,8 @@ QLabel#matchCountLabel {
 
 /* === Error Label === */
 
-QLabel#searchErrorLabel {
+QLabel#searchErrorLabel,
+QLabel#inputErrorLabel {
     color: #d20f39;
 }
 

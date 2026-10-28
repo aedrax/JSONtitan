@@ -5,8 +5,10 @@
 #include <QTreeView>
 #include <QWidget>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "core/edit_engine.h"
 #include "shell/document_session.h"
@@ -45,6 +47,33 @@ public:
     std::optional<jsontitan::core::EditError>
     applyRename(const jsontitan::core::NodePath& path, const QString& newKey);
 
+    // Testable cores of the structural edits. Each computes the new tree
+    // from the editable snapshot, queues its install with one undo entry,
+    // and selects the affected node afterwards. They return the engine
+    // error on failure and std::nullopt on success or no-op.
+
+    // Insert `value` into the container at `parentPath` at `position`
+    // (SIZE_MAX appends); `key` names object members.
+    std::optional<jsontitan::core::EditError>
+    applyInsert(const jsontitan::core::NodePath& parentPath,
+                std::size_t position, const QString& key,
+                std::shared_ptr<const jsontitan::core::JsonNode> value);
+    // Replace the node at `path` (the whole document when empty).
+    std::optional<jsontitan::core::EditError>
+    applyReplace(const jsontitan::core::NodePath& path,
+                 std::shared_ptr<const jsontitan::core::JsonNode> value);
+    // Move the node at `path` by `delta` positions among its siblings.
+    std::optional<jsontitan::core::EditError>
+    applyMove(const jsontitan::core::NodePath& path, int delta);
+    // Insert a copy right after the node (objects: key "<key> copy").
+    std::optional<jsontitan::core::EditError>
+    applyDuplicate(const jsontitan::core::NodePath& path);
+    // Sort object keys throughout the subtree at `path`.
+    std::optional<jsontitan::core::EditError>
+    applySortKeys(const jsontitan::core::NodePath& path);
+    // Delete every node in `paths` as one undoable step.
+    void applyDeletePaths(std::vector<jsontitan::core::NodePath> paths);
+
 signals:
     // Emitted immediately before / after our own write of the document to
     // disk (Save and Save As), so the owner can pause file-change watching
@@ -63,6 +92,19 @@ public slots:
     void undo();
     void redo();
 
+    // Interactive structural edits (Edit menu / tree context menu). Targets
+    // follow the tree's current row; with no row selected, "the node" is
+    // the document root.
+    void addChild();        // into the selected container
+    void insertAfter();     // sibling after the selected node
+    void editAsJson();      // replace the selected subtree with edited JSON
+    void paste();           // clipboard value after the selection
+    void pasteAsChild();    // clipboard value into the selected container
+    void duplicateSelected();
+    void moveSelectedUp();
+    void moveSelectedDown();
+    void sortSelectedKeys();
+
 private:
     // Pre-mutation root as a JsonNode tree: the live JsonNode root, or a
     // conversion of the arena backing (the arena itself is untouched; the
@@ -71,6 +113,25 @@ private:
 
     // NodePath of the tree view's current selection ({} when none).
     jsontitan::core::NodePath currentSelectionPath() const;
+
+    // NodePaths of every selected row (multi-selection), in view order.
+    std::vector<jsontitan::core::NodePath> selectedPaths() const;
+
+    // Shared tail of the insert flows: prompt for a key when the parent is
+    // an object (prefilled with `suggestedKey`), then applyInsert. Shows
+    // engine errors as a warning.
+    void insertWithKeyPrompt(const jsontitan::core::NodePath& parentPath,
+                             std::size_t position,
+                             std::shared_ptr<const jsontitan::core::JsonNode> value,
+                             const QString& suggestedKey);
+    // View of the node at `path` over either backing, without converting
+    // anything (the root for an empty path); std::nullopt when absent.
+    std::optional<jsontitan::core::NodeView>
+    viewAt(const jsontitan::core::NodePath& path) const;
+    // Clipboard text parsed as a value, or nullptr after warning the user.
+    std::shared_ptr<const jsontitan::core::JsonNode> clipboardValue();
+    void warnIfError(const QString& title,
+                     const std::optional<jsontitan::core::EditError>& error);
 
     // Shared mutation install: invalidate search, replace the root, clear
     // the filter, mark modified, restore `selection`.
