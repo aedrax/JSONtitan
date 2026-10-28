@@ -6,11 +6,13 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "core/deletion_engine.h"
 #include "core/edit_engine.h"
 #include "core/json_exporter.h"
 #include "core/json_node.h"
@@ -514,4 +516,235 @@ TEST(EditEnginePBT, RenameKeyRoundTripRestoresContent) {
 
             RC_ASSERT(exportJson(**restored) == original);
         });
+}
+
+// ---------------------------------------------------------------------------
+// Structural edits: insert / replace / move / sort / multi-delete / input
+// ---------------------------------------------------------------------------
+
+TEST(EditEngineStructure, ParseValueInputTable) {
+    auto object = parseValueInput(R"({"x": [1, 2]})");
+    ASSERT_TRUE(object.has_value());
+    EXPECT_EQ(exportJson(**object, {.mode = IndentMode::Compact}),
+              std::string(R"({"x":[1,2]})") + "\n");
+
+    auto quoted = parseValueInput(R"("hello")");
+    ASSERT_TRUE(quoted.has_value());
+    EXPECT_EQ((*quoted)->type, NodeType::String);
+    EXPECT_EQ((*quoted)->value, "hello");
+
+    // Bare words fall back to inline-edit classification.
+    auto bare = parseValueInput("hello world");
+    ASSERT_TRUE(bare.has_value());
+    EXPECT_EQ((*bare)->type, NodeType::String);
+    EXPECT_EQ((*bare)->value, "hello world");
+
+    auto number = parseValueInput("42");
+    ASSERT_TRUE(number.has_value());
+    EXPECT_EQ((*number)->type, NodeType::Number);
+
+    auto empty = parseValueInput("");
+    ASSERT_TRUE(empty.has_value());
+    EXPECT_EQ((*empty)->type, NodeType::String);
+
+    // Broken JSON containers are an error, not a string.
+    auto broken = parseValueInput("  {\"a\": ");
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_EQ(broken.error().code, EditErrorCode::InvalidJson);
+}
+
+TEST(EditEngineStructure, InsertIntoObjectAndArray) {
+    auto root = makeFixtureTree();
+
+    auto withMember = insertChild(root, {std::string("b")}, SIZE_MAX, "e",
+                                  JsonNode::makeNumber("ignored", "5"));
+    ASSERT_TRUE(withMember.has_value());
+    const auto* b = childByKey(**withMember, "b");
+    ASSERT_EQ(b->children.size(), 3u);
+    EXPECT_EQ(b->children[2]->key, "e");
+    EXPECT_EQ(b->children[2]->value, "5");
+    // Untouched siblings are shared, the original is unchanged.
+    EXPECT_EQ((*withMember)->children[2].get(), root->children[2].get());
+    EXPECT_EQ(childByKey(*root, "b")->children.size(), 2u);
+
+    auto withElement = insertChild(root, {std::string("arr")}, 1, "dropped",
+                                   JsonNode::makeBool("", false));
+    ASSERT_TRUE(withElement.has_value());
+    const auto* arr = childByKey(**withElement, "arr");
+    ASSERT_EQ(arr->children.size(), 4u);
+    EXPECT_EQ(arr->children[1]->type, NodeType::Boolean);
+    EXPECT_EQ(arr->children[1]->key, "");  // array elements carry no key
+
+    // Inserting into the root itself (empty parent path).
+    auto atRoot = insertChild(root, {}, 0, "first", JsonNode::makeNull(""));
+    ASSERT_TRUE(atRoot.has_value());
+    EXPECT_EQ((*atRoot)->children.front()->key, "first");
+}
+
+TEST(EditEngineStructure, InsertRejectsDuplicateKeyAndScalarParent) {
+    auto root = makeFixtureTree();
+    auto duplicate = insertChild(root, {}, SIZE_MAX, "a", JsonNode::makeNull(""));
+    ASSERT_FALSE(duplicate.has_value());
+    EXPECT_EQ(duplicate.error().code, EditErrorCode::DuplicateKey);
+
+    auto scalarParent =
+        insertChild(root, {std::string("a")}, 0, "x", JsonNode::makeNull(""));
+    ASSERT_FALSE(scalarParent.has_value());
+    EXPECT_EQ(scalarParent.error().code, EditErrorCode::NotContainer);
+}
+
+TEST(EditEngineStructure, UniqueChildKey) {
+    auto root = makeFixtureTree();
+    EXPECT_EQ(uniqueChildKey(*root, "new"), "new");
+    EXPECT_EQ(uniqueChildKey(*root, "a"), "a 2");
+
+    auto withA2 = insertChild(root, {}, SIZE_MAX, "a 2", JsonNode::makeNull(""));
+    ASSERT_TRUE(withA2.has_value());
+    EXPECT_EQ(uniqueChildKey(**withA2, "a"), "a 3");
+}
+
+TEST(EditEngineStructure, ReplaceNodeAcceptsContainersAndKeepsKey) {
+    auto root = makeFixtureTree();
+    auto replacement = parseValueInput("[true, {\"z\": 0}]");
+    ASSERT_TRUE(replacement.has_value());
+
+    // A scalar becomes an array.
+    auto result = replaceNode(root, {std::string("a")}, *replacement);
+    ASSERT_TRUE(result.has_value());
+    const auto* a = childByKey(**result, "a");
+    ASSERT_NE(a, nullptr);
+    EXPECT_EQ(a->type, NodeType::Array);
+    EXPECT_EQ(a->children.size(), 2u);
+
+    // The whole document can be replaced.
+    auto whole = replaceNode(root, {}, JsonNode::makeArray("", {}));
+    ASSERT_TRUE(whole.has_value());
+    EXPECT_EQ((*whole)->type, NodeType::Array);
+
+    auto missing = replaceNode(root, {std::string("nope")}, *replacement);
+    EXPECT_FALSE(missing.has_value());
+}
+
+TEST(EditEngineStructure, MoveChildReordersSiblings) {
+    auto root = makeFixtureTree();
+
+    auto moved = moveChild(root, {std::string("arr"), std::size_t{0}}, 2);
+    ASSERT_TRUE(moved.has_value());
+    const auto* arr = childByKey(**moved, "arr");
+    EXPECT_EQ(arr->children[0]->value, "s");
+    EXPECT_EQ(arr->children[2]->value, "10");
+
+    // Object members move too; out-of-range positions clamp to the end.
+    auto member = moveChild(root, {std::string("a")}, 99);
+    ASSERT_TRUE(member.has_value());
+    EXPECT_EQ((*member)->children.back()->key, "a");
+
+    // Moving to the same position is a no-op returning the same root.
+    auto same = moveChild(root, {std::string("b")}, 1);
+    ASSERT_TRUE(same.has_value());
+    EXPECT_EQ(same->get(), root.get());
+
+    EXPECT_FALSE(moveChild(root, {}, 0).has_value());
+}
+
+TEST(EditEngineStructure, SortKeysSortsNestedObjectsOnly) {
+    auto tree = parseValueInput(
+        R"({"b": 1, "a": {"z": 1, "y": [{"d": 1, "c": 2}]}, "c": [3, 1, 2]})");
+    ASSERT_TRUE(tree.has_value());
+
+    auto sorted = sortKeys(*tree, {});
+    ASSERT_TRUE(sorted.has_value());
+    EXPECT_EQ(exportJson(**sorted, {.mode = IndentMode::Compact}),
+              std::string(R"({"a":{"y":[{"c":2,"d":1}],"z":1},"b":1,"c":[3,1,2]})") + "\n");
+
+    // Already sorted: the same root comes back (no spurious undo entry).
+    auto again = sortKeys(*sorted, {});
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(again->get(), sorted->get());
+
+    // Sorting just one subtree leaves the rest alone.
+    auto partial = sortKeys(*tree, {std::string("a")});
+    ASSERT_TRUE(partial.has_value());
+    EXPECT_EQ((*partial)->children[0]->key, "b");
+    EXPECT_EQ(childByKey(**partial, "a")->children[0]->key, "y");
+
+    EXPECT_FALSE(sortKeys(*tree, {std::string("b")}).has_value());
+}
+
+TEST(EditEngineStructure, DeleteNodesHandlesShiftingIndicesAndNesting) {
+    auto root = makeFixtureTree();
+    auto result = deleteNodes(root, {
+        {std::string("arr"), std::size_t{0}},
+        {std::string("arr"), std::size_t{2}},
+        {std::string("b"), std::string("c")},
+        {std::string("b")},  // ancestor of the previous path
+        {std::string("arr"), std::size_t{0}},  // duplicate
+    });
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(exportJson(*result, {.mode = IndentMode::Compact}),
+              std::string(R"({"a":1,"arr":["s"]})") + "\n");
+}
+
+// insertChild then deleting the inserted node restores the original content.
+TEST(EditEnginePBT, InsertThenDeleteRoundTrips) {
+    rc::check("insertChild + deleteNode == original tree content", []() {
+        auto root = *genContainerNode(3, 4);
+        std::vector<PathEntry> entries;
+        collectEntries(root.get(), {}, entries);
+        std::vector<NodePath> containers{{}};
+        for (const auto& e : entries) {
+            if (e.node->type == NodeType::Object || e.node->type == NodeType::Array) {
+                containers.push_back(e.path);
+            }
+        }
+        const auto& parentPath =
+            containers[*rc::gen::inRange<std::size_t>(0, containers.size())];
+        const auto parent = findNode(root, parentPath);
+        RC_ASSERT(parent != nullptr);
+
+        const auto position =
+            *rc::gen::inRange<std::size_t>(0, parent->children.size() + 1);
+        const std::string key = "inserted";  // generated keys are "k<i>"
+        auto inserted =
+            insertChild(root, parentPath, position, key, *genJsonNode(2, 3));
+        RC_ASSERT(inserted.has_value());
+
+        NodePath insertedPath = parentPath;
+        if (parent->type == NodeType::Object) {
+            insertedPath.emplace_back(key);
+        } else {
+            insertedPath.emplace_back(position);
+        }
+        RC_ASSERT(exportJson(*deleteNode(*inserted, insertedPath)) == exportJson(*root));
+    });
+}
+
+// Moving a node and moving it back restores the original content.
+TEST(EditEnginePBT, MoveThereAndBackRoundTrips) {
+    rc::check("moveChild there-and-back == original tree content", []() {
+        auto root = *genContainerNode(3, 4);
+        std::vector<PathEntry> entries;
+        collectEntries(root.get(), {}, entries);
+        RC_PRE(!entries.empty());
+        const auto& target = entries[*rc::gen::inRange<std::size_t>(0, entries.size())];
+
+        NodePath parentPath(target.path.begin(), target.path.end() - 1);
+        const auto parent = findNode(root, parentPath);
+        std::size_t oldPosition = 0;
+        while (parent->children[oldPosition].get() != target.node) {
+            ++oldPosition;
+        }
+        const auto newPosition =
+            *rc::gen::inRange<std::size_t>(0, parent->children.size());
+
+        auto moved = moveChild(root, target.path, newPosition);
+        RC_ASSERT(moved.has_value());
+        NodePath movedPath = target.path;
+        if (std::holds_alternative<std::size_t>(movedPath.back())) {
+            movedPath.back() = newPosition;
+        }
+        auto back = moveChild(*moved, movedPath, oldPosition);
+        RC_ASSERT(back.has_value());
+        RC_ASSERT(exportJson(**back) == exportJson(*root));
+    });
 }

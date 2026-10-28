@@ -1,6 +1,7 @@
 #include "core/deletion_engine.h"
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 namespace jsontitan::core {
@@ -206,6 +207,22 @@ auto countDescendants(NodeView node) -> std::size_t {
 
 auto countDescendants(const JsonNode& node) -> std::size_t {
     return countDescendants(NodeView(node));
+}
+
+auto deleteNodes(std::shared_ptr<const JsonNode> root, std::vector<NodePath> paths)
+    -> std::shared_ptr<const JsonNode> {
+    // Reverse lexicographic order: within one array the higher index goes
+    // first, and a descendant (which sorts after its ancestor) goes before
+    // the ancestor, so no deletion invalidates a path still to come.
+    std::ranges::sort(paths, std::greater<>());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    for (const auto& path : paths) {
+        if (!root) {
+            break;
+        }
+        root = deleteNode(std::move(root), path);
+    }
+    return root;
 }
 
 } // namespace jsontitan::core

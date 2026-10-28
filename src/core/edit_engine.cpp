@@ -1,7 +1,10 @@
 #include "core/edit_engine.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
+
+#include "core/parse_orchestrator.h"
 
 namespace jsontitan::core {
 
@@ -77,6 +80,53 @@ auto rebuildWithReplacement(const std::vector<std::shared_ptr<const JsonNode>>& 
                       : JsonNode::makeArray(ancestor->key, std::move(updatedChildren));
     }
     return newNode;
+}
+
+// The node itself when it already carries `key`, otherwise a shallow clone
+// with the new key (type, value and children stay shared).
+auto withKey(std::shared_ptr<const JsonNode> node, std::string key)
+    -> std::shared_ptr<const JsonNode> {
+    if (node->key == key) {
+        return node;
+    }
+    return std::make_shared<JsonNode>(
+        JsonNode{node->type, std::move(key), node->value, node->children});
+}
+
+auto withChildren(const JsonNode& container,
+                  std::vector<std::shared_ptr<const JsonNode>> children)
+    -> std::shared_ptr<const JsonNode> {
+    return container.type == NodeType::Object
+               ? JsonNode::makeObject(container.key, std::move(children))
+               : JsonNode::makeArray(container.key, std::move(children));
+}
+
+auto isContainer(const JsonNode& node) -> bool {
+    return node.type == NodeType::Object || node.type == NodeType::Array;
+}
+
+// sortKeys worker: returns `node` itself when its subtree is already sorted.
+auto sortedSubtree(const std::shared_ptr<const JsonNode>& node)
+    -> std::shared_ptr<const JsonNode> {
+    if (!isContainer(*node)) {
+        return node;
+    }
+    bool changed = false;
+    std::vector<std::shared_ptr<const JsonNode>> children;
+    children.reserve(node->children.size());
+    for (const auto& child : node->children) {
+        auto sorted = sortedSubtree(child);
+        changed = changed || sorted.get() != child.get();
+        children.push_back(std::move(sorted));
+    }
+    if (node->type == NodeType::Object) {
+        const auto byKey = [](const auto& a, const auto& b) { return a->key < b->key; };
+        if (!std::is_sorted(children.begin(), children.end(), byKey)) {
+            std::stable_sort(children.begin(), children.end(), byKey);
+            changed = true;
+        }
+    }
+    return changed ? withChildren(*node, std::move(children)) : node;
 }
 
 auto makeScalar(std::string key, const ScalarValue& value)
@@ -206,6 +256,146 @@ auto renameKey(std::shared_ptr<const JsonNode> root, const NodePath& path,
     auto renamed = std::make_shared<JsonNode>(
         JsonNode{target->type, std::move(newKey), target->value, target->children});
     return rebuildWithReplacement(nodes, std::move(renamed));
+}
+
+auto findNode(const std::shared_ptr<const JsonNode>& root, const NodePath& path)
+    -> std::shared_ptr<const JsonNode> {
+    if (!root) {
+        return nullptr;
+    }
+    std::vector<std::shared_ptr<const JsonNode>> nodes;
+    if (!collectPathNodes(root, path, nodes)) {
+        return nullptr;
+    }
+    return nodes.back();
+}
+
+auto parseValueInput(std::string_view text)
+    -> std::expected<std::shared_ptr<const JsonNode>, EditError> {
+    auto parsed = parseBuffer(std::string(text), ParseBufferOptions{});
+    if (parsed.ok()) {
+        return parsed.root->toJsonNode();
+    }
+
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first != std::string_view::npos && (text[first] == '{' || text[first] == '[')) {
+        const std::string detail =
+            parsed.error ? parsed.error->description : std::string("parse failed");
+        return makeError(EditErrorCode::InvalidJson, "Not valid JSON: " + detail);
+    }
+    auto scalar = classifyScalarInput(text);
+    return makeScalar({}, scalar);
+}
+
+auto uniqueChildKey(const JsonNode& object, std::string_view base) -> std::string {
+    const auto taken = [&object](const std::string& key) {
+        return std::ranges::any_of(object.children,
+                                   [&key](const auto& child) { return child->key == key; });
+    };
+    std::string candidate(base);
+    for (int suffix = 2; taken(candidate); ++suffix) {
+        candidate = std::string(base) + " " + std::to_string(suffix);
+    }
+    return candidate;
+}
+
+auto insertChild(std::shared_ptr<const JsonNode> root, const NodePath& parentPath,
+                 std::size_t position, std::string key,
+                 std::shared_ptr<const JsonNode> value)
+    -> std::expected<std::shared_ptr<const JsonNode>, EditError> {
+    if (!root || !value) {
+        return makeError(EditErrorCode::InvalidPath, "No document");
+    }
+    std::vector<std::shared_ptr<const JsonNode>> nodes;
+    if (!collectPathNodes(root, parentPath, nodes)) {
+        return makeError(EditErrorCode::InvalidPath, "Path does not resolve to a node");
+    }
+    const auto& parent = nodes.back();
+    if (!isContainer(*parent)) {
+        return makeError(EditErrorCode::NotContainer,
+                         "Only objects and arrays can have children");
+    }
+
+    if (parent->type == NodeType::Object) {
+        for (const auto& sibling : parent->children) {
+            if (sibling->key == key) {
+                return makeError(EditErrorCode::DuplicateKey,
+                                 "Key '" + key + "' already exists in this object");
+            }
+        }
+    } else {
+        key.clear();
+    }
+
+    auto children = parent->children;
+    position = std::min(position, children.size());
+    children.insert(children.begin() + static_cast<std::ptrdiff_t>(position),
+                    withKey(std::move(value), std::move(key)));
+    return rebuildWithReplacement(nodes, withChildren(*parent, std::move(children)));
+}
+
+auto replaceNode(std::shared_ptr<const JsonNode> root, const NodePath& path,
+                 std::shared_ptr<const JsonNode> value)
+    -> std::expected<std::shared_ptr<const JsonNode>, EditError> {
+    if (!root || !value) {
+        return makeError(EditErrorCode::InvalidPath, "No document");
+    }
+    std::vector<std::shared_ptr<const JsonNode>> nodes;
+    if (!collectPathNodes(root, path, nodes)) {
+        return makeError(EditErrorCode::InvalidPath, "Path does not resolve to a node");
+    }
+    return rebuildWithReplacement(nodes, withKey(std::move(value), nodes.back()->key));
+}
+
+auto moveChild(std::shared_ptr<const JsonNode> root, const NodePath& path,
+               std::size_t newPosition)
+    -> std::expected<std::shared_ptr<const JsonNode>, EditError> {
+    if (!root) {
+        return makeError(EditErrorCode::InvalidPath, "No document");
+    }
+    if (path.empty()) {
+        return makeError(EditErrorCode::InvalidPath, "The root node cannot be moved");
+    }
+    std::vector<std::shared_ptr<const JsonNode>> nodes;
+    if (!collectPathNodes(root, path, nodes)) {
+        return makeError(EditErrorCode::InvalidPath, "Path does not resolve to a node");
+    }
+    const auto& target = nodes.back();
+    const auto& parent = nodes[nodes.size() - 2];
+
+    auto children = parent->children;
+    auto from = std::ranges::find_if(
+        children, [&target](const auto& child) { return child.get() == target.get(); });
+    const auto oldPosition = static_cast<std::size_t>(from - children.begin());
+    newPosition = std::min(newPosition, children.size() - 1);
+    if (oldPosition == newPosition) {
+        return root;
+    }
+    children.erase(from);
+    children.insert(children.begin() + static_cast<std::ptrdiff_t>(newPosition), target);
+
+    nodes.pop_back();  // rebuild from the parent upward
+    return rebuildWithReplacement(nodes, withChildren(*parent, std::move(children)));
+}
+
+auto sortKeys(std::shared_ptr<const JsonNode> root, const NodePath& path)
+    -> std::expected<std::shared_ptr<const JsonNode>, EditError> {
+    if (!root) {
+        return makeError(EditErrorCode::InvalidPath, "No document");
+    }
+    std::vector<std::shared_ptr<const JsonNode>> nodes;
+    if (!collectPathNodes(root, path, nodes)) {
+        return makeError(EditErrorCode::InvalidPath, "Path does not resolve to a node");
+    }
+    if (!isContainer(*nodes.back())) {
+        return makeError(EditErrorCode::NotContainer,
+                         "Only objects and arrays have keys to sort");
+    }
+    auto sorted = sortedSubtree(nodes.back());
+    if (sorted.get() == nodes.back().get()) {
+        return root;
+    }
+    return rebuildWithReplacement(nodes, std::move(sorted));
 }
 
 } // namespace jsontitan::core
