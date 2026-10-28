@@ -36,7 +36,7 @@
       <circle cx="260" cy="-6" r="2.5" fill="#45475a"/>
       <text x="276" y="0">simdjson</text>
       <circle cx="392" cy="-6" r="2.5" fill="#45475a"/>
-      <text x="408" y="0">513 tests</text>
+      <text x="408" y="0">544 tests</text>
     </g>
   </g>
 

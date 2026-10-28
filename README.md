@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%"
-       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 513 tests.">
+       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 544 tests.">
 </p>
 
 <p align="center">
@@ -15,8 +15,8 @@
 
 JSONTitan is a Qt 6 desktop app for the JSON files that break other tools.
 It opens multi-gigabyte documents into a lazy tree you can search, query with
-JSONPath, edit with undo, and export, while parsing happens on a worker thread
-you can cancel at any moment.
+JSONPath, restructure with undo, and export, while parsing happens on a worker
+thread you can cancel at any moment.
 
 ## Why it stays responsive
 
@@ -30,15 +30,18 @@ you can cancel at any moment.
 - The tree view is **lazy**: rows materialize 100 at a time as you expand and scroll, so a 3.7-million-node document opens instantly.
 - Viewing, saving, and exporting stream **directly from the arena** nothing is ever deep-copied just to display it.
 
-Verified against this repository's own 2.1 GB, 8.4-million-record test document.
+Verified against a 2.1 GB, 8.4-million-record test document; generate one like it with `python3 tools/genjson.py`.
 
 ## What you can do
 
 | | |
 |---|---|
-| **Search three ways** | Substring, regex, or a JSONPath subset (`$.store.book[*].author`, `..`, `[n]`, wildcards) with match count, <kbd>F3</kbd>/<kbd>Shift+F3</kbd> navigation, and highlighted results |
-| **Edit safely** | Inline value editing (<kbd>F2</kbd>), key rename with duplicate detection, node deletion all undoable (<kbd>Ctrl+Z</kbd>), all saved atomically so a failed write never destroys your file |
-| **Open more than JSON** | JSON Lines / NDJSON (`.jsonl`, `.ndjson`) open as one array of records and save back one record per line (a `.json` holding one record per line opens the same way); JSON with comments (`.jsonc`, or a `.json` like `tsconfig.json` that fails strict parsing) accepts `//` and `/* */` comments and trailing commas |
+| **Search three ways** | Substring, regex, or JSONPath (`$.store.book[*].author`, `..`, `[n]`, wildcards, and filters like `$..book[?(@.price < 10 && @.isbn)].title`) with match count, <kbd>F3</kbd>/<kbd>Shift+F3</kbd> navigation, and highlighted results |
+| **Go straight there** | <kbd>Ctrl+G</kbd> jumps to any path (`$.store.book[3].title`, the `$` optional), even in a multi-million-node tree |
+| **Edit structure, not just values** | Inline value editing (<kbd>F2</kbd>), add members and elements, paste JSON from the clipboard, edit any subtree (or the whole document) as JSON text, duplicate, reorder, sort keys, rename keys, delete one or many nodes, start a new document. Every change is one undo step (<kbd>Ctrl+Z</kbd>) |
+| **Find and replace** | Across string values and/or keys, plain or regex with `$1` groups; numbers and literals are never touched, so a replacement can't break the JSON |
+| **Save safely** | Atomic saves, so a failed write never destroys your file, indented with 2 or 4 spaces or minified |
+| **Open more than JSON** | JSON Lines / NDJSON (`.jsonl`, `.ndjson`) open as one array of records and save back one record per line (a `.json` holding one record per line opens the same way); JSON with comments (`.jsonc`, or a `.json` like `tsconfig.json` that fails strict parsing) accepts `//` and `/* */` comments and trailing commas. On macOS and Linux all three show up in the file manager's "Open With" |
 | **Combine files** | Union multiple documents into one tree, parsed in the background; remove sources again at any time |
 | **Export anything** | Whole document or any subtree as JSON, CSV (injection-safe), or XML streamed to disk, never built in memory |
 | **Stay oriented** | Breadcrumb path bar, copy key/value/JSONPath to clipboard, type & size columns, expand-to-level controls |
@@ -61,7 +64,7 @@ cmake -B build && cmake --build build -j
 ./build/src/shell/jsontitan_shell your-huge-file.json
 ```
 
-Run the test suite (513 tests: GoogleTest, RapidCheck property tests, Qt Test):
+Run the test suite (544 tests: GoogleTest, RapidCheck property tests, Qt Test):
 
 ```bash
 ctest --test-dir build
@@ -71,17 +74,22 @@ ctest --test-dir build
 
 | Shortcut | Action | Shortcut | Action |
 |---|---|---|---|
-| <kbd>Ctrl+O</kbd> | Open | <kbd>Ctrl+F</kbd> | Focus search |
-| <kbd>Ctrl+S</kbd> | Save (atomic) | <kbd>F3</kbd> / <kbd>Shift+F3</kbd> | Next / previous match |
+| <kbd>Ctrl+N</kbd> | New document | <kbd>Ctrl+F</kbd> | Focus search |
+| <kbd>Ctrl+O</kbd> | Open | <kbd>F3</kbd> / <kbd>Shift+F3</kbd> | Next / previous match |
+| <kbd>Ctrl+S</kbd> | Save (atomic) | <kbd>Ctrl+G</kbd> | Go to path |
+| <kbd>F5</kbd> | Reload from disk | <kbd>Ctrl+H</kbd> (macOS <kbd>Cmd+Option+F</kbd>) | Find and replace |
 | <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Shift+Z</kbd> | Undo / redo | <kbd>F2</kbd> | Edit value inline |
-| <kbd>Del</kbd> | Delete node | <kbd>F5</kbd> | Reload from disk |
+| <kbd>Ctrl+Shift+I</kbd> | Add child | <kbd>Ctrl+E</kbd> | Edit as JSON |
+| <kbd>Ctrl+I</kbd> | Insert after | <kbd>Ctrl+D</kbd> | Duplicate |
+| <kbd>Ctrl+V</kbd> | Paste after selection | <kbd>Ctrl+Shift+V</kbd> | Paste as child |
+| <kbd>Alt+Up</kbd> / <kbd>Alt+Down</kbd> | Move node | <kbd>Del</kbd> | Delete node(s) |
 | <kbd>Ctrl+Shift+E</kbd> / <kbd>C</kbd> | Expand / collapse all | <kbd>Esc</kbd> | Cancel a running load |
 
 ## Architecture
 
 The codebase follows **functional core, imperative shell**:
 
-- `src/core` pure C++, no Qt: parsing (simdjson adapter + a streaming reference parser used as a differential-test oracle), the arena allocator, search and JSONPath engines, immutable edit/delete engines with structural sharing (which is what makes undo nearly free), and streaming exporters.
+- `src/core` pure C++, no Qt: parsing (simdjson adapter + a streaming reference parser used as a differential-test oracle), the arena allocator, search and JSONPath engines, immutable edit/delete/replace engines with structural sharing (which is what makes undo nearly free), and streaming exporters.
 - `src/shell` Qt 6: a lazy `QAbstractItemModel` over either tree backing, worker-thread loaders with request-generation cancellation, and focused controllers (document session, search, edit, union) around a thin main window.
 
 Everything in the core is exercised by property-based tests; the shell is tested headlessly with Qt Test.
@@ -89,13 +97,14 @@ Everything in the core is exercised by property-based tests; the shell is tested
 ## Limits worth knowing
 
 - Peak memory **during** parsing is a multiple of file size (input + simdjson DOM + arena coexist briefly). Steady-state drops to the arena alone once loading finishes.
-- The JSONPath engine covers the navigation subset filter expressions like `[?(@.price < 10)]` are intentionally not supported (yet) and say so explicitly.
+- JSONPath covers names, indices, wildcards, `..` and filters; slices (`[1:5]`), unions (`[0,2]`) and function extensions (`length()`) aren't supported, and filter paths take names and indices only.
+- Find and Replace and the structural edits work on an in-memory copy of the tree, so the first edit of a multi-gigabyte arena-backed document takes a moment.
 - Comments can't survive an edit: saving a file that had them removes them, and the app asks before it does. JSON5 (unquoted keys, single quotes) isn't supported.
 - Nesting is capped at 1,024 levels (matching simdjson) so hostile inputs fail with an error instead of a stack overflow.
 
 ## Contributing
 
-Issues and pull requests are welcome. Fork, branch, make the tests pass (`ctest --test-dir build`), and open a PR.
+Issues and pull requests are welcome. Fork, branch, make the tests pass (`ctest --test-dir build`), and open a PR; CI runs the same suite on Ubuntu and macOS.
 
 ## License
 
