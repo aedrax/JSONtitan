@@ -422,7 +422,8 @@ void EditController::save() {
     jsontitan::shell::WaitCursorGuard waitCursor;
     emit aboutToSave();
     QString error = SaveHandler::saveToFile(*root, m_session->filePath(),
-                                            m_session->format());
+                                            m_session->format(),
+                                            SaveHandler::savedStyle());
     waitCursor.restore();
     if (error.isEmpty()) {
         m_session->setFormat(m_session->format(), false);
@@ -482,7 +483,8 @@ void EditController::saveAs() {
 
     jsontitan::shell::WaitCursorGuard waitCursor;
     emit aboutToSave();
-    QString error = SaveHandler::saveToFile(*root, chosenPath, format);
+    QString error = SaveHandler::saveToFile(*root, chosenPath, format,
+                                            SaveHandler::savedStyle());
     waitCursor.restore();
     if (error.isEmpty()) {
         m_session->setFormat(format, false);

@@ -1,5 +1,6 @@
 #include "shell/main_window.h"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -29,6 +30,7 @@
 #include "shell/clipboard_utils.h"
 #include "shell/drop_validator.h"
 #include "shell/model_paths.h"
+#include "shell/save_handler.h"
 #include "shell/wait_cursor.h"
 
 MainWindow::MainWindow(QWidget* parent)
@@ -312,6 +314,27 @@ void MainWindow::setupMenuBar() {
     // Enabled once a single file is loaded (startWatchingCurrentFile).
     m_reloadAction->setEnabled(false);
     connect(m_reloadAction, &QAction::triggered, this, &MainWindow::onReload);
+
+    // Output style for Save / Save As (persisted by SaveHandler). JSON Lines
+    // files are always written one compact record per line.
+    auto* saveFormatMenu = fileMenu->addMenu(tr("Save &Format"));
+    saveFormatMenu->menuAction()->setStatusTip(
+        tr("Choose how Save writes JSON: indented or minified"));
+    auto* saveFormatGroup = new QActionGroup(this);
+    const SaveHandler::Style currentStyle = SaveHandler::savedStyle();
+    const std::pair<SaveHandler::Style, QString> styles[] = {
+        {SaveHandler::Style::Indent2, tr("Indent with &2 Spaces")},
+        {SaveHandler::Style::Indent4, tr("Indent with &4 Spaces")},
+        {SaveHandler::Style::Compact, tr("&Minified")},
+    };
+    for (const auto& [style, label] : styles) {
+        auto* action = saveFormatMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(style == currentStyle);
+        saveFormatGroup->addAction(action);
+        connect(action, &QAction::triggered, this,
+                [style]() { SaveHandler::setSavedStyle(style); });
+    }
 
     fileMenu->addSeparator();
 

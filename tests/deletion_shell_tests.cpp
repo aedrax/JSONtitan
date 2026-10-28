@@ -176,6 +176,30 @@ TEST(SaveHandler, JsonLinesRoundTrip) {
               exportJson(*parsed.root->toJsonNode()));
 }
 
+// File > Save Format: 4-space indent and minified output.
+TEST(SaveHandler, StylesControlIndentation) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+    auto tree = makeSimpleTree();
+
+    auto readAll = [](const QString& path) {
+        QFile file(path);
+        EXPECT_TRUE(file.open(QIODevice::ReadOnly));
+        return file.readAll();
+    };
+
+    const QString indent4 = tempDir.path() + "/indent4.json";
+    ASSERT_TRUE(SaveHandler::saveToFile(*tree, indent4, JsonFormat::Json,
+                                        SaveHandler::Style::Indent4).isEmpty());
+    EXPECT_EQ(readAll(indent4),
+              QByteArray("{\n    \"name\": \"Alice\",\n    \"age\": 30\n}\n"));
+
+    const QString compact = tempDir.path() + "/compact.json";
+    ASSERT_TRUE(SaveHandler::saveToFile(*tree, compact, JsonFormat::Json,
+                                        SaveHandler::Style::Compact).isEmpty());
+    EXPECT_EQ(readAll(compact), QByteArray("{\"name\":\"Alice\",\"age\":30}\n"));
+}
+
 // A JSON Lines save needs a root array; anything else is refused without
 // touching the target file.
 TEST(SaveHandler, JsonLinesRejectsNonArrayRoot) {
