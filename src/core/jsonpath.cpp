@@ -284,6 +284,53 @@ auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterR
     return result;
 }
 
+auto parseDefinitePath(std::string_view expr)
+    -> std::expected<NodePath, JsonPathError> {
+    while (!expr.empty() && std::isspace(static_cast<unsigned char>(expr.front())) != 0) {
+        expr.remove_prefix(1);
+    }
+    while (!expr.empty() && std::isspace(static_cast<unsigned char>(expr.back())) != 0) {
+        expr.remove_suffix(1);
+    }
+    if (expr.empty()) {
+        return parseError(0, "Enter a path such as $.store.book[0]");
+    }
+
+    // Accept the shorthand without '$' by parsing a normalized copy, then
+    // shift error positions back onto the text the user typed.
+    std::string normalized;
+    std::size_t prefixLength = 0;
+    if (expr.front() != '$') {
+        normalized = expr.front() == '[' ? "$" : "$.";
+        prefixLength = normalized.size();
+    }
+    normalized.append(expr);
+
+    auto steps = parseJsonPath(normalized);
+    if (!steps) {
+        auto error = steps.error();
+        error.position = error.position > prefixLength ? error.position - prefixLength : 0;
+        return std::unexpected(std::move(error));
+    }
+
+    NodePath path;
+    path.reserve(steps->size());
+    for (const auto& step : *steps) {
+        switch (step.kind) {
+            case JsonPathStep::Kind::Key:
+                path.emplace_back(step.key);
+                break;
+            case JsonPathStep::Kind::Index:
+                path.emplace_back(step.index);
+                break;
+            default:
+                return parseError(0, "Wildcards and '..' match many nodes; "
+                                     "Go to Path needs a single node");
+        }
+    }
+    return path;
+}
+
 auto queryJsonPath(NodeView root, std::string_view expr) -> FilterResult {
     auto steps = parseJsonPath(expr);
     if (!steps) {

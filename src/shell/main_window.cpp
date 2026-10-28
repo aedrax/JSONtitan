@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QMenu>
@@ -23,6 +24,7 @@
 #include <string>
 #include <variant>
 
+#include "core/jsonpath.h"
 #include "core/parse_orchestrator.h"
 #include "shell/clipboard_utils.h"
 #include "shell/drop_validator.h"
@@ -377,6 +379,15 @@ void MainWindow::setupMenuBar() {
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
 
+    m_goToPathAction = viewMenu->addAction(tr("&Go to Path..."));
+    m_goToPathAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+    m_goToPathAction->setStatusTip(
+        tr("Jump to the node at a JSONPath such as $.store.book[0]"));
+    connect(m_goToPathAction, &QAction::triggered,
+            this, &MainWindow::onGoToPath);
+
+    viewMenu->addSeparator();
+
     m_expandAllAction = viewMenu->addAction(tr("&Expand All"));
     m_expandAllAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
     m_expandAllAction->setStatusTip(tr("Expand every node in the tree"));
@@ -452,6 +463,7 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>Ctrl+Shift+S</b></td><td>Save As</td></tr>"
            "<tr><td><b>F5</b></td><td>Reload file from disk</td></tr>"
            "<tr><td><b>Ctrl+F</b></td><td>Focus search bar</td></tr>"
+           "<tr><td><b>Ctrl+G</b></td><td>Go to path</td></tr>"
            "<tr><td><b>Return</b></td><td>Next match (in search bar)</td></tr>"
            "<tr><td><b>F3</b></td><td>Next match</td></tr>"
            "<tr><td><b>Shift+F3</b></td><td>Previous match</td></tr>"
@@ -1086,6 +1098,74 @@ void MainWindow::onCopyPath() {
     QGuiApplication::clipboard()->setText(
         jsontitan::shell::jsonPathText(currentSelectionPath()));
     statusBar()->showMessage(tr("Path copied"), 2000);
+}
+
+bool MainWindow::goToPath(const QString& expression, QString* errorMessage) {
+    const auto fail = [errorMessage](const QString& message) {
+        if (errorMessage) {
+            *errorMessage = message;
+        }
+        return false;
+    };
+    if (!m_session->rootView()) {
+        return fail(tr("No document is open."));
+    }
+
+    auto path = jsontitan::core::parseDefinitePath(expression.toStdString());
+    if (!path) {
+        return fail(tr("Position %1: %2")
+                        .arg(path.error().position)
+                        .arg(QString::fromStdString(path.error().description)));
+    }
+    if (path->empty()) {
+        // The root is not a row; "$" just goes back to the top.
+        m_treeView->setCurrentIndex(QModelIndex());
+        m_treeView->scrollToTop();
+        return true;
+    }
+
+    QModelIndex sourceIndex =
+        jsontitan::shell::indexForPath(*m_treeModel, *path);
+    if (!sourceIndex.isValid()) {
+        return fail(tr("There is no node at %1.").arg(expression.trimmed()));
+    }
+    QModelIndex proxyIndex = m_filterProxy->mapFromSource(sourceIndex);
+    if (!proxyIndex.isValid()) {
+        // Hidden by the active search filter; clearing the search bar drops
+        // the filter synchronously.
+        m_searchBar->clear();
+        proxyIndex = m_filterProxy->mapFromSource(sourceIndex);
+        if (!proxyIndex.isValid()) {
+            return fail(tr("There is no node at %1.").arg(expression.trimmed()));
+        }
+    }
+    m_treeView->setCurrentIndex(proxyIndex);
+    m_treeView->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
+    m_treeView->setFocus();
+    return true;
+}
+
+void MainWindow::onGoToPath() {
+    if (!m_session->rootView()) {
+        return;
+    }
+    // Prefill with the current selection's path: editing a suffix of where
+    // you are is the common case.
+    QString text = jsontitan::shell::jsonPathText(currentSelectionPath());
+    while (true) {
+        bool ok = false;
+        text = QInputDialog::getText(this, tr("Go to Path"),
+                                     tr("JSONPath (e.g. $.store.book[0]):"),
+                                     QLineEdit::Normal, text, &ok);
+        if (!ok) {
+            return;
+        }
+        QString error;
+        if (goToPath(text, &error)) {
+            return;
+        }
+        QMessageBox::warning(this, tr("Go to Path"), error);
+    }
 }
 
 // --- Phase 5b commit 3: expand controls ---

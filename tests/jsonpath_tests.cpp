@@ -435,4 +435,44 @@ TEST(JsonPathPBT, ResultsNeverContainDuplicatePaths) {
         });
 }
 
+// ---------------------------------------------------------------------------
+// parseDefinitePath (Go to Path)
+// ---------------------------------------------------------------------------
+
+TEST(JsonPathDefinite, KeysAndIndicesMapToNodePath) {
+    auto path = parseDefinitePath("$.store.book[1]['the title']");
+    ASSERT_TRUE(path.has_value()) << path.error().description;
+    NodePath expected{std::string("store"), std::string("book"), std::size_t{1},
+                      std::string("the title")};
+    EXPECT_EQ(*path, expected);
+}
+
+TEST(JsonPathDefinite, LeadingDollarIsOptional) {
+    auto dotted = parseDefinitePath("  store.book[0]  ");
+    ASSERT_TRUE(dotted.has_value());
+    EXPECT_EQ(*dotted, (NodePath{std::string("store"), std::string("book"),
+                                 std::size_t{0}}));
+
+    auto bracketed = parseDefinitePath("[2].id");
+    ASSERT_TRUE(bracketed.has_value());
+    EXPECT_EQ(*bracketed, (NodePath{std::size_t{2}, std::string("id")}));
+}
+
+TEST(JsonPathDefinite, RootIsEmptyPath) {
+    auto path = parseDefinitePath("$");
+    ASSERT_TRUE(path.has_value());
+    EXPECT_TRUE(path->empty());
+}
+
+TEST(JsonPathDefinite, RejectsMultiMatchAndBadSyntax) {
+    EXPECT_FALSE(parseDefinitePath("$.a[*]").has_value());
+    EXPECT_FALSE(parseDefinitePath("$..a").has_value());
+    EXPECT_FALSE(parseDefinitePath("").has_value());
+
+    // Error positions refer to the text as typed, even without '$'.
+    auto bad = parseDefinitePath("a[x]");
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_EQ(bad.error().position, 2u);
+}
+
 }  // namespace

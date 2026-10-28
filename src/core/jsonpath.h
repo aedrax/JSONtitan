@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/deletion_engine.h"  // NodePath
 #include "core/node_view.h"
 #include "core/search_engine.h"
 
@@ -49,6 +50,13 @@ auto parseJsonPath(std::string_view expr)
 // paths (deduplicated, root = empty path) compatible with FilterProxyModel;
 // SearchMatch::node is always nullptr for JSONPath results.
 auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterResult;
+
+// Resolve a definite path (member names and array indices only, no
+// wildcards or recursive descent) to the NodePath it names, without touching
+// any tree. The leading '$' is optional: "store.book[0]" and "[2].id" are
+// read as "$.store.book[0]" and "$[2].id". Used by "Go to Path".
+auto parseDefinitePath(std::string_view expr)
+    -> std::expected<NodePath, JsonPathError>;
 
 // Convenience: parse + evaluate. A parse error is returned as
 // FilterResult::error ("JSONPath error at position N: ...").

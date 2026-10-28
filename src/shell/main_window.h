@@ -61,6 +61,11 @@ public:
     // startup only when no CLI files were given — CLI args take precedence.
     void restoreLastSession();
 
+    // Select and reveal the node a definite JSONPath names ("$.a.b[2]", the
+    // '$' optional). Clears an active search first when it hides the target.
+    // Returns false with a user-facing reason in *errorMessage on failure.
+    bool goToPath(const QString& expression, QString* errorMessage = nullptr);
+
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
@@ -76,6 +81,7 @@ private slots:
     void onCopyValue();
     void onCopyKey();
     void onCopyPath();
+    void onGoToPath();
     void onParseError(QString errorMessage);
     void onProgressUpdated(int percentage);
     void onRecentFileSelected(const QString& filePath);
@@ -162,6 +168,7 @@ private:
     QAction* m_deleteAction = nullptr;
     QAction* m_expandAllAction = nullptr;
     QAction* m_collapseAllAction = nullptr;
+    QAction* m_goToPathAction = nullptr;
     QAction* m_shortcutsAction = nullptr;
     QAction* m_aboutAction = nullptr;
     QAction* m_reopenLastFileAction = nullptr;

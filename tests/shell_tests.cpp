@@ -3121,6 +3121,88 @@ private slots:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Go to Path (View > Go to Path..., Ctrl+G)
+// ---------------------------------------------------------------------------
+
+class GoToPathTest : public QObject {
+    Q_OBJECT
+
+private:
+    // Opens `json` from a temp file and waits for the tree to appear.
+    static void openDocument(MainWindow& window, QTemporaryDir& dir,
+                             const QByteArray& json) {
+        const QString filePath = dir.path() + "/goto.json";
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(json);
+        file.close();
+        window.show();
+        window.openFromCliArgs({filePath.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_VERIFY_WITH_TIMEOUT(treeView->isVisible(), 5000);
+    }
+
+    static QString selectedPath(MainWindow& window) {
+        auto* treeView = window.findChild<QTreeView*>();
+        auto* proxy = qobject_cast<FilterProxyModel*>(treeView->model());
+        auto* model = qobject_cast<TreeModel*>(proxy->sourceModel());
+        const QModelIndex source = proxy->mapToSource(treeView->currentIndex());
+        return jsontitan::shell::jsonPathText(
+            jsontitan::shell::nodePathForIndex(*model, source));
+    }
+
+private slots:
+    void init() {
+        QCoreApplication::setOrganizationName("JSONTitanTest");
+        QCoreApplication::setApplicationName("ShellTestsGoToPath");
+        QSettings settings;
+        settings.clear();
+        settings.sync();
+    }
+
+    void testSelectsNestedNode() {
+        QTemporaryDir dir;
+        MainWindow window;
+        openDocument(window, dir, R"({"store": {"book": [{"t": 1}, {"t": 2}]}})");
+
+        QString error;
+        QVERIFY2(window.goToPath("$.store.book[1].t", &error), qPrintable(error));
+        QCOMPARE(selectedPath(window), QString("$.store.book[1].t"));
+
+        // The '$' is optional.
+        QVERIFY(window.goToPath("store.book[0]", &error));
+        QCOMPARE(selectedPath(window), QString("$.store.book[0]"));
+    }
+
+    void testMissingNodeAndBadSyntaxReportErrors() {
+        QTemporaryDir dir;
+        MainWindow window;
+        openDocument(window, dir, R"({"a": [1, 2]})");
+
+        QString error;
+        QVERIFY(!window.goToPath("$.a[5]", &error));
+        QVERIFY(error.contains("no node"));
+        QVERIFY(!window.goToPath("$.a[*]", &error));
+        QVERIFY(!error.isEmpty());
+    }
+
+    void testClearsSearchThatHidesTarget() {
+        QTemporaryDir dir;
+        MainWindow window;
+        openDocument(window, dir, R"({"alpha": 1, "beta": 2})");
+
+        auto* searchBar = window.findChild<QLineEdit*>("searchBar");
+        searchBar->setText("alpha");
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 1, 5000);
+
+        QVERIFY(window.goToPath("$.beta"));
+        QVERIFY(searchBar->text().isEmpty());
+        QCOMPARE(selectedPath(window), QString("$.beta"));
+    }
+};
+
 // Qt Test requires a QApplication instance
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -3189,6 +3271,9 @@ int main(int argc, char* argv[]) {
 
     FileWatchTest fileWatchTest;
     status |= QTest::qExec(&fileWatchTest, argc, argv);
+
+    GoToPathTest goToPathTest;
+    status |= QTest::qExec(&goToPathTest, argc, argv);
 
     ShellSetupTest setupTest;
     status |= QTest::qExec(&setupTest, argc, argv);
