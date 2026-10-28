@@ -35,4 +35,11 @@ auto simdjsonParse(const SourceBuffer& source,
                    ArenaAllocator& arena,
                    SimdjsonParseOptions options = {}) -> SimdjsonResult;
 
+/// Parse a SourceBuffer as JSON Lines: every non-blank line is one document,
+/// and the documents become the children of a synthetic root array.
+/// Errors name the 1-based line that failed (byteOffset stays 0).
+auto simdjsonParseLines(const SourceBuffer& source,
+                        ArenaAllocator& arena,
+                        SimdjsonParseOptions options = {}) -> SimdjsonResult;
+
 } // namespace jsontitan::core

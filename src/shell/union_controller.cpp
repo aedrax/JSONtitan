@@ -101,7 +101,7 @@ void UnionController::unionFiles() {
 
     QStringList filePaths = QFileDialog::getOpenFileNames(
         m_dialogParent, tr("Select JSON Files to Union"), QString(),
-        tr("JSON Files (*.json);;All Files (*)"));
+        tr("JSON Files (*.json *.jsonc *.jsonl *.ndjson);;All Files (*)"));
 
     if (filePaths.isEmpty()) {
         return;

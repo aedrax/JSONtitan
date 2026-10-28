@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%"
-       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 487 tests.">
+       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 513 tests.">
 </p>
 
 <p align="center">
@@ -38,6 +38,7 @@ Verified against this repository's own 2.1 GB, 8.4-million-record test document.
 |---|---|
 | **Search three ways** | Substring, regex, or a JSONPath subset (`$.store.book[*].author`, `..`, `[n]`, wildcards) with match count, <kbd>F3</kbd>/<kbd>Shift+F3</kbd> navigation, and highlighted results |
 | **Edit safely** | Inline value editing (<kbd>F2</kbd>), key rename with duplicate detection, node deletion all undoable (<kbd>Ctrl+Z</kbd>), all saved atomically so a failed write never destroys your file |
+| **Open more than JSON** | JSON Lines / NDJSON (`.jsonl`, `.ndjson`) open as one array of records and save back one record per line (a `.json` holding one record per line opens the same way); JSON with comments (`.jsonc`, or a `.json` like `tsconfig.json` that fails strict parsing) accepts `//` and `/* */` comments and trailing commas |
 | **Combine files** | Union multiple documents into one tree, parsed in the background; remove sources again at any time |
 | **Export anything** | Whole document or any subtree as JSON, CSV (injection-safe), or XML streamed to disk, never built in memory |
 | **Stay oriented** | Breadcrumb path bar, copy key/value/JSONPath to clipboard, type & size columns, expand-to-level controls |
@@ -60,7 +61,7 @@ cmake -B build && cmake --build build -j
 ./build/src/shell/jsontitan_shell your-huge-file.json
 ```
 
-Run the test suite (487 tests: GoogleTest, RapidCheck property tests, Qt Test):
+Run the test suite (513 tests: GoogleTest, RapidCheck property tests, Qt Test):
 
 ```bash
 ctest --test-dir build
@@ -89,6 +90,7 @@ Everything in the core is exercised by property-based tests; the shell is tested
 
 - Peak memory **during** parsing is a multiple of file size (input + simdjson DOM + arena coexist briefly). Steady-state drops to the arena alone once loading finishes.
 - The JSONPath engine covers the navigation subset filter expressions like `[?(@.price < 10)]` are intentionally not supported (yet) and say so explicitly.
+- Comments can't survive an edit: saving a file that had them removes them, and the app asks before it does. JSON5 (unquoted keys, single quotes) isn't supported.
 - Nesting is capped at 1,024 levels (matching simdjson) so hostile inputs fail with an error instead of a stack overflow.
 
 ## Contributing

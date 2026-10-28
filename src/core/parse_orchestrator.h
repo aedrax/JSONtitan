@@ -7,6 +7,7 @@
 
 #include "core/arena_allocator.h"
 #include "core/arena_json_node.h"
+#include "core/json_format.h"
 #include "core/parser.h"
 #include "core/source_buffer.h"
 
@@ -21,6 +22,8 @@ struct ArenaParseResult {
     ArenaJsonNode* root = nullptr;           // Root of the parsed tree
     std::optional<ParseError> error = std::nullopt;
     std::size_t nodeCount = 0;               // Nodes constructed during parse
+    JsonFormat format = JsonFormat::Json;    // Format the input was parsed as
+    bool hadComments = false;                // JSONC comments were dropped
 
     // Convert to the public JsonNode type (copies strings out of arena).
     [[nodiscard]] auto toParseResult() const -> ParseResult;
@@ -37,6 +40,12 @@ struct ParseBufferOptions {
     // Optional cooperative cancellation: polled periodically during parsing;
     // returning true aborts the parse with a "Parse cancelled" error.
     std::function<bool()> cancelCallback = nullptr;
+    // How to read the input. JsonLines yields a root array of records.
+    JsonFormat format = JsonFormat::Json;
+    // Json only: when the strict parse fails, retry as JSONC and then as
+    // JSON Lines (two or more records), keeping the strict error if every
+    // attempt fails. Valid JSON never pays for the retries.
+    bool lenientFallback = false;
 };
 
 // Parse a complete buffer via simdjson.

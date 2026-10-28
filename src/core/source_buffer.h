@@ -74,6 +74,12 @@ public:
         return m_data.data();
     }
 
+    // Writable view of the logical bytes, for in-place rewrites that keep
+    // the length unchanged (JSONC comment stripping).
+    [[nodiscard]] auto mutableSpan() noexcept -> std::span<char> {
+        return std::span<char>(m_data.data(), m_logicalSize);
+    }
+
     // Logical size in bytes (excluding padding).
     [[nodiscard]] auto size() const noexcept -> std::size_t {
         return m_logicalSize;

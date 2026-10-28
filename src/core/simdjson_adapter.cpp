@@ -1,10 +1,13 @@
 #include "core/simdjson_adapter.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <simdjson.h>
 
@@ -326,6 +329,102 @@ auto simdjsonParse(const SourceBuffer& source,
     // destroyed when this function returns, since `parser` and `paddedInput`
     // are stack-local. All string data has been copied into the arena.
     return SimdjsonResult{root, std::nullopt, progressCtx.nodesCreated};
+}
+
+auto simdjsonParseLines(const SourceBuffer& source,
+                        ArenaAllocator& arena,
+                        SimdjsonParseOptions options) -> SimdjsonResult {
+    if (source.size() == 0) {
+        return SimdjsonResult{nullptr, ParseError{0, "Empty input"}};
+    }
+
+    if (options.progressCallback) {
+        options.progressCallback(0.0F);
+    }
+
+    // Progress is reported by bytes consumed in the loop below; the context
+    // only counts nodes and polls cancellation inside large records.
+    ProgressContext progressCtx;
+    progressCtx.cancelCheck = options.cancelCallback;
+
+    simdjson::dom::parser parser;
+    std::vector<ArenaJsonNode*> records;
+
+    const char* data = source.data();
+    const std::size_t size = source.size();
+    std::size_t lineStart = 0;
+    std::size_t lineNumber = 0;
+    std::size_t nextProgressAt = kProgressReportingThreshold;
+
+    while (lineStart < size) {
+        ++lineNumber;
+        const auto* newline = static_cast<const char*>(
+            std::memchr(data + lineStart, '\n', size - lineStart));
+        const std::size_t lineEnd =
+            newline ? static_cast<std::size_t>(newline - data) : size;
+        const std::string_view line(data + lineStart, lineEnd - lineStart);
+
+        const bool blank = line.find_first_not_of(" \t\r") == std::string_view::npos;
+        if (!blank) {
+            // Each line is a view into the shared buffer: everything after it
+            // (plus the trailing zero padding) is readable, so simdjson can
+            // parse in place without copying the line.
+            simdjson::padded_string_view paddedLine(
+                line.data(), line.size(), source.paddedSize() - lineStart);
+            simdjson::dom::element doc;
+            auto error = parser.parse(paddedLine).get(doc);
+            if (error != simdjson::SUCCESS) {
+                auto mapped = mapSimdjsonError(error);
+                mapped.description = "Line " + std::to_string(lineNumber) + ": " +
+                                     mapped.description;
+                return SimdjsonResult{nullptr, std::move(mapped)};
+            }
+
+            auto* record = convertElement(doc, StringRef{}, arena, progressCtx);
+            if (progressCtx.cancelled) {
+                return SimdjsonResult{nullptr, ParseError{0, "Parse cancelled"}};
+            }
+            if (!record) {
+                return SimdjsonResult{nullptr, ParseError{0, "Memory allocation failed during tree construction"}};
+            }
+            records.push_back(record);
+        }
+
+        lineStart = lineEnd + 1;
+        if (lineStart >= nextProgressAt) {
+            nextProgressAt = lineStart + kProgressReportingThreshold;
+            if (options.cancelCallback && options.cancelCallback()) {
+                return SimdjsonResult{nullptr, ParseError{0, "Parse cancelled"}};
+            }
+            if (options.progressCallback) {
+                options.progressCallback(std::min(
+                    0.99F, static_cast<float>(lineStart) / static_cast<float>(size)));
+            }
+        }
+    }
+
+    auto* root = arena.construct<ArenaJsonNode>();
+    if (!root) {
+        return SimdjsonResult{nullptr, ParseError{0, "Memory allocation failed during tree construction"}};
+    }
+    root->type = NodeType::Array;
+    if (!records.empty()) {
+        auto** children = static_cast<ArenaJsonNode**>(arena.allocate(
+            records.size() * sizeof(ArenaJsonNode*), alignof(ArenaJsonNode*)));
+        if (!children) {
+            return SimdjsonResult{nullptr, ParseError{0, "Memory allocation failed during tree construction"}};
+        }
+        std::copy(records.begin(), records.end(), children);
+        root->children = children;
+        root->childCount = records.size();
+    }
+
+    if (options.progressCallback) {
+        options.progressCallback(1.0F);
+    }
+
+    // +1 for the synthetic root array.
+    return SimdjsonResult{root, std::nullopt, progressCtx.nodesCreated + 1};
 }
 
 } // namespace jsontitan::core

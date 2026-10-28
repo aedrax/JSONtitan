@@ -21,6 +21,7 @@ void DocumentSession::setJsonRoot(
     m_filePath = filePath;
     m_fileName = fileName;
     m_isUnionMode = unionMode;
+    setFormat(jsontitan::core::JsonFormat::Json, false);
 
     m_model->setRootNode(m_currentRoot);
     emit documentReplaced();
@@ -36,12 +37,23 @@ void DocumentSession::setArenaRoot(
     m_currentRoot.reset();  // Clear legacy root when using arena path
     m_filePath = filePath;
     m_fileName = fileName;
+    if (m_arenaResult) {
+        setFormat(m_arenaResult->format, m_arenaResult->hadComments);
+    } else {
+        setFormat(jsontitan::core::JsonFormat::Json, false);
+    }
 
     m_model->setArenaRoot(m_arenaResult);
     emit documentReplaced();
 
     // A brand-new document: the previous document's history is meaningless.
     clearUndoStack();
+}
+
+void DocumentSession::setFormat(jsontitan::core::JsonFormat format,
+                                bool hadComments) {
+    m_format = format;
+    m_hadComments = hadComments;
 }
 
 void DocumentSession::replaceJsonRoot(

@@ -141,6 +141,56 @@ private slots:
         QVERIFY(completeSpy.count() + errorSpy.count() <= 1);
     }
 
+    // Waits for one successful parse of `content` saved with `suffix`.
+    std::shared_ptr<ArenaParseResult> parseTempFile(const QByteArray& content,
+                                                    const QString& suffix) {
+        QString filePath = writeTempFile(content, suffix);
+        if (filePath.isEmpty()) {
+            return nullptr;
+        }
+        FileLoader loader;
+        QSignalSpy completeSpy(&loader, &FileLoader::arenaParseComplete);
+        loader.startParse(filePath);
+        if (!completeSpy.wait(5000)) {
+            return nullptr;
+        }
+        return completeSpy.at(0).at(0).value<std::shared_ptr<ArenaParseResult>>();
+    }
+
+    void testJsonLinesExtensionParsesRecords() {
+        auto result = parseTempFile("{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n", ".jsonl");
+        QVERIFY(result != nullptr);
+        QCOMPARE(result->format, JsonFormat::JsonLines);
+        QCOMPARE(result->root->type, NodeType::Array);
+        QCOMPARE(result->root->childCount, std::size_t(3));
+    }
+
+    void testJsoncExtensionAcceptsComments() {
+        auto result = parseTempFile("// settings\n{\"a\": 1, /* b */}\n", ".jsonc");
+        QVERIFY(result != nullptr);
+        QCOMPARE(result->format, JsonFormat::JsonWithComments);
+        QVERIFY(result->hadComments);
+        QCOMPARE(result->root->childCount, std::size_t(1));
+    }
+
+    void testJsonExtensionFallsBackToJsonc() {
+        auto result = parseTempFile("{\n  // tsconfig\n  \"strict\": true,\n}\n", ".json");
+        QVERIFY(result != nullptr);
+        QCOMPARE(result->format, JsonFormat::JsonWithComments);
+        QVERIFY(result->hadComments);
+    }
+
+    void testJsonLinesErrorNamesLine() {
+        QString filePath = writeTempFile("{\"a\":1}\n{\"a\":}\n", ".ndjson");
+        QVERIFY(!filePath.isEmpty());
+        FileLoader loader;
+        QSignalSpy errorSpy(&loader, &FileLoader::parseError);
+        loader.startParse(filePath);
+        QVERIFY(errorSpy.wait(5000));
+        QVERIFY2(errorSpy.at(0).at(0).toString().contains("Line 2"),
+                 qPrintable(errorSpy.at(0).at(0).toString()));
+    }
+
     void testErrorSignalOnInvalidJson() {
         // Test that an invalid JSON file produces a parseError signal
         QByteArray invalidJson = "{\"name\": \"Alice\", \"age\": }";
@@ -464,10 +514,11 @@ private:
                 return s;
             }
             case 3: {
-                // Trailing comma: {"a": 1,}
+                // Leading comma: {, "a": 1}. (A trailing comma is no longer
+                // an error: .json files fall back to JSONC parsing.)
                 auto keyLen = *rc::gen::inRange<std::size_t>(1, 10);
                 auto key = std::string(keyLen, 'a');
-                return "{\"" + key + "\": 1,}";
+                return "{, \"" + key + "\": 1}";
             }
             case 4:
             default: {
@@ -478,7 +529,9 @@ private:
                 for (std::size_t i = 0; i < garbageLen; ++i) {
                     garbage += *rc::gen::inRange<char>(32, 127);
                 }
-                return "{\"x\": 1} " + garbage + " extra";
+                // The leading '@' keeps the garbage from opening a // or
+                // /* comment, which the JSONC fallback would accept.
+                return "{\"x\": 1} @" + garbage + " extra";
             }
         }
     }

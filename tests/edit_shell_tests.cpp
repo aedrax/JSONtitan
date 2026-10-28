@@ -6,11 +6,13 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QModelIndex>
 #include <QSignalSpy>
 #include <QString>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QTreeView>
 
@@ -446,4 +448,58 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
+}
+
+// ---------------------------------------------------------------------------
+// Document format survives editing: a JSON Lines file edited and saved with
+// Ctrl+S is written back one record per line, not as a pretty array.
+// ---------------------------------------------------------------------------
+
+TEST(EditControllerEditing, JsonLinesFormatSurvivesEditAndSave) {
+    Harness h;
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+    const QString path = tempDir.path() + QStringLiteral("/log.jsonl");
+
+    ParseBufferOptions options;
+    options.format = JsonFormat::JsonLines;
+    auto arena = parseBuffer("{\"a\": 1}\n{\"a\": 2}\n", options);
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           path, QStringLiteral("log.jsonl"));
+    fetchAll(h.model);
+    EXPECT_EQ(h.session.format(), JsonFormat::JsonLines);
+
+    // The edit converts the arena to a JsonNode tree; the format must stay.
+    QModelIndex a = jsontitan::shell::indexForPath(
+        h.model, {std::size_t(1), std::string("a")});
+    ASSERT_TRUE(a.isValid());
+    ASSERT_TRUE(h.edit->applyEdit(a, QStringLiteral("3")));
+    pumpEvents();
+    ASSERT_EQ(h.session.arenaResult(), nullptr);
+    EXPECT_EQ(h.session.format(), JsonFormat::JsonLines);
+    EXPECT_FALSE(h.session.hadComments());
+
+    h.edit->save();
+    EXPECT_FALSE(h.session.modified());
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    EXPECT_EQ(file.readAll(), QByteArray("{\"a\":1}\n{\"a\":3}\n"));
+}
+
+// Installing a union (JsonNode) document resets the format to plain JSON.
+TEST(EditControllerEditing, JsonRootInstallResetsFormat) {
+    Harness h;
+    ParseBufferOptions options;
+    options.format = JsonFormat::JsonWithComments;
+    auto arena = parseBuffer("// c\n{\"a\": 1}", options);
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.jsonc"), QStringLiteral("t.jsonc"));
+    EXPECT_EQ(h.session.format(), JsonFormat::JsonWithComments);
+    EXPECT_TRUE(h.session.hadComments());
+
+    h.session.setJsonRoot(makeJsonFixture(), QString(), QStringLiteral("Union"), true);
+    EXPECT_EQ(h.session.format(), JsonFormat::Json);
+    EXPECT_FALSE(h.session.hadComments());
 }

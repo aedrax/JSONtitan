@@ -148,6 +148,46 @@ TEST(SaveHandler, ArenaBackedSaveMatchesJsonNodeSave) {
     EXPECT_EQ(arenaBytes, legacyBytes);
 }
 
+// JSON Lines save writes one compact record per line (newlines inside
+// strings stay escaped) and re-parses to the same records.
+TEST(SaveHandler, JsonLinesRoundTrip) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    const std::string input =
+        "{\"id\": 1, \"msg\": \"two\\nlines\"}\n\n[1, 2]\n\"s\"\n";
+    ParseBufferOptions options;
+    options.format = JsonFormat::JsonLines;
+    auto parsed = parseBuffer(std::string(input), options);
+    ASSERT_TRUE(parsed.ok());
+
+    QString path = tempDir.path() + "/out.jsonl";
+    ASSERT_TRUE(SaveHandler::saveToFile(NodeView(*parsed.root), path,
+                                        JsonFormat::JsonLines).isEmpty());
+
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    EXPECT_EQ(bytes, QByteArray("{\"id\":1,\"msg\":\"two\\nlines\"}\n[1,2]\n\"s\"\n"));
+
+    auto reparsed = parseBuffer(bytes.toStdString(), options);
+    ASSERT_TRUE(reparsed.ok());
+    EXPECT_EQ(exportJson(*reparsed.root->toJsonNode()),
+              exportJson(*parsed.root->toJsonNode()));
+}
+
+// A JSON Lines save needs a root array; anything else is refused without
+// touching the target file.
+TEST(SaveHandler, JsonLinesRejectsNonArrayRoot) {
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+
+    QString path = tempDir.path() + "/out.jsonl";
+    auto tree = makeSimpleTree();
+    EXPECT_FALSE(SaveHandler::saveToFile(*tree, path, JsonFormat::JsonLines).isEmpty());
+    EXPECT_FALSE(QFile::exists(path));
+}
+
 // ---------------------------------------------------------------------------
 // Phase 5b commit 4: export selected subtree as JSON
 // ---------------------------------------------------------------------------

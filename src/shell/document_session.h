@@ -65,6 +65,14 @@ public:
     const QString& fileName() const { return m_fileName; }
     bool isUnionMode() const { return m_isUnionMode; }
 
+    // On-disk format of the document, which decides how Save writes it.
+    // Set from the parse result by setArenaRoot, reset to plain JSON by
+    // setJsonRoot (union), kept by replaceJsonRoot (in-document edits).
+    jsontitan::core::JsonFormat format() const { return m_format; }
+    // True when the loaded file had comments that saving will drop.
+    bool hadComments() const { return m_hadComments; }
+    void setFormat(jsontitan::core::JsonFormat format, bool hadComments);
+
     std::shared_ptr<const jsontitan::core::JsonNode> currentRoot() const {
         return m_currentRoot;
     }
@@ -110,6 +118,8 @@ private:
     QString m_fileName;
     bool m_isUnionMode = false;
     bool m_modified = false;
+    jsontitan::core::JsonFormat m_format = jsontitan::core::JsonFormat::Json;
+    bool m_hadComments = false;
 
     jsontitan::core::UndoStack m_undoStack;
 

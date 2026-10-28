@@ -246,6 +246,18 @@ target_link_libraries(simdjson_adapter_tests
 
 gtest_discover_tests(simdjson_adapter_tests)
 
+# ── JSON Format Tests: JSONL / JSONC (Google Test, no Qt) ────────
+add_executable(json_format_tests json_format_tests.cpp)
+
+target_link_libraries(json_format_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(json_format_tests)
+
 # ── simdjson Integration Tests (Google Test, no Qt) ──────────────
 add_executable(simdjson_integration_tests simdjson_integration_tests.cpp)
 

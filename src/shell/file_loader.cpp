@@ -1,5 +1,6 @@
 #include "shell/file_loader.h"
 
+#include "core/json_format.h"
 #include "core/json_node.h"
 #include "core/parse_orchestrator.h"
 #include "core/union_engine.h"
@@ -45,6 +46,13 @@ std::pair<qint64, qint64> lineColumnForOffset(const QString& filePath,
         }
     }
     return {line, column};
+}
+
+// Parse format from the extension; anything that is not .jsonc/.jsonl/
+// .ndjson is read as JSON with the lenient fallbacks enabled.
+void applyFormatForPath(const QString& filePath, ParseBufferOptions& options) {
+    options.format = formatForPath(filePath.toStdString()).value_or(JsonFormat::Json);
+    options.lenientFallback = options.format == JsonFormat::Json;
 }
 
 }  // namespace
@@ -175,6 +183,7 @@ void FileLoaderWorker::process(const QString& filePath, quint64 requestId) {
     parseOptions.cancelCallback = [this, requestId]() {
         return isStale(requestId);
     };
+    applyFormatForPath(filePath, parseOptions);
 
     auto arenaResult = parseBuffer(std::move(input), parseOptions);
 
@@ -292,6 +301,7 @@ void FileLoaderWorker::processUnion(const QStringList& filePaths,
             parseOptions.cancelCallback = [this, requestId]() {
                 return isStale(requestId);
             };
+            applyFormatForPath(filePath, parseOptions);
 
             // The arena lives only inside this scope: the tree is converted
             // to a JsonNode tree immediately and the arena dropped before

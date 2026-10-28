@@ -846,7 +846,7 @@ void MainWindow::onOpenFile() {
 
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open JSON File"), QString(),
-        tr("JSON Files (*.json);;All Files (*)"));
+        tr("JSON Files (*.json *.jsonc *.jsonl *.ndjson);;All Files (*)"));
 
     if (filePath.isEmpty()) {
         return;

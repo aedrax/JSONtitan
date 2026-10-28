@@ -5,13 +5,25 @@
 #include <QSaveFile>
 
 auto SaveHandler::saveToFile(jsontitan::core::NodeView tree,
-                             const QString& filePath) -> QString {
+                             const QString& filePath,
+                             jsontitan::core::JsonFormat format) -> QString {
+    const bool jsonLines = format == jsontitan::core::JsonFormat::JsonLines;
+    // Checked before opening so a refused save leaves no temp file behind.
+    if (jsonLines && tree.type() != jsontitan::core::NodeType::Array) {
+        return QStringLiteral("%1 is a JSON Lines file, which needs a "
+                              "top-level array. Save under a .json name "
+                              "instead.")
+            .arg(filePath);
+    }
+
     // Serialize as JSON text (2-space indent, trailing newline), streamed
     // straight into the file instead of materializing the whole document.
+    // JSON Lines records are compact, one per line.
     jsontitan::core::JsonExportOptions options;
-    options.mode = jsontitan::core::IndentMode::PrettyPrint;
+    options.mode = jsonLines ? jsontitan::core::IndentMode::Compact
+                             : jsontitan::core::IndentMode::PrettyPrint;
     options.indentWidth = 2;
-    options.trailingNewline = true;
+    options.trailingNewline = !jsonLines;
 
     // Atomic write: QSaveFile writes to a temp file and atomically replaces the
     // target on commit(), preserving the original file (and its permissions) if
@@ -28,7 +40,17 @@ auto SaveHandler::saveToFile(jsontitan::core::NodeView tree,
             && file.error() == QFileDevice::NoError;
     };
 
-    auto result = jsontitan::core::exportJsonStream(tree, sink, options);
+    jsontitan::core::StreamExportResult result;
+    if (jsonLines) {
+        for (std::size_t i = 0; i < tree.childCount() && result.ok; ++i) {
+            result = jsontitan::core::exportJsonStream(tree.child(i), sink, options);
+            if (result.ok && !sink("\n")) {
+                result.ok = false;
+            }
+        }
+    } else {
+        result = jsontitan::core::exportJsonStream(tree, sink, options);
+    }
     if (!result.ok || file.error() != QFileDevice::NoError) {
         return QStringLiteral("Failed to write %1: %2")
             .arg(filePath, file.errorString());

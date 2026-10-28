@@ -404,11 +404,28 @@ void EditController::save() {
         return;
     }
 
+    // Comments cannot be carried through the tree, so overwriting a JSONC
+    // file that had them is lossy: ask first.
+    if (m_session->hadComments()) {
+        auto reply = QMessageBox::question(
+            m_dialogParent, tr("Remove Comments"),
+            tr("\"%1\" contains comments, which JSONTitan cannot keep.\n"
+               "Saving will remove them. Save anyway?")
+                .arg(m_session->fileName()),
+            QMessageBox::Save | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (reply != QMessageBox::Save) {
+            return;
+        }
+    }
+
     jsontitan::shell::WaitCursorGuard waitCursor;
     emit aboutToSave();
-    QString error = SaveHandler::saveToFile(*root, m_session->filePath());
+    QString error = SaveHandler::saveToFile(*root, m_session->filePath(),
+                                            m_session->format());
     waitCursor.restore();
     if (error.isEmpty()) {
+        m_session->setFormat(m_session->format(), false);
         m_session->setModified(false);
     }
     emit saved();
@@ -429,13 +446,26 @@ void EditController::saveAs() {
         return;
     }
 
+    using jsontitan::core::JsonFormat;
+    const QString jsonFilter = tr("JSON Files (*.json *.jsonc)");
+    const QString linesFilter = tr("JSON Lines Files (*.jsonl *.ndjson)");
+    QString selectedFilter = m_session->format() == JsonFormat::JsonLines
+                                 ? linesFilter
+                                 : jsonFilter;
     QString chosenPath = QFileDialog::getSaveFileName(
         m_dialogParent, tr("Save As"), QString(),
-        tr("JSON Files (*.json)"));
+        jsonFilter + QStringLiteral(";;") + linesFilter, &selectedFilter);
 
     if (chosenPath.isEmpty()) {
         return;
     }
+
+    // The extension decides the output format; without a known one, the
+    // filter the user picked does.
+    const JsonFormat format =
+        jsontitan::core::formatForPath(chosenPath.toStdString())
+            .value_or(selectedFilter == linesFilter ? JsonFormat::JsonLines
+                                                    : JsonFormat::Json);
 
     // If file exists, prompt for overwrite confirmation
     if (QFile::exists(chosenPath)) {
@@ -452,9 +482,10 @@ void EditController::saveAs() {
 
     jsontitan::shell::WaitCursorGuard waitCursor;
     emit aboutToSave();
-    QString error = SaveHandler::saveToFile(*root, chosenPath);
+    QString error = SaveHandler::saveToFile(*root, chosenPath, format);
     waitCursor.restore();
     if (error.isEmpty()) {
+        m_session->setFormat(format, false);
         // Union mode is deliberately left unchanged (pre-extraction
         // behavior: Save As never cleared it).
         m_session->setFileIdentity(chosenPath,

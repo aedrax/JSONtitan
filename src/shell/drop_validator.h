@@ -23,9 +23,10 @@ class DropValidator {
 public:
     /// Validates MIME data for a drop of 1..N local JSON files.
     ///
-    /// A file is plausible when it either has a .json extension (accepted
-    /// without opening it) or its first non-whitespace byte (of at most 64
-    /// read) looks like the start of a JSON value. Directories and remote
+    /// A file is plausible when it either has a .json, .jsonc, .jsonl or
+    /// .ndjson extension (accepted without opening it) or its first
+    /// non-whitespace byte (of at most 64 read) looks like the start of a
+    /// JSON value or a comment. Directories and remote
     /// URLs are rejected. A drop is accepted when at least one payload file
     /// is plausible; implausible files are skipped.
     static DropValidationResult validate(const QMimeData* mimeData) {
@@ -69,10 +70,13 @@ private:
             return {};
         }
 
-        // .json extension: accept without opening the file (preserves the
+        // Known extension: accept without opening the file (preserves the
         // historical fast path; the parser reports any real problem).
-        if (path.endsWith(QLatin1String(".json"), Qt::CaseInsensitive)) {
-            return path;
+        for (const auto ext : {QLatin1String(".json"), QLatin1String(".jsonc"),
+                               QLatin1String(".jsonl"), QLatin1String(".ndjson")}) {
+            if (path.endsWith(ext, Qt::CaseInsensitive)) {
+                return path;
+            }
         }
 
         if (looksLikeJson(path)) {
@@ -85,7 +89,7 @@ private:
     }
 
     // Cheap content sniff: the first non-whitespace byte of a JSON document
-    // is one of { [ " - t f n or a digit.
+    // is one of { [ " - t f n or a digit, or / when it opens with a comment.
     static bool looksLikeJson(const QString& path) {
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly)) {
@@ -96,7 +100,7 @@ private:
             if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
                 continue;
             }
-            return c == '{' || c == '[' || c == '"' || c == '-' ||
+            return c == '{' || c == '[' || c == '"' || c == '-' || c == '/' ||
                    c == 't' || c == 'f' || c == 'n' ||
                    (c >= '0' && c <= '9');
         }
