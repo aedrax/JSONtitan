@@ -2,8 +2,8 @@
 Type=Application
 Name=JSONTitan
 Comment=Fast JSON viewer and editor
-Exec=JSONTitan %f
+Exec=JSONTitan %F
 Icon=jsontitan
 Categories=Development;Utility;
-MimeType=application/json;
+MimeType=application/json;application/x-ndjson;application/jsonl;
 Terminal=false

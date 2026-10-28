@@ -47,6 +47,9 @@ set_target_properties(jsontitan_shell PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.aedrax.jsontitan"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    # CMake's default template plus the JSON document types Finder offers
+    # JSONTitan for.
+    MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/assets/macos/Info.plist.in"
 )
 
 target_link_libraries(jsontitan_shell

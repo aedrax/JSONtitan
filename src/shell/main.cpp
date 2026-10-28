@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QFileOpenEvent>
 #include <QMetaType>
 #include <QTimer>
 
@@ -12,6 +13,38 @@
 #include "core/cli_parser.h"
 #include "core/json_node.h"
 #include "shell/main_window.h"
+
+namespace {
+
+// macOS delivers files opened from Finder (double-click, "Open With", a drop
+// on the Dock icon) as QFileOpenEvents rather than command-line arguments.
+class FileOpenEventFilter : public QObject {
+public:
+    explicit FileOpenEventFilter(MainWindow* window) : m_window(window) {}
+
+    // True once Finder handed over a file: session restore must not then
+    // replace it with the last file.
+    bool receivedFile() const { return m_receivedFile; }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::FileOpen) {
+            const QString path = static_cast<QFileOpenEvent*>(event)->file();
+            if (!path.isEmpty()) {
+                m_receivedFile = true;
+                m_window->openFileFromSystem(path);
+            }
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    MainWindow* m_window;
+    bool m_receivedFile = false;
+};
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
     // 3.1: Convert argv (excluding argv[0]) to std::vector<std::string>
@@ -72,6 +105,9 @@ int main(int argc, char* argv[]) {
     MainWindow window;
     window.show();
 
+    FileOpenEventFilter fileOpenFilter(&window);
+    app.installEventFilter(&fileOpenFilter);
+
     // 3.6: If action is OpenFiles, defer opening until event loop starts.
     // CLI arguments take precedence over session restore; with no files
     // given, reopen the last file (if enabled and it still exists).
@@ -81,8 +117,10 @@ int main(int argc, char* argv[]) {
             window.openFromCliArgs(paths);
         });
     } else {
-        QTimer::singleShot(0, &window, [&window]() {
-            window.restoreLastSession();
+        QTimer::singleShot(0, &window, [&window, &fileOpenFilter]() {
+            if (!fileOpenFilter.receivedFile()) {
+                window.restoreLastSession();
+            }
         });
     }
 

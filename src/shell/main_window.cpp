@@ -306,6 +306,15 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
     }
 }
 
+void MainWindow::openFileFromSystem(const QString& filePath) {
+    raise();
+    activateWindow();
+    if (!m_editController->confirmDiscardChanges()) {
+        return;
+    }
+    openFromCliArgs({filePath.toStdString()});
+}
+
 void MainWindow::setupMenuBar() {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
 

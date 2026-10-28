@@ -55,6 +55,11 @@ public:
     // Open file(s) from CLI-provided paths (single file or union mode)
     void openFromCliArgs(const std::vector<std::string>& filePaths);
 
+    // Opens a file the operating system handed us (macOS Finder "Open
+    // With" / double-click), after the usual unsaved-changes prompt, and
+    // brings the window forward.
+    void openFileFromSystem(const QString& filePath);
+
     // Reopens the last successfully opened single file, when the
     // "Reopen Last File on Startup" option is enabled and the file still
     // exists. Silent no-op (welcome screen stays) otherwise. Called at
