@@ -13,6 +13,7 @@ set(SHELL_SOURCES
     union_controller.cpp
     filter_proxy_model.cpp
     file_loader.cpp
+    find_replace_dialog.cpp
     export_handler.cpp
     recent_files_manager.cpp
     save_handler.cpp

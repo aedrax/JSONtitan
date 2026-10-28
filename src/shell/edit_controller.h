@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "core/edit_engine.h"
+#include "core/replace_engine.h"
 #include "shell/document_session.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/search_controller.h"
@@ -73,6 +74,11 @@ public:
     applySortKeys(const jsontitan::core::NodePath& path);
     // Delete every node in `paths` as one undoable step.
     void applyDeletePaths(std::vector<jsontitan::core::NodePath> paths);
+    // Find & Replace over the whole document as one undoable step. The
+    // returned result carries the counts and any error; its root is the
+    // pre-replace root when nothing changed.
+    jsontitan::core::ReplaceResult
+    applyReplaceAll(const jsontitan::core::ReplaceOptions& options);
 
 signals:
     // Emitted immediately before / after our own write of the document to
@@ -104,6 +110,8 @@ public slots:
     void moveSelectedUp();
     void moveSelectedDown();
     void sortSelectedKeys();
+    // Opens the Find and Replace dialog, prefilled with `initialPattern`.
+    void findAndReplace(const QString& initialPattern);
 
 private:
     // Pre-mutation root as a JsonNode tree: the live JsonNode root, or a

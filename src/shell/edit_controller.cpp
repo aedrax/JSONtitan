@@ -17,6 +17,7 @@
 #include "core/deletion_engine.h"
 #include "core/edit_engine.h"
 #include "core/stream_export.h"
+#include "shell/find_replace_dialog.h"
 #include "shell/model_paths.h"
 #include "shell/node_input_dialog.h"
 #include "shell/save_handler.h"
@@ -594,6 +595,58 @@ void EditController::applyDeletePaths(std::vector<NodePath> paths) {
     // first deleted node itself.
     queueInstall(std::move(newRoot), NodePath(first.begin(), first.end() - 1),
                  jsontitan::core::UndoEntry{std::move(preRoot), first});
+}
+
+jsontitan::core::ReplaceResult
+EditController::applyReplaceAll(const jsontitan::core::ReplaceOptions& options) {
+    auto preRoot = editableRootSnapshot();
+    if (!preRoot) {
+        return {.root = nullptr, .error = "No document"};
+    }
+    auto result = jsontitan::core::replaceAll(preRoot, options);
+    if (!result.error && result.root.get() != preRoot.get()) {
+        const NodePath selection = currentSelectionPath();
+        queueInstall(result.root, selection,
+                     jsontitan::core::UndoEntry{std::move(preRoot), selection});
+    }
+    return result;
+}
+
+void EditController::findAndReplace(const QString& initialPattern) {
+    if (!m_session->rootView()) {
+        return;
+    }
+    FindReplaceDialog dialog(
+        initialPattern,
+        [this](const jsontitan::core::ReplaceOptions& options) -> QString {
+            jsontitan::shell::WaitCursorGuard waitCursor;
+            const auto result = applyReplaceAll(options);
+            if (result.error) {
+                return QString::fromStdString(*result.error);
+            }
+            if (result.valuesChanged == 0 && result.keysChanged == 0) {
+                return result.keysSkipped > 0
+                           ? tr("Nothing replaced: %n key(s) would have collided "
+                                "with an existing key.", nullptr,
+                                static_cast<int>(result.keysSkipped))
+                           : tr("No matches.");
+            }
+            QString summary = tr("Replaced in %n value(s)", nullptr,
+                                 static_cast<int>(result.valuesChanged));
+            if (options.inKeys) {
+                summary += tr(" and %n key(s)", nullptr,
+                              static_cast<int>(result.keysChanged));
+            }
+            summary += QStringLiteral(".");
+            if (result.keysSkipped > 0) {
+                summary += tr(" Skipped %n key(s) that would have collided with "
+                              "an existing key.", nullptr,
+                              static_cast<int>(result.keysSkipped));
+            }
+            return summary;
+        },
+        m_dialogParent);
+    dialog.exec();
 }
 
 void EditController::warnIfError(const QString& title,

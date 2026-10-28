@@ -142,6 +142,11 @@ MainWindow::MainWindow(QWidget* parent)
             m_editController, &EditController::moveSelectedDown);
     connect(m_sortKeysAction, &QAction::triggered,
             m_editController, &EditController::sortSelectedKeys);
+    connect(m_findReplaceAction, &QAction::triggered, this, [this]() {
+        // Start from the search bar's text unless it holds a JSONPath query.
+        m_editController->findAndReplace(
+            m_jsonPathToggle->isChecked() ? QString() : m_searchBar->text());
+    });
     // Keep the Edit actions' enabled state in sync with the tree selection
     // and the document.
     connect(m_treeView->selectionModel(),
@@ -472,6 +477,18 @@ void MainWindow::setupMenuBar() {
 
     editMenu->addSeparator();
 
+    // Ctrl+H where the platform has a Replace key (Windows, Linux); macOS
+    // has none (Cmd+H hides the app), so Cmd+Option+F like most Mac editors.
+    QKeySequence replaceKeys(QKeySequence::Replace);
+    if (replaceKeys.isEmpty()) {
+        replaceKeys = QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_F);
+    }
+    m_findReplaceAction = addEditAction(
+        tr("&Find and Replace..."), replaceKeys,
+        tr("Replace text in string values and keys across the document"));
+
+    editMenu->addSeparator();
+
     m_renameKeyAction = addEditAction(tr("Rena&me Key..."), QKeySequence(),
                                       tr("Rename the selected object member"));
 
@@ -573,6 +590,7 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>Ctrl+F</b></td><td>Focus search bar</td></tr>"
            "<tr><td><b>Ctrl+G</b></td><td>Go to path</td></tr>"
            "<tr><td><b>Return</b></td><td>Next match (in search bar)</td></tr>"
+           "<tr><td><b>%1</b></td><td>Find and replace</td></tr>"
            "<tr><td><b>F3</b></td><td>Next match</td></tr>"
            "<tr><td><b>Shift+F3</b></td><td>Previous match</td></tr>"
            "<tr><td><b>Ctrl+C</b></td><td>Copy selected value (tree)</td></tr>"
@@ -589,7 +607,8 @@ void MainWindow::onShowKeyboardShortcuts() {
            "<tr><td><b>Ctrl+Z / Ctrl+Shift+Z</b></td><td>Undo / redo</td></tr>"
            "<tr><td><b>Del</b></td><td>Delete selected node(s)</td></tr>"
            "<tr><td><b>Esc</b></td><td>Cancel load in progress</td></tr>"
-           "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>");
+           "<tr><td><b>Ctrl+Q</b></td><td>Exit</td></tr>")
+            .arg(m_findReplaceAction->shortcut().toString(QKeySequence::NativeText));
     QMessageBox::information(
         this, tr("Keyboard Shortcuts"),
         QStringLiteral("<table cellspacing=\"8\">%1</table>").arg(rows));
@@ -1029,6 +1048,7 @@ void MainWindow::updateEditActions() {
     m_moveUpAction->setEnabled(hasRow && sourceIndex.row() > 0);
     m_moveDownAction->setEnabled(canMoveDown);
     m_sortKeysAction->setEnabled(targetIsContainer);
+    m_findReplaceAction->setEnabled(root.has_value());
     m_renameKeyAction->setEnabled(canRename);
     m_deleteAction->setEnabled(hasRow);
 }

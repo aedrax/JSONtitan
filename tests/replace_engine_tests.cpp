@@ -1,0 +1,111 @@
+// ---------------------------------------------------------------------------
+// Find & Replace engine tests (unit + property-based)
+// ---------------------------------------------------------------------------
+
+#include <gtest/gtest.h>
+#include <rapidcheck.h>
+
+#include <memory>
+#include <string>
+
+#include "core/edit_engine.h"
+#include "core/json_exporter.h"
+#include "core/json_node.h"
+#include "core/replace_engine.h"
+
+using namespace jsontitan::core;
+
+namespace {
+
+auto parse(const char* json) -> std::shared_ptr<const JsonNode> {
+    auto parsed = parseValueInput(json);
+    EXPECT_TRUE(parsed.has_value()) << json;
+    return parsed ? *parsed : nullptr;
+}
+
+auto compact(const std::shared_ptr<const JsonNode>& node) -> std::string {
+    return exportJson(*node, {.mode = IndentMode::Compact, .trailingNewline = false});
+}
+
+}  // namespace
+
+TEST(ReplaceEngine, SubstringInStringValuesOnlyByDefault) {
+    auto root = parse(R"({"cat": "cat and Cat", "n": 1, "list": ["concat", true]})");
+    auto result = replaceAll(root, {.pattern = "cat", .replacement = "dog"});
+    ASSERT_FALSE(result.error.has_value());
+    // Case-insensitive by default; keys and numbers untouched.
+    EXPECT_EQ(compact(result.root), R"({"cat":"dog and dog","n":1,"list":["condog",true]})");
+    EXPECT_EQ(result.valuesChanged, 2u);
+    EXPECT_EQ(result.keysChanged, 0u);
+}
+
+TEST(ReplaceEngine, CaseSensitiveAndSharing) {
+    auto root = parse(R"({"a": "Cat cat", "b": {"c": "none"}})");
+    auto result = replaceAll(root, {.pattern = "cat", .replacement = "x", .caseSensitive = true});
+    EXPECT_EQ(compact(result.root), R"({"a":"Cat x","b":{"c":"none"}})");
+    // The untouched subtree is shared, not copied.
+    EXPECT_EQ(result.root->children[1].get(), root->children[1].get());
+}
+
+TEST(ReplaceEngine, RegexWithGroups) {
+    auto root = parse(R"({"date": "2024-03-15", "other": "x"})");
+    auto result = replaceAll(root, {.pattern = R"((\d{4})-(\d{2})-(\d{2}))",
+                                    .replacement = "$3/$2/$1",
+                                    .regex = true});
+    ASSERT_FALSE(result.error.has_value());
+    EXPECT_EQ(compact(result.root), R"({"date":"15/03/2024","other":"x"})");
+
+    auto bad = replaceAll(root, {.pattern = "(", .replacement = "", .regex = true});
+    ASSERT_TRUE(bad.error.has_value());
+    EXPECT_EQ(bad.root.get(), root.get());
+}
+
+TEST(ReplaceEngine, KeysWithCollisionsSkipped) {
+    auto root = parse(R"({"old_a": 1, "old_b": 2, "b": 3, "nested": [{"old_c": 4}]})");
+    auto result = replaceAll(root, {.pattern = "old_",
+                                    .replacement = "",
+                                    .caseSensitive = true,
+                                    .inValues = false,
+                                    .inKeys = true});
+    // old_b -> b would duplicate "b", so it is skipped.
+    EXPECT_EQ(compact(result.root), R"({"a":1,"old_b":2,"b":3,"nested":[{"c":4}]})");
+    EXPECT_EQ(result.keysChanged, 2u);
+    EXPECT_EQ(result.keysSkipped, 1u);
+
+    // Two keys renamed onto the same new key: both are skipped.
+    auto pair = parse(R"({"xa": 1, "ya": 2})");
+    auto clash = replaceAll(pair, {.pattern = "^[xy]", .replacement = "", .regex = true,
+                                   .inValues = false, .inKeys = true});
+    EXPECT_EQ(compact(clash.root), R"({"xa":1,"ya":2})");
+    EXPECT_EQ(clash.keysSkipped, 2u);
+}
+
+TEST(ReplaceEngine, NoMatchOrEmptyPattern) {
+    auto root = parse(R"({"a": "b"})");
+    auto none = replaceAll(root, {.pattern = "zzz", .replacement = "y"});
+    EXPECT_EQ(none.root.get(), root.get());
+    EXPECT_EQ(none.valuesChanged, 0u);
+
+    auto empty = replaceAll(root, {.pattern = "", .replacement = "y"});
+    ASSERT_TRUE(empty.error.has_value());
+    EXPECT_EQ(empty.root.get(), root.get());
+}
+
+// Replacing a string that cannot occur with anything is the identity, and
+// replacing X by X never changes content.
+TEST(ReplaceEnginePBT, IdentityReplacementsKeepContent) {
+    rc::check("replaceAll is the identity when it cannot change anything", [] {
+        const auto text = *rc::gen::container<std::string>(rc::gen::inRange('a', 'e'));
+        auto root = parse(("{\"k\": \"" + text + "\", \"l\": [\"" + text + "x\"]}").c_str());
+        RC_ASSERT(root != nullptr);
+        const auto pattern = *rc::gen::nonEmpty(
+            rc::gen::container<std::string>(rc::gen::inRange('a', 'f')));
+
+        auto same = replaceAll(root, {.pattern = pattern, .replacement = pattern,
+                                      .caseSensitive = true, .inKeys = true});
+        RC_ASSERT(compact(same.root) == compact(root));
+
+        auto absent = replaceAll(root, {.pattern = "#", .replacement = "!"});
+        RC_ASSERT(absent.root.get() == root.get());
+    });
+}

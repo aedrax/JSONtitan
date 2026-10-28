@@ -423,3 +423,16 @@ target_link_libraries(deletion_engine_pbt
 )
 
 gtest_discover_tests(deletion_engine_pbt)
+
+# ── Find & Replace Engine Tests (Google Test + RapidCheck, no Qt) ──
+add_executable(replace_engine_tests replace_engine_tests.cpp)
+
+target_link_libraries(replace_engine_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+        rapidcheck
+)
+
+gtest_discover_tests(replace_engine_tests)

@@ -657,3 +657,35 @@ TEST(EditControllerStructure, MultiSelectionDeleteIsOneUndoStep) {
               R"({"keep":1,"list":[0,1,2,3],"drop":2})");
     EXPECT_FALSE(h.session.canUndo());
 }
+
+TEST(EditControllerStructure, ReplaceAllIsOneUndoStep) {
+    Harness h;
+    auto arena = parseBuffer(R"({"greeting": "hello world", "nested": {"hello_key": "hello"}})");
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.json"), QStringLiteral("t.json"));
+    fetchAll(h.model);
+
+    auto result = h.edit->applyReplaceAll(
+        {.pattern = "hello", .replacement = "bye", .inValues = true, .inKeys = true});
+    ASSERT_FALSE(result.error.has_value());
+    EXPECT_EQ(result.valuesChanged, 2u);
+    EXPECT_EQ(result.keysChanged, 1u);
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"greeting":"bye world","nested":{"bye_key":"bye"}})");
+    EXPECT_TRUE(h.session.modified());
+
+    // No match: nothing installed, nothing pushed.
+    auto rootBefore = h.session.currentRoot();
+    auto none = h.edit->applyReplaceAll({.pattern = "zzz", .replacement = "y"});
+    EXPECT_EQ(none.valuesChanged, 0u);
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), rootBefore.get());
+
+    h.edit->undo();
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()),
+              R"({"greeting":"hello world","nested":{"hello_key":"hello"}})");
+    EXPECT_FALSE(h.session.canUndo());
+}

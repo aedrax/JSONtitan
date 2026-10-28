@@ -182,6 +182,7 @@ private:
     QAction* m_moveUpAction = nullptr;
     QAction* m_moveDownAction = nullptr;
     QAction* m_sortKeysAction = nullptr;
+    QAction* m_findReplaceAction = nullptr;
     QAction* m_expandAllAction = nullptr;
     QAction* m_collapseAllAction = nullptr;
     QAction* m_goToPathAction = nullptr;
