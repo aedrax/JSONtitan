@@ -163,9 +163,11 @@ void EditController::deleteSelectedNode() {
         return;
     }
 
-    // Guard: no-op if no selection
+    // Guard: no-op if no selection. The current row must also be selected:
+    // clicking blank space clears the selection but keeps a current index.
     QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
+    if (!proxyIndex.isValid() ||
+        !m_treeView->selectionModel()->isSelected(proxyIndex)) {
         return;
     }
 
@@ -301,8 +303,11 @@ EditController::editableRootSnapshot() const {
 }
 
 jsontitan::core::NodePath EditController::currentSelectionPath() const {
+    // A current row that is no longer selected (blank space was clicked)
+    // does not count: the edit actions then target the root.
     QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
+    if (!proxyIndex.isValid() ||
+        !m_treeView->selectionModel()->isSelected(proxyIndex)) {
         return {};
     }
     QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);

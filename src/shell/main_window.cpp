@@ -152,6 +152,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_treeView->selectionModel(),
             &QItemSelectionModel::currentChanged, this,
             [this]() { updateEditActions(); });
+    connect(m_treeView->selectionModel(),
+            &QItemSelectionModel::selectionChanged, this,
+            [this]() { updateEditActions(); });
     connect(m_session, &DocumentSession::documentReplaced,
             this, &MainWindow::updateEditActions);
 
@@ -1027,9 +1030,13 @@ void MainWindow::updateEditActions() {
     }
     using jsontitan::core::NodeType;
     const auto root = m_session->rootView();
+    // Clicking blank space clears the selection but keeps a current index;
+    // only a current row that is still selected counts.
     const QModelIndex proxyIndex = m_treeView->currentIndex();
     const QModelIndex sourceIndex =
-        proxyIndex.isValid() ? m_filterProxy->mapToSource(proxyIndex) : QModelIndex();
+        proxyIndex.isValid() && m_treeView->selectionModel()->isSelected(proxyIndex)
+            ? m_filterProxy->mapToSource(proxyIndex)
+            : QModelIndex();
     const bool hasRow = sourceIndex.isValid();
 
     // The node actions apply to: the current row, else the document root.

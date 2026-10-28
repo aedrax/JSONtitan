@@ -3285,6 +3285,60 @@ private slots:
         // (Rows are fetched lazily, so check for children, not their count.)
         QVERIFY(treeView->model()->hasChildren(treeView->currentIndex()));
     }
+
+    // Keyboard routing: Ctrl+V belongs to the search bar while it has
+    // focus, and to the tree (paste a node) while the tree does; Alt+Down
+    // reaches Move Down; a current-but-deselected row is not a target.
+    void testShortcutsRouteByFocusAndSelection() {
+        QTemporaryDir dir;
+        const QString filePath = dir.path() + "/keys.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("[10, 20]");
+        }
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        window.openFromCliArgs({filePath.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+        auto* searchBar = window.findChild<QLineEdit*>("searchBar");
+
+        QGuiApplication::clipboard()->setText("30");
+
+        // Search bar focused: Ctrl+V pastes text, the tree is untouched.
+        searchBar->setFocus();
+        QTest::keyClick(searchBar, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(searchBar->text(), QString("30"));
+        searchBar->clear();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+        QVERIFY(!window.windowTitle().startsWith("*"));
+
+        // Tree focused: Ctrl+V inserts after the current row.
+        treeView->setFocus();
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(treeView, Qt::Key_V, Qt::ControlModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 3, 5000);
+        QCOMPARE(treeView->currentIndex().row(), 1);
+        QCOMPARE(treeView->currentIndex().data().toString(), QString("[1]: 30"));
+
+        // Alt+Down moves the selected element down: [10, 30, 20] -> [10, 20, 30].
+        QTest::keyClick(treeView, Qt::Key_Down, Qt::AltModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->currentIndex().row(), 2, 5000);
+        QCOMPARE(treeView->currentIndex().data().toString(), QString("[2]: 30"));
+
+        // Blank-space click: selection cleared, current index kept. The
+        // row actions turn off and Delete does nothing.
+        treeView->selectionModel()->clearSelection();
+        QVERIFY(treeView->currentIndex().isValid());
+        QVERIFY(!editAction(window, "&Delete")->isEnabled());
+        QVERIFY(!editAction(window, "Dupli&cate")->isEnabled());
+        QVERIFY(editAction(window, "Add &Child...")->isEnabled());  // the root
+        QTest::keyClick(treeView, Qt::Key_Delete);
+        QCoreApplication::processEvents();
+        QCOMPARE(treeView->model()->rowCount(), 3);
+    }
 };
 
 // Qt Test requires a QApplication instance
