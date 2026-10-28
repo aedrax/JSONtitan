@@ -207,6 +207,18 @@ auto convertElement(simdjson::dom::element elem,
             break;
         }
 
+        case simdjson::dom::element_type::BIGINT: {
+            // Only produced with parser.number_as_string(true); keep the raw digits.
+            node->type = NodeType::Number;
+            std::string_view digits;
+            if (elem.get_bigint().get(digits) != simdjson::SUCCESS) {
+                return nullptr;
+            }
+            auto valueCopy = arena.copyString(digits);
+            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            break;
+        }
+
         case simdjson::dom::element_type::DOUBLE: {
             node->type = NodeType::Number;
             double val = {};
