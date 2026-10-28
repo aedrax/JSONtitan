@@ -1704,7 +1704,10 @@ private slots:
     void testWindowStatePersistedOnCloseAndRestored() {
         {
             MainWindow window;
-            window.resize(987, 654);
+            // Smaller than the 800x600 virtual screen of the offscreen
+            // platform (CI): restoreGeometry clamps to the screen, so a
+            // larger size would not round-trip there.
+            window.resize(700, 500);
             window.close();  // closeEvent saves geometry/state/splitter
         }
 
@@ -1713,7 +1716,7 @@ private slots:
         QVERIFY(!settings.value("window/splitterState").toByteArray().isEmpty());
 
         MainWindow restored;
-        QCOMPARE(restored.size(), QSize(987, 654));
+        QCOMPARE(restored.size(), QSize(700, 500));
     }
 
     void testRestoreLastSessionMissingFileFallsBackToWelcome() {

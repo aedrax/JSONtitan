@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 
+#include <cstddef>
 #include <cstring>
 
 #include "core/json_node.h"
@@ -3823,11 +3824,14 @@ TEST(ArenaAllocator, AlignmentRespected) {
     jsontitan::core::ArenaAllocator arena(4096);
     // Allocate 1 byte to offset the bump pointer
     arena.allocate(1, 1);
-    // Now allocate with 16-byte alignment
-    void* aligned = arena.allocate(32, 16);
+    // Now allocate with the strictest alignment the arena honors. That is
+    // platform-dependent (16 on x86-64 Linux, 8 on Apple arm64), and
+    // over-aligned requests are refused by design.
+    constexpr std::size_t kAlign = alignof(std::max_align_t);
+    void* aligned = arena.allocate(32, kAlign);
     ASSERT_NE(aligned, nullptr);
     auto addr = reinterpret_cast<std::uintptr_t>(aligned);
-    EXPECT_EQ(addr % 16, 0u) << "Pointer not aligned to 16 bytes";
+    EXPECT_EQ(addr % kAlign, 0u) << "Pointer not aligned to " << kAlign << " bytes";
 }
 
 // === totalAllocated and totalUsed ==========================================

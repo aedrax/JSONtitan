@@ -55,8 +55,8 @@ Light and dark themes follow the app's Catppuccin palette and persist across ses
 Requires a C++23 compiler, CMake ≥ 3.16, and Qt 6 (`Core`, `Gui`, `Widgets`). simdjson is fetched automatically.
 
 ```bash
-git clone https://github.com/yourusername/JSONTitan.git
-cd JSONTitan
+git clone https://github.com/aedrax/JSONtitan.git
+cd JSONtitan
 cmake -B build && cmake --build build -j
 ./build/src/shell/jsontitan_shell your-huge-file.json
 ```

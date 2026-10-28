@@ -276,6 +276,14 @@ TEST(SyntaxHighlighterIntegration, LargeNodeRendersWithinPerformanceBudget) {
     PrettyPrintOptions opts;
     opts.maxOutputSize = 65536;
 
+    // Warm up first: the platform's one-time font database population
+    // (hundreds of ms on the offscreen platform used in CI) is not part of
+    // the rendering cost this test budgets.
+    {
+        QTextEdit warmup;
+        renderHighlighted(&warmup, emitTokens(*root->children.front(), opts), theme);
+    }
+
     // Time the full pipeline
     auto startTime = std::chrono::steady_clock::now();
 
