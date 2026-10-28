@@ -1239,13 +1239,13 @@ private slots:
         f.session.setJsonRoot(makeStoreTree(), QString(), QString(), false);
 
         f.jsonPathToggle.setChecked(true);
-        f.bar.setText("$[?(@.x)]");
+        f.bar.setText("$[?(@.x ==)]");
 
         QTRY_VERIFY_WITH_TIMEOUT(!f.errorLabel.isHidden(), 5000);
         // The core error text is shown verbatim.
         QCOMPARE(f.errorLabel.text(),
-                 QString("JSONPath error at position 1: "
-                         "JSONPath filter expressions are not supported"));
+                 QString("JSONPath error at position 10: "
+                         "Expected '@', '$', or a literal in filter expression"));
         QVERIFY(f.controller.matchPaths().empty());
         QVERIFY(f.matchCountLabel.isHidden());
     }

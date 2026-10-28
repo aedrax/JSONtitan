@@ -149,17 +149,30 @@ TEST(JsonPathParseTest, RejectsUnterminatedIndex) {
     EXPECT_EQ(steps.error().description, "Expected ']' after index");
 }
 
-TEST(JsonPathParseTest, RejectsFilterExpressionsExplicitly) {
-    auto steps = parseJsonPath("$[?(@.price < 10)]");
-    ASSERT_FALSE(steps.has_value());
-    EXPECT_EQ(steps.error().position, 1u);
-    EXPECT_EQ(steps.error().description,
-              "JSONPath filter expressions are not supported");
-
-    auto recursive = parseJsonPath("$..[?(@.x)]");
-    ASSERT_FALSE(recursive.has_value());
-    EXPECT_EQ(recursive.error().description,
-              "JSONPath filter expressions are not supported");
+TEST(JsonPathParseTest, FilterSyntaxErrorsCarryPositions) {
+    struct Case {
+        const char* expr;
+        std::size_t position;
+        const char* description;
+    };
+    for (const auto& c : {
+             Case{"$[?(@.x ==)]", 10, "Expected '@', '$', or a literal in filter expression"},
+             Case{"$[?(@.x > 1]", 11, "Expected ')' in filter expression"},
+             Case{"$[?(@.x > 1)", 12, "Expected ']' after filter expression"},
+             Case{"$[?(@.* > 1)]", 6,
+                  "Expected a name after '.' (filter paths take no wildcards or '..')"},
+             Case{"$[?(@[*])]", 5, "Filter paths take names and indices only"},
+             Case{"$[?(1)]", 4, "A literal on its own is not a condition; compare it "
+                                "with ==, !=, <, <=, > or >="},
+             Case{"$[?(@.s =~ 'x')]", 11, "Expected /pattern/ after '=~'"},
+             Case{"$[?(@.s =~ /(/)]", 11, "Invalid regular expression /(/"},
+             Case{"$[?(@.s == 'x)]", 11, "Unterminated string in filter expression"},
+         }) {
+        auto steps = parseJsonPath(c.expr);
+        ASSERT_FALSE(steps.has_value()) << c.expr;
+        EXPECT_EQ(steps.error().position, c.position) << c.expr;
+        EXPECT_EQ(steps.error().description, c.description) << c.expr;
+    }
 }
 
 TEST(JsonPathParseTest, RejectsMissingNames) {
@@ -210,12 +223,12 @@ TEST(JsonPathParseTest, ParsesQuotedNameEscapes) {
 
 TEST(JsonPathParseTest, QueryReportsParseErrorWithPosition) {
     auto root = JsonNode::makeObject("", {});
-    auto result = queryJsonPath(NodeView(*root), "$[?(@.x)]");
+    auto result = queryJsonPath(NodeView(*root), "$[?(@.x ==)]");
     ASSERT_TRUE(result.error.has_value());
     EXPECT_TRUE(result.matches.empty());
     EXPECT_EQ(result.error->description,
-              "JSONPath error at position 1: "
-              "JSONPath filter expressions are not supported");
+              "JSONPath error at position 10: "
+              "Expected '@', '$', or a literal in filter expression");
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +446,116 @@ TEST(JsonPathPBT, ResultsNeverContainDuplicatePaths) {
                           paths.end());
             }
         });
+}
+
+// ---------------------------------------------------------------------------
+// Filter expressions
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// root children: books [0], limit [1], tags [2], meta [3]
+const char* const kShopJson = R"({
+  "books": [
+    {"title": "Sayings", "price": 8.95, "isbn": "0-553", "author": "Nigel Rees"},
+    {"title": "Sword", "price": 12.99, "author": "Evelyn Waugh"},
+    {"title": "Moby", "price": 8.99, "isbn": "0-395", "author": "Herman Melville"},
+    {"title": "Rings", "price": 22.99, "isbn": "0-618", "author": "J. R. R. Tolkien",
+     "meta": {"tags": ["epic"]}}
+  ],
+  "limit": 10,
+  "tags": [3, 1, 4, 1, 5],
+  "meta": {"a": {"x": 1}, "b": {"x": 2}, "c": {"y": 3}}
+})";
+
+class JsonPathFilterTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        auto parsed = parseOracle(kShopJson);
+        ASSERT_FALSE(parsed.error.has_value());
+        root = parsed.root;
+    }
+
+    // Indices (under $.books) of the matched books.
+    auto books(const std::string& filter) const -> std::vector<std::size_t> {
+        auto result = queryJsonPath(NodeView(*root), "$.books[" + filter + "]");
+        EXPECT_FALSE(result.error.has_value())
+            << filter << ": " << (result.error ? result.error->description : "");
+        std::vector<std::size_t> indices;
+        for (const auto& path : sortedPaths(result)) {
+            indices.push_back(path.back());
+        }
+        return indices;
+    }
+
+    std::shared_ptr<const JsonNode> root;
+};
+
+using Indices = std::vector<std::size_t>;
+
+}  // namespace
+
+TEST_F(JsonPathFilterTest, NumericComparisons) {
+    EXPECT_EQ(books("?(@.price < 10)"), (Indices{0, 2}));
+    EXPECT_EQ(books("?(@.price <= 8.95)"), (Indices{0}));
+    EXPECT_EQ(books("?(@.price > 12.99)"), (Indices{3}));
+    EXPECT_EQ(books("?(@.price >= 12.99)"), (Indices{1, 3}));
+    EXPECT_EQ(books("?(@.price == 8.99)"), (Indices{2}));
+    // Numbers compare by value, not text.
+    EXPECT_EQ(books("?(@.price == 8.990e0)"), (Indices{2}));
+    // Comparing against the document root.
+    EXPECT_EQ(books("?(@.price < $.limit)"), (Indices{0, 2}));
+}
+
+TEST_F(JsonPathFilterTest, StringsExistenceAndLogic) {
+    EXPECT_EQ(books("?(@.author == 'Evelyn Waugh')"), (Indices{1}));
+    EXPECT_EQ(books("?(@.author != \"Evelyn Waugh\")"), (Indices{0, 2, 3}));
+    EXPECT_EQ(books("?(@.isbn)"), (Indices{0, 2, 3}));
+    EXPECT_EQ(books("?(!@.isbn)"), (Indices{1}));
+    EXPECT_EQ(books("?(@.isbn && @.price < 10)"), (Indices{0, 2}));
+    EXPECT_EQ(books("?(@.price > 20 || @.title == 'Sword')"), (Indices{1, 3}));
+    EXPECT_EQ(books("?(!(@.price < 10 || @.price > 20))"), (Indices{1}));
+    // Nested paths and the RFC 9535 form without parentheses.
+    EXPECT_EQ(books("?@.meta.tags[0] == 'epic'"), (Indices{3}));
+    // Missing paths never compare equal.
+    EXPECT_EQ(books("?(@.nope == 1)"), (Indices{}));
+}
+
+TEST_F(JsonPathFilterTest, RegexAndTypeMismatches) {
+    EXPECT_EQ(books("?(@.author =~ /^[HN]/)"), (Indices{0, 2}));
+    EXPECT_EQ(books("?(@.author =~ /tolkien/i)"), (Indices{3}));
+    // A number is neither equal to nor ordered against a string.
+    EXPECT_EQ(books("?(@.price == '8.95')"), (Indices{}));
+    EXPECT_EQ(books("?(@.price < 'z')"), (Indices{}));
+    EXPECT_EQ(books("?(@.title < 'S')"), (Indices{2, 3}));
+}
+
+TEST_F(JsonPathFilterTest, CurrentNodeObjectChildrenAndRecursion) {
+    // '@' alone: array elements themselves.
+    auto big = queryJsonPath(NodeView(*root), "$.tags[?(@ > 2)]");
+    ASSERT_FALSE(big.error.has_value());
+    EXPECT_EQ(sortedPaths(big), (Paths{{2, 0}, {2, 2}, {2, 4}}));
+
+    // Filters test object members too.
+    auto members = queryJsonPath(NodeView(*root), "$.meta[?(@.x)]");
+    ASSERT_FALSE(members.error.has_value());
+    EXPECT_EQ(sortedPaths(members), (Paths{{3, 0}, {3, 1}}));
+
+    // Recursive filter, followed by a member step.
+    auto titles = queryJsonPath(NodeView(*root), "$..[?(@.price < 10)].title");
+    ASSERT_FALSE(titles.error.has_value());
+    EXPECT_EQ(sortedPaths(titles), (Paths{{0, 0, 0}, {0, 2, 0}}));
+}
+
+TEST_F(JsonPathFilterTest, ArenaBackingMatchesOracle) {
+    auto arena = parseBuffer(std::string(kShopJson));
+    ASSERT_TRUE(arena.ok());
+    for (const auto* expr : {"$..[?(@.price < $.limit)]", "$.books[?(@.isbn && !@.meta)]",
+                             "$..[?(@ == 1)]", "$..[?(@.author =~ /e/)]"}) {
+        EXPECT_EQ(sortedPaths(queryJsonPath(NodeView(*arena.root), expr)),
+                  sortedPaths(queryJsonPath(NodeView(*root), expr)))
+            << expr;
+    }
 }
 
 // ---------------------------------------------------------------------------

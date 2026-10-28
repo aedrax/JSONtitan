@@ -640,7 +640,9 @@ void MainWindow::setupCentralWidget() {
     m_jsonPathToggle->setText(tr("$"));
     m_jsonPathToggle->setCheckable(true);
     m_jsonPathToggle->setChecked(false);
-    m_jsonPathToggle->setToolTip(tr("JSONPath query ($.store.book[*].author)"));
+    m_jsonPathToggle->setToolTip(
+        tr("JSONPath query, e.g. $.store.book[*].author or "
+           "$..book[?(@.price < 10)].title"));
     searchLayout->addWidget(m_jsonPathToggle);
 
     mainLayout->addLayout(searchLayout);

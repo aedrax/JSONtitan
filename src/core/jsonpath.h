@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -12,29 +13,46 @@
 
 namespace jsontitan::core {
 
+// A parsed filter predicate ([?(...)]); defined in jsonpath.cpp.
+struct FilterExpr;
+
 // One evaluation step of the supported JSONPath subset:
 //   $           root (consumed by the parser, not a step)
 //   .name       object member                       -> Key
 //   ['name']    object member (quoted)              -> Key
 //   [n]         array element                       -> Index
 //   [*] / .*    every child                         -> Wildcard
+//   [?(expr)]   every child for which expr holds    -> Filter
 //   ..name      recursive descent + member          -> RecursiveKey
 //   ..[n]       recursive descent + element         -> RecursiveIndex
 //   ..* / ..[*] recursive descent + every child     -> RecursiveWildcard
-// Filter expressions ([?(...)]) are intentionally unsupported and produce a
-// parse error saying so.
+//   ..[?(expr)] recursive descent + filter          -> RecursiveFilter
+//
+// Filter expressions (the parentheses are optional: [?@.a > 1]):
+//   @.a.b[0] / @['k']   path from the child being tested ('@' alone is it)
+//   $.a                 path from the document root
+//   'text' "text" 42 -1.5e3 true false null      literals
+//   == != < <= > >=     comparisons; numbers compare numerically, strings
+//                       by bytes, mismatched types are never equal/ordered
+//   =~ /regex/i         regex search on a string ('i': ignore case)
+//   @.a                 on its own: the path exists
+//   ! && || ( )         logic and grouping
+// Filter paths take names and indices only (no wildcards or '..').
 struct JsonPathStep {
     enum class Kind {
         Key,
         Index,
         Wildcard,
+        Filter,
         RecursiveKey,
         RecursiveIndex,
         RecursiveWildcard,
+        RecursiveFilter,
     };
     Kind kind;
     std::string key;        // Key / RecursiveKey
     std::size_t index = 0;  // Index / RecursiveIndex
+    std::shared_ptr<const FilterExpr> filter = nullptr;  // (Recursive)Filter
 };
 
 struct JsonPathError {
