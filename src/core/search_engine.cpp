@@ -1,9 +1,9 @@
 #include "core/search_engine.h"
 
 #include <algorithm>
-#include <cctype>
 #include <regex>
 
+#include "core/ascii.h"
 #include "core/jsonpath.h"
 #include "core/node_view.h"
 
@@ -14,11 +14,6 @@ namespace {
 // How often (in visited nodes) the cancellation callback is polled.
 constexpr std::size_t kCancelCheckInterval = 4096;
 
-// Lowercase one char (byte-wise; matches the previous toLower semantics).
-inline auto lowerChar(char c) -> char {
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-}
-
 // Allocation-free case-insensitive substring scan. `loweredNeedle` must
 // already be lowercased (done once per filter() call, not once per node —
 // the previous implementation heap-allocated two lowered copies per visited
@@ -28,7 +23,7 @@ auto containsSubstringCI(std::string_view haystack, std::string_view loweredNeed
     auto it = std::search(
         haystack.begin(), haystack.end(),
         loweredNeedle.begin(), loweredNeedle.end(),
-        [](char h, char n) { return lowerChar(h) == n; });
+        [](char h, char n) { return ascii::toLower(h) == n; });
     return it != haystack.end();
 }
 
@@ -149,7 +144,7 @@ auto prepare(const SearchQuery& query,
     } else if (!query.caseSensitive) {
         cq.loweredPattern.reserve(query.pattern.size());
         for (char c : query.pattern) {
-            cq.loweredPattern += lowerChar(c);
+            cq.loweredPattern += ascii::toLower(c);
         }
     }
     return std::nullopt;

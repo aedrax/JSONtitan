@@ -1,8 +1,8 @@
 #include "core/xml_exporter.h"
 
+#include "core/ascii.h"
 #include "core/stream_export.h"
 
-#include <cctype>
 #include <string>
 
 namespace jsontitan::core {
@@ -18,7 +18,7 @@ namespace {
 // colon is legal XML but means a namespace prefix to every namespace-aware
 // parser, which rejects an undeclared one ("unbound prefix").
 auto isXmlNameStartChar(char c) -> bool {
-    return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+    return ascii::isAlpha(c) || c == '_';
 }
 
 // Check if a character is valid within an XML name (not first position).
@@ -26,7 +26,7 @@ auto isXmlNameStartChar(char c) -> bool {
 // [#x203F-#x2040]
 // For simplicity, we allow ASCII letters, digits, underscore, hyphen, dot.
 auto isXmlNameChar(char c) -> bool {
-    return isXmlNameStartChar(c) || std::isdigit(static_cast<unsigned char>(c)) ||
+    return isXmlNameStartChar(c) || ascii::isDigit(c) ||
            c == '-' || c == '.';
 }
 
@@ -41,7 +41,7 @@ auto sanitizeXmlName(const std::string& name) -> std::string {
     result.reserve(name.size() + 1);
 
     // First character: must be a valid XML NameStartChar
-    if (std::isdigit(static_cast<unsigned char>(name[0]))) {
+    if (ascii::isDigit(name[0])) {
         // Prepend underscore if starts with a digit
         result += '_';
         result += name[0];

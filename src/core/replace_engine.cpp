@@ -1,20 +1,17 @@
 #include "core/replace_engine.h"
 
 #include <algorithm>
-#include <cctype>
 #include <regex>
 #include <set>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "core/ascii.h"
+
 namespace jsontitan::core {
 
 namespace {
-
-auto foldAscii(char c) -> char {
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-}
 
 // True when `text` is well-formed UTF-8 (RFC 3629: no overlong forms,
 // surrogates, or code points past U+10FFFF).
@@ -63,7 +60,7 @@ public:
         if (!options.caseSensitive) {
             m_foldedPattern.reserve(options.pattern.size());
             for (char c : options.pattern) {
-                m_foldedPattern += foldAscii(c);
+                m_foldedPattern += ascii::toLower(c);
             }
         }
     }
@@ -163,7 +160,7 @@ private:
         }
         auto it = std::search(text.begin() + static_cast<std::ptrdiff_t>(from), text.end(),
                               m_foldedPattern.begin(), m_foldedPattern.end(),
-                              [](char a, char b) { return foldAscii(a) == b; });
+                              [](char a, char b) { return ascii::toLower(a) == b; });
         return it == text.end() ? std::string_view::npos
                                 : static_cast<std::size_t>(it - text.begin());
     }

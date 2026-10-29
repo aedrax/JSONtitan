@@ -5,13 +5,16 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 
+#include <clocale>
 #include <memory>
 #include <string>
 
 #include "core/edit_engine.h"
 #include "core/json_exporter.h"
 #include "core/json_node.h"
+#include "core/jsonpath.h"
 #include "core/replace_engine.h"
+#include "core/xml_exporter.h"
 
 using namespace jsontitan::core;
 
@@ -145,4 +148,29 @@ TEST(ReplaceEngine, RegexNeverSplitsACharacter) {
                                                       .replacement = "a",
                                                       .regex = true});
     EXPECT_EQ(compact(whole.root), R"(["ab"])");
+}
+
+// Regression: case folding, XML names and path trimming used <cctype>, which
+// follows the process locale. Qt sets it from the system, and in a UTF-8
+// locale tolower(0xC3) is 0xE3 and isspace(0xA0) is true, so single bytes
+// of multi-byte characters were folded, renamed or trimmed.
+TEST(ReplaceEngine, TextHandlingIgnoresTheProcessLocale) {
+    struct RestoreLocale {
+        std::string previous = std::setlocale(LC_ALL, nullptr);
+        ~RestoreLocale() { std::setlocale(LC_ALL, previous.c_str()); }
+    } restore;
+    if (!std::setlocale(LC_ALL, "en_US.UTF-8") && !std::setlocale(LC_ALL, "C.UTF-8")) {
+        GTEST_SKIP() << "no UTF-8 locale installed";
+    }
+
+    // U+38C0 is E3 A3 80; folding C3 to E3 made "ã" (C3 A3) match inside it.
+    auto cjk = parse("[\"\\u38c0\"]");
+    auto replaced = replaceAll(cjk, {.pattern = "\xC3\xA3", .replacement = "a"});
+    EXPECT_EQ(replaced.root.get(), cjk.get());
+
+    EXPECT_EQ(sanitizeXmlName("caf\xC3\xA9"), "caf__");
+
+    auto path = parseDefinitePath("$.\xC3\xA0");  // "à" ends in byte A0
+    ASSERT_TRUE(path.has_value());
+    EXPECT_EQ(std::get<std::string>(path->front()), "\xC3\xA0");
 }

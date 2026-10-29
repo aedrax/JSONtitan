@@ -1,7 +1,6 @@
 #include "core/jsonpath.h"
 
 #include <algorithm>
-#include <cctype>
 #include <charconv>
 #include <functional>
 #include <limits>
@@ -9,6 +8,8 @@
 #include <regex>
 #include <set>
 #include <utility>
+
+#include "core/ascii.h"
 
 namespace jsontitan::core {
 
@@ -48,7 +49,7 @@ auto isNameChar(char c) -> bool {
     // characters '.', '[', ']', '*', and whitespace. Multi-byte UTF-8
     // continuation bytes (>= 0x80) are allowed.
     return uc >= 0x80 ||
-           (std::isgraph(uc) != 0 && c != '.' && c != '[' && c != ']' && c != '*');
+           (uc > 0x20 && uc < 0x7F && c != '.' && c != '[' && c != ']' && c != '*');
 }
 
 auto parseFilter(std::string_view expr, std::size_t& pos)
@@ -108,11 +109,11 @@ auto parseBracket(std::string_view expr, std::size_t& pos)
         return JsonPathStep{.kind = JsonPathStep::Kind::Key, .key = std::move(name)};
     }
 
-    if (std::isdigit(static_cast<unsigned char>(expr[pos])) != 0) {
+    if (ascii::isDigit(expr[pos])) {
         const std::size_t start = pos;
         std::size_t value = 0;
         while (pos < expr.size() &&
-               std::isdigit(static_cast<unsigned char>(expr[pos])) != 0) {
+               ascii::isDigit(expr[pos])) {
             const auto digit = static_cast<std::size_t>(expr[pos] - '0');
             // Overflow guard: the draft silently wrapped huge indices around
             // std::size_t, turning e.g. [18446744073709551616] into [0].
@@ -158,7 +159,7 @@ private:
     [[nodiscard]] auto peek() const -> char { return atEnd() ? '\0' : m_expr[m_pos]; }
 
     void skipSpace() {
-        while (!atEnd() && std::isspace(static_cast<unsigned char>(m_expr[m_pos])) != 0) {
+        while (!atEnd() && ascii::isSpace(m_expr[m_pos])) {
             ++m_pos;
         }
     }
@@ -267,7 +268,7 @@ private:
 
     static auto isFilterNameChar(char c) -> bool {
         const auto uc = static_cast<unsigned char>(c);
-        return uc >= 0x80 || std::isalnum(uc) != 0 || c == '_' || c == '-' || c == '$';
+        return uc >= 0x80 || ascii::isAlnum(c) || c == '_' || c == '-' || c == '$';
     }
 
     auto parseOperand() -> std::optional<FilterOperand> {
@@ -290,12 +291,12 @@ private:
             }
             return operand;
         }
-        if (c == '-' || std::isdigit(static_cast<unsigned char>(c)) != 0) {
+        if (c == '-' || ascii::isDigit(c)) {
             const std::size_t start = m_pos;
             if (c == '-') {
                 ++m_pos;
             }
-            while (!atEnd() && (std::isdigit(static_cast<unsigned char>(peek())) != 0 ||
+            while (!atEnd() && (ascii::isDigit(peek()) ||
                                 peek() == '.' || peek() == 'e' || peek() == 'E' ||
                                 ((peek() == '+' || peek() == '-') &&
                                  (m_expr[m_pos - 1] == 'e' || m_expr[m_pos - 1] == 'E')))) {
@@ -411,7 +412,7 @@ private:
         }
         ++m_pos;  // closing '/'
         auto flags = std::regex::ECMAScript;
-        while (!atEnd() && std::isalpha(static_cast<unsigned char>(peek())) != 0) {
+        while (!atEnd() && ascii::isAlpha(peek())) {
             if (peek() != 'i') {
                 fail(m_pos, std::string("Unknown regex flag '") + peek() + "'");
                 return nullptr;
@@ -437,7 +438,7 @@ auto parseFilter(std::string_view expr, std::size_t& pos)
             JsonPathError{parser.position(), "Invalid filter expression"}));
     }
     pos = parser.position();
-    while (pos < expr.size() && std::isspace(static_cast<unsigned char>(expr[pos])) != 0) {
+    while (pos < expr.size() && ascii::isSpace(expr[pos])) {
         ++pos;
     }
     return filter;
@@ -857,10 +858,10 @@ auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps,
 
 auto parseDefinitePath(std::string_view expr)
     -> std::expected<NodePath, JsonPathError> {
-    while (!expr.empty() && std::isspace(static_cast<unsigned char>(expr.front())) != 0) {
+    while (!expr.empty() && ascii::isSpace(expr.front())) {
         expr.remove_prefix(1);
     }
-    while (!expr.empty() && std::isspace(static_cast<unsigned char>(expr.back())) != 0) {
+    while (!expr.empty() && ascii::isSpace(expr.back())) {
         expr.remove_suffix(1);
     }
     if (expr.empty()) {

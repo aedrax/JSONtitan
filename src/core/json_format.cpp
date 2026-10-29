@@ -1,7 +1,8 @@
 #include "core/json_format.h"
 
 #include <algorithm>
-#include <cctype>
+
+#include "core/ascii.h"
 
 namespace jsontitan::core {
 
@@ -14,8 +15,7 @@ auto endsWithNoCase(std::string_view text, std::string_view suffix) -> bool {
     return std::equal(suffix.begin(), suffix.end(),
                       text.end() - static_cast<std::ptrdiff_t>(suffix.size()),
                       [](char a, char b) {
-                          return std::tolower(static_cast<unsigned char>(a)) ==
-                                 std::tolower(static_cast<unsigned char>(b));
+                          return ascii::toLower(a) == ascii::toLower(b);
                       });
 }
 

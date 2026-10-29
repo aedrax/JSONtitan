@@ -4,14 +4,14 @@
 #include <filesystem>
 #include <string>
 
+#include "core/ascii.h"
+
 namespace jsontitan::core {
 
 namespace {
 
 bool isBlank(const std::string& s) {
-    return s.empty() ||
-           std::all_of(s.begin(), s.end(),
-                       [](unsigned char c) { return std::isspace(c); });
+    return std::all_of(s.begin(), s.end(), ascii::isSpace);
 }
 
 } // namespace
