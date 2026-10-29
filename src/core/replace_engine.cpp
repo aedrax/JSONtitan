@@ -13,46 +13,6 @@ namespace jsontitan::core {
 
 namespace {
 
-// True when `text` is well-formed UTF-8 (RFC 3629: no overlong forms,
-// surrogates, or code points past U+10FFFF).
-auto isValidUtf8(std::string_view text) -> bool {
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const auto lead = static_cast<unsigned char>(text[i]);
-        if (lead < 0x80) {
-            ++i;
-            continue;
-        }
-        std::size_t continuations = 0;
-        unsigned char low = 0x80;  // allowed range of the first continuation byte
-        unsigned char high = 0xBF;
-        if (lead >= 0xC2 && lead <= 0xDF) {
-            continuations = 1;
-        } else if (lead >= 0xE0 && lead <= 0xEF) {
-            continuations = 2;
-            low = lead == 0xE0 ? 0xA0 : 0x80;
-            high = lead == 0xED ? 0x9F : 0xBF;
-        } else if (lead >= 0xF0 && lead <= 0xF4) {
-            continuations = 3;
-            low = lead == 0xF0 ? 0x90 : 0x80;
-            high = lead == 0xF4 ? 0x8F : 0xBF;
-        } else {
-            return false;
-        }
-        if (i + continuations >= text.size()) {
-            return false;
-        }
-        for (std::size_t k = 1; k <= continuations; ++k) {
-            const auto byte = static_cast<unsigned char>(text[i + k]);
-            if (byte < (k == 1 ? low : 0x80) || byte > (k == 1 ? high : 0xBF)) {
-                return false;
-            }
-        }
-        i += continuations + 1;
-    }
-    return true;
-}
-
 class Replacer {
 public:
     Replacer(const ReplaceOptions& options, std::optional<std::regex> regex)
@@ -110,7 +70,7 @@ public:
                 if (!replaced || *replaced == node->value) {
                     return node;
                 }
-                if (splitsCharacter(*replaced)) {
+                if (splitsCharacter(node->value)) {
                     ++result.valuesSkipped;
                     return node;
                 }
@@ -148,10 +108,25 @@ private:
     std::optional<std::regex> m_regex;
     std::string m_foldedPattern;
 
-    // A regex works on bytes, so a match can cut a multi-byte character in
-    // half. (Substring matches cannot: the pattern is whole UTF-8 itself.)
-    auto splitsCharacter(std::string_view replaced) const -> bool {
-        return m_regex && !isValidUtf8(replaced);
+    // A regex works on bytes, so a match can start or end inside a
+    // multi-byte character ("." matches each byte of "é"). Substring matches
+    // cannot: the pattern is whole UTF-8 itself, and folding is ASCII-only.
+    auto splitsCharacter(std::string_view text) const -> bool {
+        if (!m_regex) {
+            return false;
+        }
+        const auto insideCharacter = [text](std::ptrdiff_t pos) {
+            return static_cast<std::size_t>(pos) < text.size() &&
+                   (static_cast<unsigned char>(text[static_cast<std::size_t>(pos)]) & 0xC0) == 0x80;
+        };
+        for (std::cregex_iterator it(text.data(), text.data() + text.size(), *m_regex), end;
+             it != end; ++it) {
+            if (insideCharacter(it->position()) ||
+                insideCharacter(it->position() + it->length())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     auto find(std::string_view text, std::size_t from) const -> std::size_t {
@@ -176,7 +151,7 @@ private:
             if (replaced && *replaced == member->key) {
                 replaced.reset();
             }
-            if (replaced && splitsCharacter(*replaced)) {
+            if (replaced && splitsCharacter(member->key)) {
                 ++result.keysSkipped;
                 replaced.reset();
             }

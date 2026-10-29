@@ -148,6 +148,13 @@ TEST(ReplaceEngine, RegexNeverSplitsACharacter) {
                                                       .replacement = "a",
                                                       .regex = true});
     EXPECT_EQ(compact(whole.root), R"(["ab"])");
+
+    // A split can also leave valid UTF-8: "." matches each byte of "é",
+    // which turned "café" into five stars.
+    auto cafe = parse("[\"caf\\u00e9\", \"tea\"]");
+    auto dots = replaceAll(cafe, {.pattern = ".", .replacement = "*", .regex = true});
+    EXPECT_EQ(compact(dots.root), R"(["café","***"])");
+    EXPECT_EQ(dots.valuesSkipped, 1u);
 }
 
 // Regression: case folding, XML names and path trimming used <cctype>, which
