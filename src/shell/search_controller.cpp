@@ -3,6 +3,7 @@
 #include <QAbstractItemView>
 
 #include <algorithm>
+#include <cstdint>
 
 #include "shell/model_paths.h"
 
@@ -78,6 +79,9 @@ SearchController::SearchController(Ui ui, TreeModel* treeModel,
 }
 
 SearchController::~SearchController() {
+    // Abort a running search instead of waiting for it to scan the rest of
+    // the tree.
+    m_searchWorker->updateLatestGeneration(UINT64_MAX);
     m_searchThread->quit();
     m_searchThread->wait();
     delete m_searchWorker;

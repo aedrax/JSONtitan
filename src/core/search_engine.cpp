@@ -167,7 +167,7 @@ auto filter(const JsonNode& root, const SearchQuery& query,
     // JSONPath mode is a structural query, not a text scan: delegate to the
     // JSONPath engine (caseSensitive is ignored — member names are exact).
     if (query.mode == SearchMode::JsonPath) {
-        return queryJsonPath(NodeView(root), query.pattern);
+        return queryJsonPath(NodeView(root), query.pattern, shouldCancel);
     }
 
     std::regex regexStorage;
@@ -213,7 +213,7 @@ auto filter(const ArenaJsonNode& root, const SearchQuery& query,
     // JSONPath mode: same structural evaluation as the JsonNode overload —
     // NodeView abstracts the backing, so matches carry identical index paths.
     if (query.mode == SearchMode::JsonPath) {
-        return queryJsonPath(NodeView(root), query.pattern);
+        return queryJsonPath(NodeView(root), query.pattern, shouldCancel);
     }
 
     std::regex regexStorage;

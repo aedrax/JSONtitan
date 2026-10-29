@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <regex>
@@ -502,6 +503,48 @@ auto toNumber(std::string_view text) -> std::optional<double> {
     return value;
 }
 
+// Order (<0, 0, >0) of two integers written as decimal digits with an
+// optional '-', compared exactly at any size; nullopt when either text is
+// not such an integer. Doubles lose precision past 2^53, so equal-looking
+// IDs would otherwise compare equal.
+auto compareIntegers(std::string_view x, std::string_view y) -> std::optional<int> {
+    struct Integer {
+        bool negative = false;
+        std::string_view digits;  // without sign and leading zeros; "" is 0
+    };
+    auto split = [](std::string_view text) -> std::optional<Integer> {
+        Integer value;
+        if (!text.empty() && text.front() == '-') {
+            value.negative = true;
+            text.remove_prefix(1);
+        }
+        if (text.empty() || !std::all_of(text.begin(), text.end(), [](char c) {
+                return c >= '0' && c <= '9';
+            })) {
+            return std::nullopt;
+        }
+        text.remove_prefix(std::min(text.find_first_not_of('0'), text.size()));
+        value.digits = text;
+        value.negative = value.negative && !text.empty();  // -0 is 0
+        return value;
+    };
+    auto a = split(x);
+    auto b = split(y);
+    if (!a || !b) {
+        return std::nullopt;
+    }
+    if (a->negative != b->negative) {
+        return a->negative ? -1 : 1;
+    }
+    int magnitude = 0;
+    if (a->digits.size() != b->digits.size()) {
+        magnitude = a->digits.size() < b->digits.size() ? -1 : 1;
+    } else {
+        magnitude = a->digits.compare(b->digits);
+    }
+    return a->negative ? -magnitude : magnitude;
+}
+
 auto compareValues(const OperandValue& a, const OperandValue& b, std::string_view comparator)
     -> bool {
     const bool equalityOp = comparator == "==" || comparator == "!=";
@@ -511,6 +554,10 @@ auto compareValues(const OperandValue& a, const OperandValue& b, std::string_vie
     int order = 0;  // <0, 0, >0
     switch (a.type) {
         case NodeType::Number: {
+            if (auto exact = compareIntegers(a.text, b.text)) {
+                order = *exact;
+                break;
+            }
             auto x = toNumber(a.text);
             auto y = toNumber(b.text);
             if (!x || !y) {
@@ -598,16 +645,35 @@ struct WorkItem {
     IndexPath path;
 };
 
+// Polls the caller's cancellation callback every few thousand nodes.
+struct CancelPoll {
+    static constexpr std::size_t kInterval = 4096;
+    const std::function<bool()>& shouldCancel;
+    std::size_t visited = 0;
+    bool cancelled = false;
+
+    auto poll() -> bool {
+        if (!cancelled && shouldCancel && ++visited % kInterval == 0) {
+            cancelled = shouldCancel();
+        }
+        return cancelled;
+    }
+};
+
 // Enumerate `item` and every descendant (pre-order) into `out`.
 // Recurses once per tree level; safe because JSON nesting is parse-capped at
 // 1024 (parser.cpp kMaxDepth / simdjson's max_depth), far below stack limits.
-void enumerateRecursive(const WorkItem& item, std::vector<WorkItem>& out) {
+void enumerateRecursive(const WorkItem& item, std::vector<WorkItem>& out,
+                        CancelPoll& cancel) {
+    if (cancel.poll()) {
+        return;
+    }
     out.push_back(item);
     const std::size_t count = item.node.childCount();
     for (std::size_t i = 0; i < count; ++i) {
         WorkItem child{item.node.child(i), item.path};
         child.path.push_back(i);
-        enumerateRecursive(child, out);
+        enumerateRecursive(child, out, cancel);
     }
 }
 
@@ -743,7 +809,9 @@ auto parseJsonPath(std::string_view expr)
     return steps;
 }
 
-auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterResult {
+auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps,
+                  const std::function<bool()>& shouldCancel) -> FilterResult {
+    CancelPoll cancel{shouldCancel};
     std::vector<WorkItem> current;
     current.push_back(WorkItem{root, {}});
 
@@ -751,7 +819,7 @@ auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterR
         std::vector<WorkItem> expanded;
         if (isRecursive(step)) {
             for (const auto& item : current) {
-                enumerateRecursive(item, expanded);
+                enumerateRecursive(item, expanded, cancel);
             }
         } else {
             expanded = std::move(current);
@@ -759,12 +827,18 @@ auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterR
 
         std::vector<WorkItem> next;
         for (const auto& item : expanded) {
+            if (cancel.poll()) {
+                break;
+            }
             applyBase(step, item, root, next);
         }
         current = std::move(next);
-        if (current.empty()) {
+        if (current.empty() || cancel.cancelled) {
             break;
         }
+    }
+    if (cancel.cancelled) {
+        return {};  // the caller discards a cancelled result
     }
 
     // Deduplicate (recursive steps can reach the same node twice) and emit.
@@ -828,7 +902,8 @@ auto parseDefinitePath(std::string_view expr)
     return path;
 }
 
-auto queryJsonPath(NodeView root, std::string_view expr) -> FilterResult {
+auto queryJsonPath(NodeView root, std::string_view expr,
+                   const std::function<bool()>& shouldCancel) -> FilterResult {
     auto steps = parseJsonPath(expr);
     if (!steps) {
         return FilterResult{
@@ -839,7 +914,7 @@ auto queryJsonPath(NodeView root, std::string_view expr) -> FilterResult {
                                steps.error().description},
         };
     }
-    return evalJsonPath(root, *steps);
+    return evalJsonPath(root, *steps, shouldCancel);
 }
 
 } // namespace jsontitan::core

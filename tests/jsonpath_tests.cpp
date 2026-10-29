@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "core/deletion_engine.h"
+#include "core/edit_engine.h"
 #include "core/json_node.h"
 #include "core/jsonpath.h"
 #include "core/node_view.h"
@@ -599,3 +600,38 @@ TEST(JsonPathDefinite, RejectsMultiMatchAndBadSyntax) {
 }
 
 }  // namespace
+
+// Regression: JSONPath ignored the cancellation callback, so a stale '..'
+// query on a large tree ran to completion and blocked newer searches.
+TEST(JsonPath, RecursiveQueryStopsWhenCancelled) {
+    std::vector<std::shared_ptr<const JsonNode>> elements;
+    for (int i = 0; i < 20000; ++i) {
+        elements.push_back(JsonNode::makeNumber("", std::to_string(i)));
+    }
+    auto root = JsonNode::makeArray("", std::move(elements));
+
+    int polls = 0;
+    auto result = queryJsonPath(NodeView(*root), "$..*", [&polls]() {
+        ++polls;
+        return true;
+    });
+    EXPECT_EQ(polls, 1);
+    EXPECT_TRUE(result.matches.empty());
+
+    EXPECT_EQ(queryJsonPath(NodeView(*root), "$..*").matches.size(), 20000u);
+}
+
+// Regression: filter numbers were compared as doubles, so integers past 2^53
+// (IDs) that differ in the last digit compared equal.
+TEST(JsonPath, LargeIntegersCompareExactly) {
+    auto root = *parseValueInput(
+        R"([{"id": 9007199254740993}, {"id": -12}, {"id": 123456789012345678901234567890}])");
+    auto ids = [&](const std::string& filter) {
+        return sortedPaths(queryJsonPath(NodeView(*root), "$[?(" + filter + ")]"));
+    };
+    EXPECT_EQ(ids("@.id == 9007199254740992"), (Paths{}));
+    EXPECT_EQ(ids("@.id == 9007199254740993"), (Paths{{0}}));
+    EXPECT_EQ(ids("@.id > 9007199254740992"), (Paths{{0}, {2}}));
+    EXPECT_EQ(ids("@.id < -11"), (Paths{{1}}));
+    EXPECT_EQ(ids("@.id == 123456789012345678901234567890"), (Paths{{2}}));
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -66,8 +67,11 @@ auto parseJsonPath(std::string_view expr)
 
 // Evaluate parsed steps against a tree. Matches carry ancestor child-index
 // paths (deduplicated, root = empty path) compatible with FilterProxyModel;
-// SearchMatch::node is always nullptr for JSONPath results.
-auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps) -> FilterResult;
+// SearchMatch::node is always nullptr for JSONPath results. shouldCancel
+// (optional) is polled every few thousand nodes; a cancelled evaluation
+// returns no matches.
+auto evalJsonPath(NodeView root, std::span<const JsonPathStep> steps,
+                  const std::function<bool()>& shouldCancel = nullptr) -> FilterResult;
 
 // Resolve a definite path (member names and array indices only, no
 // wildcards or recursive descent) to the NodePath it names, without touching
@@ -78,6 +82,7 @@ auto parseDefinitePath(std::string_view expr)
 
 // Convenience: parse + evaluate. A parse error is returned as
 // FilterResult::error ("JSONPath error at position N: ...").
-auto queryJsonPath(NodeView root, std::string_view expr) -> FilterResult;
+auto queryJsonPath(NodeView root, std::string_view expr,
+                   const std::function<bool()>& shouldCancel = nullptr) -> FilterResult;
 
 } // namespace jsontitan::core
