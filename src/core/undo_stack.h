@@ -94,22 +94,22 @@ public:
         if (old.size() != now.size()) {
             return bytes;
         }
-        // A move swaps neighbors, which the neighbor check finds cheaply; a
-        // sort leaves many children elsewhere, found through a set of `now`.
+        // A child that only moved now sits where a different child was, so
+        // it is among the new children at changed positions: the set holds
+        // those alone (two for a swap, not every child of a big array).
         std::vector<std::size_t> changed;
         for (std::size_t i = 0; i < old.size(); ++i) {
-            if (old[i] != now[i] && !(i > 0 && old[i] == now[i - 1]) &&
-                !(i + 1 < now.size() && old[i] == now[i + 1])) {
+            if (old[i] != now[i]) {
                 changed.push_back(i);
             }
         }
         if (changed.size() > 1) {
-            std::unordered_set<const JsonNode*> kept;
-            kept.reserve(now.size());
-            for (const auto& child : now) {
-                kept.insert(child.get());
+            std::unordered_set<const JsonNode*> moved;
+            moved.reserve(changed.size());
+            for (std::size_t i : changed) {
+                moved.insert(now[i].get());
             }
-            std::erase_if(changed, [&](std::size_t i) { return kept.contains(old[i].get()); });
+            std::erase_if(changed, [&](std::size_t i) { return moved.contains(old[i].get()); });
         }
         for (std::size_t i : changed) {
             bytes += unsharedBytes(*old[i], *now[i]);

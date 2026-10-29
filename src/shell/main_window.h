@@ -124,6 +124,11 @@ private:
     // current document's identity until the result installs, so a cancelled
     // or failed load leaves Save pointing at the file on screen.
     void beginSingleFileLoad(const QString& filePath);
+    // A save wrote the document on screen to the file being loaded, so the
+    // load would install an older copy: drops it (a union instead loads
+    // that file again, as the file the user asked for). Takes a copy, since
+    // it clears m_pendingLoadPath.
+    void dropStaleLoad(QString filePath);
     // Adds the current single file to the recent files and session restore.
     void rememberCurrentFile();
     // Shared Export flow: the selection (or the whole document) written by

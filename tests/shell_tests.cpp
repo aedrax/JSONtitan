@@ -3663,6 +3663,28 @@ private slots:
         QVERIFY(treeView->model()->hasChildren(treeView->currentIndex()));
     }
 
+    // A later duplicate key's path ends in its position, not its key, yet
+    // the row is still an object member and can be renamed.
+    void testRenameKeyEnabledOnALaterDuplicateKey() {
+        QTemporaryDir dir;
+        const QString filePath = dir.path() + "/dup.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(R"({"a": 1, "a": 2})");
+        }
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({filePath.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        treeView->setCurrentIndex(treeView->model()->index(1, 0));
+        QVERIFY(editAction(window, "Rena&me Key...")->isEnabled());
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QVERIFY(editAction(window, "Rena&me Key...")->isEnabled());
+    }
+
     // Keyboard routing: Ctrl+V belongs to the search bar while it has
     // focus, and to the tree (paste a node) while the tree does; Alt+Down
     // reaches Move Down; a current-but-deselected row is not a target.

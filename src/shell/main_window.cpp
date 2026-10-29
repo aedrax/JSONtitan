@@ -218,16 +218,7 @@ MainWindow::MainWindow(QWidget* parent)
         // than what is on screen (and now on disk): drop the load.
         if (ok && !m_pendingLoadPath.isEmpty() && !m_session->modified() &&
             m_session->filePath() == m_pendingLoadPath) {
-            if (m_session->isUnionMode()) {
-                // A union saved over the file being opened: open what that
-                // file now holds, as the file the user asked for.
-                beginSingleFileLoad(m_pendingLoadPath);
-                return;
-            }
-            m_fileLoader->cancelParse();
-            m_pendingLoadPath.clear();
-            hideLoadProgress();
-            m_statusLabel->setText(tr("Saved; reload skipped"));
+            dropStaleLoad(m_pendingLoadPath);
         }
     });
     // The union controller emits statusUpdated whenever it settles the
@@ -922,6 +913,19 @@ void MainWindow::cancelActiveLoad() {
     m_statusLabel->setText(tr("Load cancelled"));
 }
 
+void MainWindow::dropStaleLoad(QString filePath) {
+    m_fileLoader->cancelParse();
+    m_pendingLoadPath.clear();
+    hideLoadProgress();
+    if (m_session->isUnionMode()) {
+        // A union saved over the file being opened: open what that file
+        // now holds, as the file the user asked for.
+        beginSingleFileLoad(filePath);
+        return;
+    }
+    m_statusLabel->setText(tr("Saved; reload skipped"));
+}
+
 void MainWindow::beginSingleFileLoad(const QString& filePath) {
     m_pendingLoadPath = filePath;
     m_session->beginLoad();
@@ -1121,13 +1125,7 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
         // document on screen to the very file being loaded. The result was
         // read before that save, so it is older than what is on screen.
         if (!m_session->modified() && loadPath == m_session->filePath()) {
-            if (m_session->isUnionMode()) {
-                // A union saved over the file being opened: open what that
-                // file now holds, as the file the user asked for.
-                beginSingleFileLoad(loadPath);
-                return;
-            }
-            m_statusLabel->setText(tr("Saved; reload skipped"));
+            dropStaleLoad(loadPath);
             return;
         }
     }
