@@ -57,7 +57,6 @@ target_link_libraries(search_perf_tests
         Qt6::Widgets
         Qt6::Test
         GTest::gtest
-        rapidcheck
 )
 
 gtest_discover_tests(search_perf_tests)
@@ -245,6 +244,18 @@ target_link_libraries(simdjson_adapter_tests
 )
 
 gtest_discover_tests(simdjson_adapter_tests)
+
+# ── Large-input Tests (~1.7 GB, ~1 s; skip with ctest -LE large) ─
+add_executable(large_input_tests large_input_tests.cpp)
+
+target_link_libraries(large_input_tests
+    PRIVATE
+        jsontitan_core
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(large_input_tests PROPERTIES LABELS large)
 
 # ── JSON Format Tests: JSONL / JSONC (Google Test, no Qt) ────────
 add_executable(json_format_tests json_format_tests.cpp)
