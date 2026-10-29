@@ -181,6 +181,15 @@ TEST(ModelPathsTest, DuplicateKeyMembersGetDistinctPaths) {
     EXPECT_EQ(jsontitan::shell::nodePathForIndex(
                   model, jsontitan::shell::indexForPath(model, first)),
               first);
+
+    // Repeated asks (a multi-selection) switch from scanning the earlier
+    // siblings to keys hashed once per object; both must agree.
+    const auto bIndex = jsontitan::shell::indexForPath(model, {std::string("b")});
+    for (int ask = 0; ask < 20; ++ask) {
+        EXPECT_TRUE(model.isLaterDuplicateKey(laterIndex)) << ask;
+        EXPECT_FALSE(model.isLaterDuplicateKey(bIndex)) << ask;
+    }
+    EXPECT_EQ(jsontitan::shell::nodePathForIndex(model, laterIndex), later);
 }
 
 // Regression: indexForPath fetched every row of each level it passed, so

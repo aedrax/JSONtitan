@@ -39,23 +39,13 @@ auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
         QModelIndex parentIndex = walkIndex.parent();
         const auto parent = viewForIndex(model, parentIndex);
         const auto row = static_cast<std::size_t>(walkIndex.row());
-        if (!parent || parent->type() == jsontitan::core::NodeType::Array) {
+        // A key names the first member with it, so a later duplicate is
+        // named by its position instead.
+        if (!parent || parent->type() == jsontitan::core::NodeType::Array ||
+            model.isLaterDuplicateKey(walkIndex)) {
             path.insert(path.begin(), row);
         } else {
-            // Object: the key, unless an earlier member has the same key.
-            // A key names the first member with it, so a later duplicate is
-            // named by its position instead. shortcut: the check scans the
-            // earlier siblings, a few ms per level for a million-key object.
-            const std::string_view key = parent->child(row).key();
-            bool duplicate = false;
-            for (std::size_t r = 0; r < row && !duplicate; ++r) {
-                duplicate = parent->child(r).key() == key;
-            }
-            if (duplicate) {
-                path.insert(path.begin(), row);
-            } else {
-                path.insert(path.begin(), std::string(key));
-            }
+            path.insert(path.begin(), std::string(parent->child(row).key()));
         }
         walkIndex = parentIndex;
     }

@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -88,6 +89,9 @@ public:
     // Get the ArenaJsonNode pointer for a given model index (returns nullptr for JsonNode-backed nodes)
     const jsontitan::core::ArenaJsonNode* arenaNodeForIndex(const QModelIndex& index) const;
 
+    // Whether an earlier member of the same object has the row's key.
+    bool isLaterDuplicateKey(const QModelIndex& index) const;
+
     // Get the root JsonNode
     std::shared_ptr<const jsontitan::core::JsonNode> rootNode() const { return m_rootJsonNode; }
 
@@ -103,6 +107,11 @@ private:
         InternalNode* parentNode = nullptr;
         int rowInParent = 0;
         int fetchedChildCount = 0;
+        // Per child row: an earlier sibling has the same key. Empty when
+        // no key repeats; unset until isLaterDuplicateKey() has been asked
+        // often enough to build it.
+        std::optional<std::vector<bool>> laterDuplicates;
+        int duplicateScans = 0;
         std::vector<std::unique_ptr<InternalNode>> childNodes;
 
         // Convenience accessors
@@ -146,4 +155,5 @@ private:
     EditCommitHandler m_editCommitHandler;
 
     static constexpr int FETCH_BATCH_SIZE = 100;
+    static constexpr int kDuplicateScansBeforeHashing = 8;
 };

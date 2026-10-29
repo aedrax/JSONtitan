@@ -47,6 +47,47 @@ TreeModel::InternalNode* TreeModel::nodeFromIndex(const QModelIndex& index) cons
     return static_cast<InternalNode*>(index.internalPointer());
 }
 
+bool TreeModel::isLaterDuplicateKey(const QModelIndex& index) const {
+    InternalNode* parent = index.isValid() ? nodeFromIndex(index.parent()) : nullptr;
+    if (!parent) {
+        return false;
+    }
+    const auto view = parent->arenaNode() ? NodeView(*parent->arenaNode())
+                                          : NodeView(*parent->jsonNode());
+    const auto row = static_cast<std::size_t>(index.row());
+    // Scanning the earlier siblings is cheap once (about 15 ms for 10M
+    // keys) but quadratic over a multi-selection; hashing every key (about
+    // 0.8 s for 10M) pays off only then. The first asks after each model
+    // reset scan, later ones build and keep the hashed answer for all rows.
+    if (!parent->laterDuplicates && ++parent->duplicateScans <= kDuplicateScansBeforeHashing) {
+        if (view.type() != NodeType::Object) {
+            return false;
+        }
+        const std::string_view key = view.child(row).key();
+        for (std::size_t r = 0; r < row; ++r) {
+            if (view.child(r).key() == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (!parent->laterDuplicates) {
+        std::vector<bool> later;
+        if (view.type() == NodeType::Object) {
+            std::unordered_set<std::string_view> keys;
+            keys.reserve(view.childCount());
+            for (std::size_t i = 0; i < view.childCount(); ++i) {
+                if (!keys.insert(view.child(i).key()).second) {
+                    later.resize(view.childCount());
+                    later[i] = true;
+                }
+            }
+        }
+        parent->laterDuplicates = std::move(later);
+    }
+    return row < parent->laterDuplicates->size() && (*parent->laterDuplicates)[row];
+}
+
 TreeModel::InternalNode* TreeModel::ensureChildNode(InternalNode* parent, int row) const {
     if (!parent)
         return nullptr;
