@@ -45,6 +45,18 @@ auto truncateUtf8(std::string_view s, std::size_t maxBytes) -> std::string_view 
 
 namespace {
 
+// escapeJsonString of no more of `text` than can fill the rest of the byte
+// budget (0 = none). Escaping never shrinks text, so the token still
+// overflows and emit() truncates it as before, without first copying all
+// of a 500 MB string.
+auto escapeWithin(std::string_view text, std::size_t maxSize, std::size_t currentSize)
+    -> std::string {
+    if (maxSize != 0 && currentSize < maxSize) {
+        text = text.substr(0, maxSize - currentSize + 1);
+    }
+    return escapeJsonString(text);
+}
+
 // Emit a single token, enforcing the byte budget.
 // When maxSize > 0 and the token would exceed the remaining budget, only a
 // UTF-8-safe / escape-safe prefix is appended and `truncated` is set.
@@ -103,34 +115,40 @@ void emitNode(NodeView node,
                 return;
             }
 
-            // Optionally sort children by key
-            std::vector<NodeView> children;
-            children.reserve(count);
-            for (std::size_t i = 0; i < count; ++i) {
-                children.push_back(node.child(i));
-            }
+            // Sorting needs every child up front; otherwise read them in
+            // place (a list of all children cost memory per member even when
+            // the output budget stops after the first few).
+            std::vector<NodeView> sorted;
             if (options.sortKeys) {
-                std::sort(children.begin(), children.end(),
+                sorted.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) {
+                    sorted.push_back(node.child(i));
+                }
+                std::sort(sorted.begin(), sorted.end(),
                     [](const NodeView& a, const NodeView& b) {
                         return a.key() < b.key();
                     });
             }
+            const auto childAt = [&](std::size_t i) {
+                return options.sortKeys ? sorted[i] : node.child(i);
+            };
 
             if (!emit(tokens, currentSize, max, truncated,
                       TokenType::BraceOpen, "{", depth)) return;
             if (!emit(tokens, currentSize, max, truncated,
                       TokenType::Whitespace, "\n", 0)) return;
 
-            for (std::size_t i = 0; i < children.size(); ++i) {
+            for (std::size_t i = 0; i < count; ++i) {
+                const NodeView child = childAt(i);
                 if (!emit(tokens, currentSize, max, truncated,
                           TokenType::Whitespace, childIndent, 0)) return;
                 if (!emit(tokens, currentSize, max, truncated,
-                          TokenType::Key, escapeJsonString(children[i].key()), 0)) return;
+                          TokenType::Key, escapeWithin(child.key(), max, currentSize), 0)) return;
                 if (!emit(tokens, currentSize, max, truncated,
                           TokenType::Colon, ": ", 0)) return;
-                emitNode(children[i], options, depth + 1, tokens, currentSize, truncated);
+                emitNode(child, options, depth + 1, tokens, currentSize, truncated);
                 if (truncated) return;
-                if (i + 1 < children.size()) {
+                if (i + 1 < count) {
                     if (!emit(tokens, currentSize, max, truncated,
                               TokenType::Comma, ",", 0)) return;
                 }
@@ -180,7 +198,7 @@ void emitNode(NodeView node,
 
         case NodeType::String:
             emit(tokens, currentSize, max, truncated,
-                 TokenType::StringValue, escapeJsonString(node.value()), 0);
+                 TokenType::StringValue, escapeWithin(node.value(), max, currentSize), 0);
             return;
 
         case NodeType::Number:

@@ -310,8 +310,36 @@ TEST(TokenEmitterProperty, TruncationCorrectness) {
                 RC_ASSERT(truncatedSize <= maxOutputSize);
                 RC_ASSERT(truncatedResult.tokens.size() <= fullResult.tokens.size());
             }
+
+            // Property E: the budgeted output is a prefix of the full output
+            // (strings and keys are escaped only as far as the budget needs).
+            std::string fullText;
+            std::string truncatedText;
+            for (const auto& token : fullResult.tokens) fullText += token.text;
+            for (const auto& token : truncatedResult.tokens) truncatedText += token.text;
+            RC_ASSERT(fullText.starts_with(truncatedText));
         }
     ));
+}
+
+// Escaping only the budget's worth of a long string cuts the input, which
+// may split an escape or a multi-byte character; the output must not.
+TEST(TokenEmitterUnit, LongStringIsEscapedOnlyAsFarAsTheBudget) {
+    std::string value;
+    for (int i = 0; i < 10000; ++i) {
+        value += "a\"\xC3\xA9\x01";
+    }
+    auto node = JsonNode::makeString("", value);
+    PrettyPrintOptions opts;
+    const auto full = emitTokens(*node, opts);
+    for (std::size_t budget : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 50u, 101u}) {
+        opts.maxOutputSize = budget;
+        const auto cut = emitTokens(*node, opts);
+        ASSERT_TRUE(cut.truncated);
+        ASSERT_EQ(cut.tokens.size(), 1u);
+        EXPECT_TRUE(full.tokens[0].text.starts_with(cut.tokens[0].text)) << budget;
+        EXPECT_LE(cut.tokens[0].text.size(), budget);
+    }
 }
 
 // ---------------------------------------------------------------------------
