@@ -84,9 +84,10 @@ signals:
     // Emitted immediately before / after our own write of the document to
     // disk (Save and Save As), so the owner can pause file-change watching
     // around it — QSaveFile's commit renames over the watched file, which
-    // would otherwise look like an external modification.
+    // would otherwise look like an external modification. `ok` is false
+    // when the write failed and the file is unchanged.
     void aboutToSave();
-    void saved();
+    void saved(bool ok);
 
 public slots:
     void deleteSelectedNode();

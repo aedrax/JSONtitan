@@ -2086,6 +2086,94 @@ private slots:
         QVERIFY(window.windowTitle().startsWith("*"));
     }
 
+    // Regression: saved() was sent for a failed save too, so a save that
+    // wrote nothing dropped the running reload and said "Saved".
+    void testFailedSaveKeepsTheReload() {
+        QTemporaryDir dir;
+        const QString path = dir.path() + "/a.json";
+        writeFile(path, R"({"x": 1, "y": 2})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({path.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        // Reload a file changed on disk, and save the unedited document
+        // into a directory that refuses the save's temporary file.
+        writeFile(path, R"({"x": 1, "y": 2, "z": 3})");
+        menuAction(window, "Re&load from Disk")->trigger();
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, []() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                box->button(QMessageBox::Ok)->click();  // the save error
+            }
+        });
+        answer.start(20);
+        QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+        menuAction(window, "&Save")->trigger();
+        QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                              QFileDevice::ExeOwner);
+
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QVERIFY(statusLabel->text() != QString("Saved; reload skipped"));
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 3, 5000);
+    }
+
+    // Regression: a union saved over the file being opened was left on
+    // screen as a union named after that file: not watched, no Reload, and
+    // every Save asked for a path. The file now holds the union; it opens.
+    void testUnionSavedOverTheLoadingFileOpensIt() {
+        QTemporaryDir dir;
+        const QString pathA = dir.path() + "/a.json";
+        const QString pathB = dir.path() + "/b.json";
+        writeFile(pathA, R"({"x": 1, "y": 2})");
+        writeFile(pathB, R"({"z": 3})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({pathA.toStdString(), pathB.toStdString()});
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QTRY_VERIFY_WITH_TIMEOUT(statusLabel->text().contains("Union (2 files)"), 5000);
+        QAction* reload = menuAction(window, "Re&load from Disk");
+        QVERIFY(!reload->isEnabled());
+
+        // Edit the union while A loads; the load's prompt saves it over A.
+        window.openFromCliArgs({pathA.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(&window, Qt::Key_Delete);
+        const int unionRows = treeView->model()->rowCount();
+
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, [&pathA]() {
+            QWidget* modal = QApplication::activeModalWidget();
+            if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
+                auto* nameEdit = dialog->findChild<QLineEdit*>("fileNameEdit");
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                if (nameEdit && buttons) {
+                    nameEdit->setText(pathA);
+                    // Queued: the dialog's own "replace?" box then opens
+                    // outside this slot, where this timer can answer it.
+                    QTimer::singleShot(0, buttons->button(QDialogButtonBox::Save),
+                                       &QAbstractButton::click);
+                }
+            } else if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+                if (auto* save = box->button(QMessageBox::Save)) {
+                    save->click();
+                } else if (auto* yes = box->button(QMessageBox::Yes)) {
+                    yes->click();  // replace a.json
+                }
+            }
+        });
+        answer.start(20);
+
+        QTRY_VERIFY_WITH_TIMEOUT(reload->isEnabled(), 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), unionRows, 5000);
+        QVERIFY(!window.windowTitle().startsWith("*"));
+        QVERIFY(!statusLabel->text().contains("Union"));
+    }
+
 private:
     static void writeFile(const QString& path, const QByteArray& content) {
         QFile file(path);

@@ -914,7 +914,7 @@ void EditController::save() {
         m_session->setFormat(m_session->format(), false);
         m_session->setModified(false);
     }
-    emit saved();
+    emit saved(error.isEmpty());
     if (!error.isEmpty()) {
         QMessageBox::critical(m_dialogParent, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
@@ -982,7 +982,7 @@ void EditController::saveAs() {
     }
     // Emitted after the identity update so the owner re-watches the file the
     // session now points at.
-    emit saved();
+    emit saved(error.isEmpty());
     if (!error.isEmpty()) {
         QMessageBox::critical(m_dialogParent, tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")

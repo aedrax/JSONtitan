@@ -205,7 +205,7 @@ MainWindow::MainWindow(QWidget* parent)
             m_fileWatcher->removePaths(watched);
         }
     });
-    connect(m_editController, &EditController::saved, this, [this]() {
+    connect(m_editController, &EditController::saved, this, [this](bool ok) {
         m_suppressWatchNotifications = false;
         // Re-watch the file the session points at NOW — Save As may have
         // changed the identity.
@@ -216,8 +216,14 @@ MainWindow::MainWindow(QWidget* parent)
         }
         // A save to the file still loading makes that load's result older
         // than what is on screen (and now on disk): drop the load.
-        if (!m_pendingLoadPath.isEmpty() && !m_session->modified() &&
+        if (ok && !m_pendingLoadPath.isEmpty() && !m_session->modified() &&
             m_session->filePath() == m_pendingLoadPath) {
+            if (m_session->isUnionMode()) {
+                // A union saved over the file being opened: open what that
+                // file now holds, as the file the user asked for.
+                beginSingleFileLoad(m_pendingLoadPath);
+                return;
+            }
             m_fileLoader->cancelParse();
             m_pendingLoadPath.clear();
             hideLoadProgress();
@@ -1115,6 +1121,12 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
         // document on screen to the very file being loaded. The result was
         // read before that save, so it is older than what is on screen.
         if (!m_session->modified() && loadPath == m_session->filePath()) {
+            if (m_session->isUnionMode()) {
+                // A union saved over the file being opened: open what that
+                // file now holds, as the file the user asked for.
+                beginSingleFileLoad(loadPath);
+                return;
+            }
             m_statusLabel->setText(tr("Saved; reload skipped"));
             return;
         }
