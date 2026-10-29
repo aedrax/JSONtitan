@@ -5,6 +5,7 @@
 #include "core/pretty_printer.h"
 #include "core/token_emitter.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -340,6 +341,12 @@ TEST(TokenEmitterUnit, LongStringIsEscapedOnlyAsFarAsTheBudget) {
         EXPECT_TRUE(full.tokens[0].text.starts_with(cut.tokens[0].text)) << budget;
         EXPECT_LE(cut.tokens[0].text.size(), budget);
     }
+
+    // The largest budget cuts nothing (room + 1 used to wrap to 0).
+    opts.maxOutputSize = SIZE_MAX;
+    const auto unbounded = emitTokens(*node, opts);
+    EXPECT_FALSE(unbounded.truncated);
+    EXPECT_EQ(unbounded.tokens[0].text, full.tokens[0].text);
 }
 
 // ---------------------------------------------------------------------------

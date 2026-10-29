@@ -53,7 +53,9 @@ auto escapeWithin(std::string_view text, std::size_t maxSize, std::size_t curren
     -> std::string {
     if (maxSize != 0) {
         const std::size_t room = currentSize < maxSize ? maxSize - currentSize : 0;
-        text = text.substr(0, room + 1);
+        if (room < text.size()) {
+            text = text.substr(0, room + 1);
+        }
     }
     return escapeJsonString(text);
 }
