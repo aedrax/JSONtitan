@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%"
-       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 544 tests.">
+       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 556 tests.">
 </p>
 
 <p align="center">
@@ -60,11 +60,14 @@ Requires a C++23 compiler, CMake ≥ 3.16, and Qt 6 (`Core`, `Gui`, `Widgets`). 
 ```bash
 git clone https://github.com/aedrax/JSONtitan.git
 cd JSONtitan
-cmake -B build && cmake --build build -j
-./build/src/shell/jsontitan_shell your-huge-file.json
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+./build/src/shell/JSONTitan your-huge-file.json                                # Linux
+./build/src/shell/JSONTitan.app/Contents/MacOS/JSONTitan your-huge-file.json   # macOS
 ```
 
-Run the test suite (544 tests: GoogleTest, RapidCheck property tests, Qt Test):
+Without a build type, CMake compiles without optimization, which slows parsing a lot.
+
+Run the test suite (556 tests: GoogleTest, RapidCheck property tests, Qt Test):
 
 ```bash
 ctest --test-dir build
@@ -99,6 +102,7 @@ Everything in the core is exercised by property-based tests; the shell is tested
 - Peak memory **during** parsing is a multiple of file size (input + simdjson DOM + arena coexist briefly). Steady-state drops to the arena alone once loading finishes.
 - JSONPath covers names, indices, wildcards, `..` and filters; slices (`[1:5]`), unions (`[0,2]`) and function extensions (`length()`) aren't supported, and filter paths take names and indices only.
 - Find and Replace and the structural edits work on an in-memory copy of the tree, so the first edit of a multi-gigabyte arena-backed document takes a moment.
+- Decimal numbers are kept as values, not as the text they were written in: saving writes the shortest form (`1.0` becomes `1`, `1E+2` becomes `100`), so even an unedited file can change when saved. Integers keep every digit, at any size.
 - Comments can't survive an edit: saving a file that had them removes them, and the app asks before it does. JSON5 (unquoted keys, single quotes) isn't supported.
 - Nesting is capped at 1,024 levels (matching simdjson) so hostile inputs fail with an error instead of a stack overflow.
 
