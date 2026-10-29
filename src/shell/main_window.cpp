@@ -208,6 +208,10 @@ MainWindow::MainWindow(QWidget* parent)
         // Re-watch the file the session points at NOW — Save As may have
         // changed the identity.
         startWatchingCurrentFile();
+        // A successful Save As makes a new file the current one.
+        if (!m_session->modified()) {
+            rememberCurrentFile();
+        }
     });
     // Union documents have no single backing file to watch.
     connect(m_unionController, &UnionController::loadStarted,
@@ -1027,11 +1031,8 @@ void MainWindow::updateEditActions() {
     const auto root = m_session->rootView();
     // Clicking blank space clears the selection but keeps a current index;
     // only a current row that is still selected counts.
-    const QModelIndex proxyIndex = m_treeView->currentIndex();
     const QModelIndex sourceIndex =
-        proxyIndex.isValid() && m_treeView->selectionModel()->isSelected(proxyIndex)
-            ? m_filterProxy->mapToSource(proxyIndex)
-            : QModelIndex();
+        jsontitan::shell::selectedSourceIndex(*m_treeView, *m_filterProxy);
     const bool hasRow = sourceIndex.isValid();
 
     // The node actions apply to: the current row, else the document root.
@@ -1124,15 +1125,18 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
     // pending "file changed" bar from the previous document).
     startWatchingCurrentFile();
 
-    // Record file in recent files list
-    if (!m_session->filePath().isEmpty()) {
-        m_recentFilesManager->fileOpened(m_session->filePath());
-        // Remember the last successfully opened single file for session
-        // restore on the next launch (arena completions are always
-        // single-file loads; unions never take this path).
-        QSettings().setValue(QStringLiteral("session/lastFilePath"),
-                             m_session->filePath());
+    rememberCurrentFile();
+}
+
+void MainWindow::rememberCurrentFile() {
+    // Unions have no single file to reopen.
+    if (m_session->isUnionMode() || m_session->filePath().isEmpty()) {
+        return;
     }
+    m_recentFilesManager->fileOpened(m_session->filePath());
+    // Session restore reopens it on the next launch.
+    QSettings().setValue(QStringLiteral("session/lastFilePath"),
+                         m_session->filePath());
 }
 
 void MainWindow::restoreLastSession() {
@@ -1273,18 +1277,6 @@ void MainWindow::onExportXml() {
 
 // --- Phase 5b commit 1: clipboard actions ---
 
-jsontitan::core::NodePath MainWindow::currentSelectionPath() const {
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return {};
-    }
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-    if (!sourceIndex.isValid()) {
-        return {};
-    }
-    return jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
-}
-
 void MainWindow::onCopyValue() {
     auto node = m_detailPresenter->selectedNodeView();
     if (!node) {
@@ -1296,7 +1288,7 @@ void MainWindow::onCopyValue() {
 }
 
 void MainWindow::onCopyKey() {
-    auto key = jsontitan::shell::keyClipboardText(currentSelectionPath());
+    auto key = jsontitan::shell::keyClipboardText(m_detailPresenter->currentSelectionPath());
     if (!key) {
         return;
     }
@@ -1305,12 +1297,11 @@ void MainWindow::onCopyKey() {
 }
 
 void MainWindow::onCopyPath() {
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
+    if (!jsontitan::shell::selectedSourceIndex(*m_treeView, *m_filterProxy).isValid()) {
         return;
     }
     QGuiApplication::clipboard()->setText(
-        jsontitan::shell::jsonPathText(currentSelectionPath()));
+        jsontitan::shell::jsonPathText(m_detailPresenter->currentSelectionPath()));
     statusBar()->showMessage(tr("Path copied"), 2000);
 }
 
@@ -1365,7 +1356,7 @@ void MainWindow::onGoToPath() {
     }
     // Prefill with the current selection's path: editing a suffix of where
     // you are is the common case.
-    QString text = jsontitan::shell::jsonPathText(currentSelectionPath());
+    QString text = jsontitan::shell::jsonPathText(m_detailPresenter->currentSelectionPath());
     while (true) {
         bool ok = false;
         text = QInputDialog::getText(this, tr("Go to Path"),

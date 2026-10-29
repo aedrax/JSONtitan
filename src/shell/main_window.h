@@ -122,9 +122,8 @@ private:
     // current document's identity until the result installs, so a cancelled
     // or failed load leaves Save pointing at the file on screen.
     void beginSingleFileLoad(const QString& filePath);
-
-    // NodePath of the tree view's current selection ({} when none).
-    jsontitan::core::NodePath currentSelectionPath() const;
+    // Adds the current single file to the recent files and session restore.
+    void rememberCurrentFile();
 
     // Enable/disable the structural edit actions for the current row (or
     // the root when no row is selected).

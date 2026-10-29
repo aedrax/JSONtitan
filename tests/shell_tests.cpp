@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
 #include <QClipboard>
+#include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
@@ -1675,6 +1677,46 @@ private slots:
         settings.sync();
     }
 
+    // Regression: only opening a file updated the restore target, so a
+    // document saved under a new name reopened the previous file.
+    void testSaveAsBecomesTheFileToRestore() {
+        QTemporaryDir dir;
+        const QString path = dir.path() + "/saved-as.json";
+        MainWindow window;
+        window.show();
+
+        auto fileAction = [&window](const QString& text) -> QAction* {
+            for (auto* menu : window.menuBar()->actions()) {
+                for (auto* action : menu->menu()->actions()) {
+                    if (action->text() == text) {
+                        return action;
+                    }
+                }
+            }
+            return nullptr;
+        };
+        fileAction("&New")->trigger();
+
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, [&path]() {
+            auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* nameEdit = dialog->findChild<QLineEdit*>("fileNameEdit");
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            if (nameEdit && buttons) {
+                nameEdit->setText(path);
+                buttons->button(QDialogButtonBox::Save)->click();
+            }
+        });
+        answer.start(20);
+        fileAction("Save &As...")->trigger();
+
+        QVERIFY(QFile::exists(path));
+        QCOMPARE(QSettings().value("session/lastFilePath").toString(), path);
+    }
+
     void testReopenOptionDefaultOnAndPersisted() {
         MainWindow window;
 
@@ -3342,6 +3384,36 @@ private slots:
         QVERIFY(editAction(window, "&Sort Keys")->isEnabled());
         QVERIFY(!editAction(window, "&Insert After...")->isEnabled());
         QVERIFY(!editAction(window, "Dupli&cate")->isEnabled());
+    }
+
+    // Regression: Copy, Export and Remove from Union used the current row
+    // even after clicking blank space had deselected it.
+    void testDeselectedCurrentRowIsNotTheSelection() {
+        QTemporaryDir dir;
+        const QString filePath = dir.path() + "/select.json";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("[1, 3]");
+        }
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({filePath.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+        auto* proxy = qobject_cast<QSortFilterProxyModel*>(treeView->model());
+        auto* presenter = window.findChild<DetailPanelPresenter*>();
+        QVERIFY(proxy && presenter);
+
+        treeView->setCurrentIndex(treeView->model()->index(1, 0));
+        QVERIFY(jsontitan::shell::selectedSourceIndex(*treeView, *proxy).isValid());
+        QVERIFY(presenter->selectedNodeView().has_value());
+
+        treeView->selectionModel()->clearSelection();
+        QVERIFY(treeView->currentIndex().isValid());
+        QVERIFY(!jsontitan::shell::selectedSourceIndex(*treeView, *proxy).isValid());
+        QVERIFY(!presenter->selectedNodeView().has_value());
+        QVERIFY(presenter->currentSelectionPath().empty());
     }
 
     void testPasteAfterSelectionInArray() {

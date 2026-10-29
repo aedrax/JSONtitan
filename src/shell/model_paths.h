@@ -2,6 +2,9 @@
 
 #include <QModelIndex>
 
+class QAbstractItemView;
+class QSortFilterProxyModel;
+
 #include "core/deletion_engine.h"
 #include "shell/tree_model.h"
 
@@ -21,5 +24,16 @@ auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
 // treat the empty path specially themselves.
 auto indexForPath(TreeModel& model, const jsontitan::core::NodePath& path)
     -> QModelIndex;
+
+// The source index of the view's current row, or an invalid index when there
+// is none or it is no longer selected: clicking blank space clears the
+// selection but keeps the current index, and actions must not then target
+// the old row.
+auto selectedSourceIndex(const QAbstractItemView& view,
+                         const QSortFilterProxyModel& proxy) -> QModelIndex;
+
+// NodePath of selectedSourceIndex(); {} (the root) when no row is selected.
+auto selectedPath(const QAbstractItemView& view, const QSortFilterProxyModel& proxy,
+                  const TreeModel& model) -> jsontitan::core::NodePath;
 
 }  // namespace jsontitan::shell

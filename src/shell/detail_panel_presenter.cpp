@@ -28,6 +28,9 @@ DetailPanelPresenter::DetailPanelPresenter(QTextEdit* detailPanel,
     // Connect tree selection changes
     connect(m_treeView->selectionModel(), &QItemSelectionModel::currentChanged,
             this, &DetailPanelPresenter::onSelectionChanged);
+    // Clicking blank space deselects without moving the current row.
+    connect(m_treeView->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &DetailPanelPresenter::onSelectionChanged);
     if (m_breadcrumbLabel) {
         connect(m_breadcrumbLabel, &QLabel::linkActivated,
                 this, &DetailPanelPresenter::onBreadcrumbLinkActivated);
@@ -42,12 +45,8 @@ void DetailPanelPresenter::setSyntaxTheme(
 }
 
 std::optional<jsontitan::core::NodeView> DetailPanelPresenter::selectedNodeView() const {
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return std::nullopt;
-    }
-
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    const QModelIndex sourceIndex =
+        jsontitan::shell::selectedSourceIndex(*m_treeView, *m_filterProxy);
     if (!sourceIndex.isValid()) {
         return std::nullopt;
     }
@@ -65,15 +64,7 @@ std::optional<jsontitan::core::NodeView> DetailPanelPresenter::selectedNodeView(
 }
 
 jsontitan::core::NodePath DetailPanelPresenter::currentSelectionPath() const {
-    QModelIndex proxyIndex = m_treeView->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return {};
-    }
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
-    if (!sourceIndex.isValid()) {
-        return {};
-    }
-    return jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
+    return jsontitan::shell::selectedPath(*m_treeView, *m_filterProxy, *m_treeModel);
 }
 
 QString DetailPanelPresenter::breadcrumbHtml(
@@ -146,10 +137,8 @@ void DetailPanelPresenter::onBreadcrumbLinkActivated(const QString& link) {
 void DetailPanelPresenter::onSelectionChanged() {
     // Breadcrumb: mirrors the selection; cleared when nothing resolves.
     if (m_breadcrumbLabel) {
-        QModelIndex proxyIndex = m_treeView->currentIndex();
-        QModelIndex sourceIndex =
-            proxyIndex.isValid() ? m_filterProxy->mapToSource(proxyIndex)
-                                 : QModelIndex();
+        const QModelIndex sourceIndex =
+            jsontitan::shell::selectedSourceIndex(*m_treeView, *m_filterProxy);
         if (sourceIndex.isValid()) {
             auto path =
                 jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);

@@ -1,5 +1,9 @@
 #include "shell/model_paths.h"
 
+#include <QAbstractItemView>
+#include <QItemSelectionModel>
+#include <QSortFilterProxyModel>
+
 #include <string>
 #include <variant>
 
@@ -83,6 +87,23 @@ auto indexForPath(TreeModel& model, const jsontitan::core::NodePath& path)
         }
     }
     return current;
+}
+
+auto selectedSourceIndex(const QAbstractItemView& view,
+                         const QSortFilterProxyModel& proxy) -> QModelIndex {
+    const QModelIndex proxyIndex = view.currentIndex();
+    if (!proxyIndex.isValid() || !view.selectionModel() ||
+        !view.selectionModel()->isSelected(proxyIndex)) {
+        return {};
+    }
+    return proxy.mapToSource(proxyIndex);
+}
+
+auto selectedPath(const QAbstractItemView& view, const QSortFilterProxyModel& proxy,
+                  const TreeModel& model) -> jsontitan::core::NodePath {
+    const QModelIndex sourceIndex = selectedSourceIndex(view, proxy);
+    return sourceIndex.isValid() ? nodePathForIndex(model, sourceIndex)
+                                 : jsontitan::core::NodePath{};
 }
 
 }  // namespace jsontitan::shell

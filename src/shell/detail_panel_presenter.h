@@ -31,6 +31,9 @@ public:
     // no valid selection resolves to a node. Also used by the export flows.
     std::optional<jsontitan::core::NodeView> selectedNodeView() const;
 
+    // NodePath of the selected row ({} when none).
+    jsontitan::core::NodePath currentSelectionPath() const;
+
     // Breadcrumb rich text for a node path: a "$" root link plus one link
     // per segment (plain segment names; href = number of leading segments
     // the link represents). Long paths are middle-elided with a plain "…".
@@ -48,9 +51,6 @@ private slots:
 private:
     // Maximum number of pretty-printed bytes rendered into the detail panel.
     static constexpr std::size_t kDetailPanelByteLimit = 65536;  // 64 KB
-
-    // NodePath of the tree view's current selection ({} when none).
-    jsontitan::core::NodePath currentSelectionPath() const;
 
     QTextEdit* m_detailPanel = nullptr;
     QLabel* m_breadcrumbLabel = nullptr;

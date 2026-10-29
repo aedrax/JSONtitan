@@ -7,6 +7,7 @@
 
 #include "core/deletion_engine.h"
 #include "core/union_engine.h"
+#include "shell/model_paths.h"
 
 UnionController::UnionController(QWidget* dialogParent, Ui ui,
                                  TreeModel* treeModel,
@@ -124,12 +125,8 @@ void UnionController::removeFromUnion() {
         return;
     }
 
-    QModelIndex proxyIndex = m_ui.tree->currentIndex();
-    if (!proxyIndex.isValid()) {
-        return;
-    }
-
-    QModelIndex sourceIndex = m_filterProxy->mapToSource(proxyIndex);
+    const QModelIndex sourceIndex =
+        jsontitan::shell::selectedSourceIndex(*m_ui.tree, *m_filterProxy);
     if (!sourceIndex.isValid()) {
         return;
     }
