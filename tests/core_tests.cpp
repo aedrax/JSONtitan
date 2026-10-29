@@ -3359,6 +3359,17 @@ TEST(XmlExporter, SanitizeXmlNameInvalidChars) {
     EXPECT_EQ(sanitizeXmlName("a@b"), "a_b");
     EXPECT_EQ(sanitizeXmlName("x+y"), "x_y");
     EXPECT_EQ(sanitizeXmlName("path/to"), "path_to");
+    // Legal XML, but an undeclared namespace prefix to namespace-aware parsers.
+    EXPECT_EQ(sanitizeXmlName("a:b"), "a_b");
+    EXPECT_EQ(sanitizeXmlName(":x"), "_x");
+}
+
+// U+FFFE and U+FFFF are not XML 1.0 characters; U+FFFD and other
+// three-byte characters pass through.
+TEST(XmlExporter, EscapeXmlTextReplacesNonCharacters) {
+    EXPECT_EQ(escapeXmlText("a\xEF\xBF\xBE" "b\xEF\xBF\xBF"),
+              "a\xEF\xBF\xBD" "b\xEF\xBF\xBD");
+    EXPECT_EQ(escapeXmlText("\xEF\xBF\xBD\xE2\x82\xAC"), "\xEF\xBF\xBD\xE2\x82\xAC");
 }
 
 TEST(XmlExporter, EscapeXmlTextEmpty) {
@@ -3569,16 +3580,15 @@ TEST(XmlExporterProperty, ElementNameSanitization) {
             // Verify the result is a valid XML element name
             RC_ASSERT(!sanitized.empty());
 
-            // First character must be letter, underscore, or colon
+            // First character must be a letter or underscore
             char first = sanitized[0];
-            RC_ASSERT(std::isalpha(static_cast<unsigned char>(first)) ||
-                      first == '_' || first == ':');
+            RC_ASSERT(std::isalpha(static_cast<unsigned char>(first)) || first == '_');
 
             // All subsequent characters must be valid XML NameChars
             for (std::size_t i = 1; i < sanitized.size(); ++i) {
                 char c = sanitized[i];
                 RC_ASSERT(std::isalnum(static_cast<unsigned char>(c)) ||
-                          c == '_' || c == '-' || c == '.' || c == ':');
+                          c == '_' || c == '-' || c == '.');
             }
         }));
 }
@@ -3642,6 +3652,12 @@ TEST(XmlExporterProperty, EntityEscaping) {
                 } else if (c == '\'') {
                     RC_ASSERT(escaped.substr(dstIdx, 6) == "&apos;");
                     dstIdx += 6;
+                } else if (baseStr.compare(srcIdx, 2, "\xEF\xBF") == 0 &&
+                           srcIdx + 2 < baseStr.size() &&
+                           (baseStr[srcIdx + 2] == '\xBE' || baseStr[srcIdx + 2] == '\xBF')) {
+                    RC_ASSERT(escaped.substr(dstIdx, 3) == "\xEF\xBF\xBD");
+                    dstIdx += 3;
+                    srcIdx += 2;
                 } else if (static_cast<unsigned char>(c) < 0x20 && c != '\t' &&
                            c != '\n' && c != '\r') {
                     // Illegal in XML 1.0 even as a reference: U+FFFD instead.

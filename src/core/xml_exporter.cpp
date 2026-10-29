@@ -14,15 +14,17 @@ namespace {
 // [#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] | [#x200C-#x200D] |
 // [#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] |
 // [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
-// For simplicity, we allow ASCII letters, underscore, and colon as start chars.
+// For simplicity, we allow ASCII letters and underscore as start chars. The
+// colon is legal XML but means a namespace prefix to every namespace-aware
+// parser, which rejects an undeclared one ("unbound prefix").
 auto isXmlNameStartChar(char c) -> bool {
-    return std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == ':';
+    return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
 }
 
 // Check if a character is valid within an XML name (not first position).
 // XML NameChar: NameStartChar | "-" | "." | [0-9] | #xB7 | [#x0300-#x036F] |
 // [#x203F-#x2040]
-// For simplicity, we allow ASCII letters, digits, underscore, colon, hyphen, dot.
+// For simplicity, we allow ASCII letters, digits, underscore, hyphen, dot.
 auto isXmlNameChar(char c) -> bool {
     return isXmlNameStartChar(c) || std::isdigit(static_cast<unsigned char>(c)) ||
            c == '-' || c == '.';
@@ -65,7 +67,8 @@ auto escapeXmlText(const std::string& text) -> std::string {
     std::string result;
     result.reserve(text.size());
 
-    for (char c : text) {
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
         switch (c) {
             case '&':  result += "&amp;";  break;
             case '<':  result += "&lt;";   break;
@@ -78,9 +81,17 @@ auto escapeXmlText(const std::string& text) -> std::string {
                 // (everything below 0x20 except TAB/LF/CR). Emitting them raw
                 // produces a file every conforming XML parser rejects, so
                 // substitute U+FFFD (as UTF-8) instead.
+                // The noncharacters U+FFFE and U+FFFF (EF BF BE / EF BF BF)
+                // are outside XML 1.0's Char range too.
                 auto uc = static_cast<unsigned char>(c);
+                const bool nonCharacter = uc == 0xEF && i + 2 < text.size() &&
+                                          text[i + 1] == '\xBF' &&
+                                          (text[i + 2] == '\xBE' || text[i + 2] == '\xBF');
                 if (uc < 0x20 && c != '\t' && c != '\n' && c != '\r') {
                     result += "\xEF\xBF\xBD";  // U+FFFD REPLACEMENT CHARACTER
+                } else if (nonCharacter) {
+                    result += "\xEF\xBF\xBD";
+                    i += 2;
                 } else {
                     result += c;
                 }
