@@ -372,10 +372,7 @@ auto simdjsonParse(const SourceBuffer& source,
 auto simdjsonParseLines(const SourceBuffer& source,
                         ArenaAllocator& arena,
                         SimdjsonParseOptions options) -> SimdjsonResult {
-    if (source.size() == 0) {
-        return SimdjsonResult{nullptr, ParseError{0, "Empty input"}};
-    }
-
+    // Empty input is allowed: no records make an empty array.
     if (options.progressCallback) {
         options.progressCallback(0.0F);
     }

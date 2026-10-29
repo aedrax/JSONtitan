@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QDir>
 #include <QtTest/QtTest>
@@ -637,6 +638,30 @@ private slots:
             });
 
         QVERIFY2(result, "Empty file preservation property failed");
+    }
+
+    // Regression: saving an emptied JSON Lines document writes 0 bytes, and
+    // the loader then refused the file it had just saved.
+    void testEmptyJsonLinesFileLoadsAsEmptyArray() {
+        QTemporaryDir dir;
+        const QString filePath = dir.path() + "/empty.jsonl";
+        {
+            QFile file(filePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+
+        FileLoaderWorker worker;
+        QSignalSpy errorSpy(&worker, &FileLoaderWorker::parseError);
+        QSignalSpy completeSpy(&worker, &FileLoaderWorker::arenaParseComplete);
+        worker.process(filePath);
+
+        QCOMPARE(errorSpy.count(), 0);
+        QCOMPARE(completeSpy.count(), 1);
+        auto result = completeSpy.at(0).at(0)
+                          .value<std::shared_ptr<jsontitan::core::ArenaParseResult>>();
+        QVERIFY(result && result->root);
+        QCOMPARE(result->root->type, jsontitan::core::NodeType::Array);
+        QCOMPARE(result->root->childCount, std::size_t{0});
     }
 
     // -----------------------------------------------------------------------

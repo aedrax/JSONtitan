@@ -82,7 +82,9 @@ bool FileLoaderWorker::readWholeFile(
     }
 
     const qint64 totalSize = file.size();
-    if (totalSize == 0) {
+    // An empty JSON Lines file is an empty array (what saving one writes).
+    if (totalSize == 0 &&
+        formatForPath(filePath.toStdString()) != JsonFormat::JsonLines) {
         errorMessage = tr("File is empty: %1").arg(filePath);
         return false;
     }

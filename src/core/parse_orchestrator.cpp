@@ -36,8 +36,8 @@ auto parseBuffer(std::unique_ptr<SourceBuffer> source,
                  ParseBufferOptions options) -> ArenaParseResult {
     auto arena = std::make_unique<ArenaAllocator>();
 
-    // Empty input
-    if (source->size() == 0) {
+    // Empty input (JSON Lines: an empty array, parsed below)
+    if (source->size() == 0 && options.format != JsonFormat::JsonLines) {
         return ArenaParseResult{
             std::move(arena),
             nullptr,
