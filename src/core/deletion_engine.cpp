@@ -72,9 +72,11 @@ auto deleteNode(std::shared_ptr<const JsonNode> root, const NodePath& targetPath
         if (parent->type != NodeType::Object) {
             return root; // invalid path
         }
+        // Only the first member with the key: paths resolve a duplicated
+        // key to its first occurrence everywhere else, so deleting must too.
         bool found = false;
         for (const auto& child : parent->children) {
-            if (child->key == *keyPtr) {
+            if (!found && child->key == *keyPtr) {
                 found = true;
             } else {
                 newChildren.push_back(child); // structural sharing

@@ -748,3 +748,41 @@ TEST(EditEnginePBT, MoveThereAndBackRoundTrips) {
         RC_ASSERT(exportJson(**back) == exportJson(*root));
     });
 }
+
+namespace {
+
+auto compactJson(const std::shared_ptr<const JsonNode>& node) -> std::string {
+    return exportJson(*node, {.mode = IndentMode::Compact, .trailingNewline = false});
+}
+
+}  // namespace
+
+// Regression: duplicating an array element inserted the element itself, so
+// both slots held one node and later edits (which find a child by pointer)
+// changed both.
+TEST(EditEngineStructure, DuplicatedArrayElementIsIndependent) {
+    auto root = *parseValueInput("[1, {\"a\": 1}]");
+    auto withCopies = insertChild(root, {}, 1, "", root->children[0]);
+    ASSERT_TRUE(withCopies.has_value());
+    withCopies = insertChild(*withCopies, {}, 3, "", (*withCopies)->children[2]);
+    ASSERT_TRUE(withCopies.has_value());
+    ASSERT_EQ(compactJson(*withCopies), R"([1,1,{"a":1},{"a":1}])");
+
+    auto edited = editValue(*withCopies, {std::size_t{1}},
+                            ScalarValue{NodeType::Number, "5"});
+    ASSERT_TRUE(edited.has_value());
+    EXPECT_EQ(compactJson(*edited), R"([1,5,{"a":1},{"a":1}])");
+
+    auto deleted = deleteNode(*withCopies, {std::size_t{3}, std::string("a")});
+    ASSERT_NE(deleted, nullptr);
+    EXPECT_EQ(compactJson(deleted), R"([1,1,{"a":1},{}])");
+}
+
+// Regression: with duplicate keys, deleting one member removed all of them,
+// while every other operation resolves the key to its first occurrence.
+TEST(EditEngineStructure, DeleteDuplicateKeyRemovesFirstOnly) {
+    auto root = *parseValueInput(R"({"a": 1, "a": 2, "b": 3})");
+    auto deleted = deleteNode(root, {std::string("a")});
+    ASSERT_NE(deleted, nullptr);
+    EXPECT_EQ(compactJson(deleted), R"({"a":2,"b":3})");
+}

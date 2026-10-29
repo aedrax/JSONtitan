@@ -26,11 +26,11 @@ auto unionTrees(std::span<const FileEntry> entries)
             key = entry.filename + " (" + std::to_string(it->second) + ")";
         }
 
-        // Re-root the file's tree under the disambiguated key.
-        // We create a new Object node with the key set to the filename,
-        // carrying the original root's children.
-        auto child = JsonNode::makeObject(std::move(key), entry.root->children);
-        children.push_back(std::move(child));
+        // Re-root the file's tree under the disambiguated key: same type,
+        // value and children (an array or scalar root stays one).
+        const auto& root = *entry.root;
+        children.push_back(std::make_shared<JsonNode>(
+            JsonNode{root.type, std::move(key), root.value, root.children}));
     }
 
     // Synthetic root: an Object with empty key

@@ -60,6 +60,33 @@ struct ProgressContext {
     bool cancelled = false;
 };
 
+// Copy `text` into the arena. False when the arena is out of memory, which
+// copyString reports as an empty view: the caller must fail the parse rather
+// than keep an empty string where data was.
+auto copyInto(ArenaAllocator& arena, std::string_view text, StringRef& out) -> bool {
+    auto copy = arena.copyString(text);
+    if (copy.empty() && !text.empty()) {
+        return false;
+    }
+    out = StringRef{copy.data(), copy.size()};
+    return true;
+}
+
+// Number of members in a simdjson array or object. size() saturates at
+// 0xFFFFFF, so larger containers are counted by walking them.
+template <typename Container>
+auto memberCount(const Container& container) -> std::size_t {
+    constexpr std::size_t kSaturated = 0xFFFFFF;
+    std::size_t count = container.size();
+    if (count >= kSaturated) {
+        count = 0;
+        for ([[maybe_unused]] auto&& member : container) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 // Convert a simdjson DOM element into an ArenaJsonNode tree, recursively.
 // All string data is copied into the arena so that the resulting tree
 // outlives the simdjson parser's internal buffers.
@@ -106,7 +133,7 @@ auto convertElement(simdjson::dom::element elem,
             }
 
             // Count children first to allocate the pointer array.
-            std::size_t count = obj.size();
+            std::size_t count = memberCount(obj);
             if (count > 0) {
                 auto** children = static_cast<ArenaJsonNode**>(
                     arena.allocate(count * sizeof(ArenaJsonNode*), alignof(ArenaJsonNode*)));
@@ -117,8 +144,10 @@ auto convertElement(simdjson::dom::element elem,
                 std::size_t idx = 0;
                 for (auto [k, v] : obj) {
                     // Copy the key string into the arena.
-                    auto keyCopy = arena.copyString(k);
-                    StringRef childKey = {keyCopy.data(), keyCopy.size()};
+                    StringRef childKey = {};
+                    if (!copyInto(arena, k, childKey)) {
+                        return nullptr;
+                    }
 
                     auto* child = convertElement(v, childKey, arena, progress);
                     if (!child) {
@@ -140,7 +169,7 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
 
-            std::size_t count = arr.size();
+            std::size_t count = memberCount(arr);
             if (count > 0) {
                 auto** children = static_cast<ArenaJsonNode**>(
                     arena.allocate(count * sizeof(ArenaJsonNode*), alignof(ArenaJsonNode*)));
@@ -170,8 +199,9 @@ auto convertElement(simdjson::dom::element elem,
             if (elem.get(sv) != simdjson::SUCCESS) {
                 return nullptr;
             }
-            auto valueCopy = arena.copyString(sv);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, sv, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -188,8 +218,9 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
-            auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, numStr, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -205,8 +236,9 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
-            auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, numStr, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -217,8 +249,9 @@ auto convertElement(simdjson::dom::element elem,
             if (elem.get_bigint().get(digits) != simdjson::SUCCESS) {
                 return nullptr;
             }
-            auto valueCopy = arena.copyString(digits);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, digits, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -236,8 +269,9 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
             std::string_view numStr(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
-            auto valueCopy = arena.copyString(numStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, numStr, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -248,8 +282,9 @@ auto convertElement(simdjson::dom::element elem,
                 return nullptr;
             }
             std::string_view boolStr = val ? "true" : "false";
-            auto valueCopy = arena.copyString(boolStr);
-            node->value = StringRef{valueCopy.data(), valueCopy.size()};
+            if (!copyInto(arena, boolStr, node->value)) {
+                return nullptr;
+            }
             break;
         }
 
@@ -281,6 +316,9 @@ auto simdjsonParse(const SourceBuffer& source,
     // Create the simdjson parser on the stack — RAII ensures its internal
     // buffers are released when this function returns.
     simdjson::dom::parser parser;
+    // Integers beyond 64 bits arrive as BIGINT digit strings instead of
+    // failing the whole document.
+    parser.number_as_string(true);
 
     // Parse the input. simdjson requires a padded_string_view for safety.
     // SourceBuffer appends kSimdjsonPadding (64) zero bytes at construction time,
@@ -348,6 +386,7 @@ auto simdjsonParseLines(const SourceBuffer& source,
     progressCtx.cancelCheck = options.cancelCallback;
 
     simdjson::dom::parser parser;
+    parser.number_as_string(true);  // see simdjsonParse
     std::vector<ArenaJsonNode*> records;
 
     const char* data = source.data();

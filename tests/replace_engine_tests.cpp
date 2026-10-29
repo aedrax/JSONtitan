@@ -109,3 +109,40 @@ TEST(ReplaceEnginePBT, IdentityReplacementsKeepContent) {
         RC_ASSERT(absent.root.get() == root.get());
     });
 }
+
+// Regression: a skipped rename keeps its old key, and another member could
+// then be renamed onto it, producing a duplicate key.
+TEST(ReplaceEngine, SkippedRenameKeepsItsKeyReserved) {
+    auto root = parse(R"({"ax": 1, "axy": 2, "axyy": 3})");
+    auto result = replaceAll(root, {.pattern = "xy",
+                                    .replacement = "x",
+                                    .caseSensitive = true,
+                                    .inValues = false,
+                                    .inKeys = true});
+    // axy -> ax collides with "ax"; axy then stays, so axyy -> axy collides too.
+    EXPECT_EQ(compact(result.root), R"({"ax":1,"axy":2,"axyy":3})");
+    EXPECT_EQ(result.keysChanged, 0u);
+    EXPECT_EQ(result.keysSkipped, 2u);
+}
+
+// Regression: std::regex matches bytes, so a match could cut a multi-byte
+// character in half and the saved file was not valid UTF-8.
+TEST(ReplaceEngine, RegexNeverSplitsACharacter) {
+    // "ã" is C3 A3; the class [é] is the bytes C3 and A9, so it matches C3.
+    auto root = parse("{\"k\\u00e3\": \"\\u00e3\", \"ok\": \"abc\"}");
+    auto result = replaceAll(root, {.pattern = "[\xC3\xA9]",
+                                    .replacement = "e",
+                                    .regex = true,
+                                    .caseSensitive = true,
+                                    .inValues = true,
+                                    .inKeys = true});
+    EXPECT_EQ(result.root.get(), root.get());
+    EXPECT_EQ(result.valuesSkipped, 1u);
+    EXPECT_EQ(result.keysSkipped, 1u);
+
+    // Whole characters still replace.
+    auto whole = replaceAll(parse("[\"\\u00e3b\"]"), {.pattern = "\xC3\xA3",
+                                                      .replacement = "a",
+                                                      .regex = true});
+    EXPECT_EQ(compact(whole.root), R"(["ab"])");
+}

@@ -2409,6 +2409,29 @@ TEST(UnionEngineTest, SingleFileUnion) {
     EXPECT_EQ(result->children[0]->key, "file.json");
 }
 
+// Regression: every file root was rebuilt as an object, so an array root
+// became {"":1,"":2} and a scalar root became {}.
+TEST(UnionEngineTest, ArrayAndScalarRootsKeepTheirType) {
+    auto arrayRoot = JsonNode::makeArray("", {JsonNode::makeNumber("", "1"),
+                                              JsonNode::makeNumber("", "2")});
+    auto scalarRoot = JsonNode::makeString("", "x");
+    std::vector<FileEntry> entries = {{"lines.jsonl", arrayRoot},
+                                      {"value.json", scalarRoot}};
+    auto result = unionTrees(std::span<const FileEntry>(entries));
+
+    ASSERT_EQ(result->children.size(), 2u);
+    const auto& array = *result->children[0];
+    EXPECT_EQ(array.key, "lines.jsonl");
+    EXPECT_EQ(array.type, NodeType::Array);
+    ASSERT_EQ(array.children.size(), 2u);
+    EXPECT_EQ(array.children[1]->value, "2");
+
+    const auto& scalar = *result->children[1];
+    EXPECT_EQ(scalar.key, "value.json");
+    EXPECT_EQ(scalar.type, NodeType::String);
+    EXPECT_EQ(scalar.value, "x");
+}
+
 TEST(UnionEngineTest, EmptyFileList) {
     std::vector<FileEntry> entries;
     auto result = unionTrees(std::span<const FileEntry>(entries));

@@ -16,6 +16,46 @@ auto foldAscii(char c) -> char {
     return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 }
 
+// True when `text` is well-formed UTF-8 (RFC 3629: no overlong forms,
+// surrogates, or code points past U+10FFFF).
+auto isValidUtf8(std::string_view text) -> bool {
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[i]);
+        if (lead < 0x80) {
+            ++i;
+            continue;
+        }
+        std::size_t continuations = 0;
+        unsigned char low = 0x80;  // allowed range of the first continuation byte
+        unsigned char high = 0xBF;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            continuations = 1;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            continuations = 2;
+            low = lead == 0xE0 ? 0xA0 : 0x80;
+            high = lead == 0xED ? 0x9F : 0xBF;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            continuations = 3;
+            low = lead == 0xF0 ? 0x90 : 0x80;
+            high = lead == 0xF4 ? 0x8F : 0xBF;
+        } else {
+            return false;
+        }
+        if (i + continuations >= text.size()) {
+            return false;
+        }
+        for (std::size_t k = 1; k <= continuations; ++k) {
+            const auto byte = static_cast<unsigned char>(text[i + k]);
+            if (byte < (k == 1 ? low : 0x80) || byte > (k == 1 ? high : 0xBF)) {
+                return false;
+            }
+        }
+        i += continuations + 1;
+    }
+    return true;
+}
+
 class Replacer {
 public:
     Replacer(const ReplaceOptions& options, std::optional<std::regex> regex)
@@ -73,6 +113,10 @@ public:
                 if (!replaced || *replaced == node->value) {
                     return node;
                 }
+                if (splitsCharacter(*replaced)) {
+                    ++result.valuesSkipped;
+                    return node;
+                }
                 ++result.valuesChanged;
                 return JsonNode::makeString(node->key, std::move(*replaced));
             }
@@ -107,6 +151,12 @@ private:
     std::optional<std::regex> m_regex;
     std::string m_foldedPattern;
 
+    // A regex works on bytes, so a match can cut a multi-byte character in
+    // half. (Substring matches cannot: the pattern is whole UTF-8 itself.)
+    auto splitsCharacter(std::string_view replaced) const -> bool {
+        return m_regex && !isValidUtf8(replaced);
+    }
+
     auto find(std::string_view text, std::size_t from) const -> std::size_t {
         if (m_options.caseSensitive) {
             return text.find(m_options.pattern, from);
@@ -124,33 +174,50 @@ private:
                     ReplaceResult& result) const -> bool {
         std::vector<std::optional<std::string>> newKeys;
         newKeys.reserve(members.size());
-        std::multiset<std::string_view> finalKeys;
         for (const auto& member : members) {
             auto replaced = apply(member->key);
             if (replaced && *replaced == member->key) {
                 replaced.reset();
             }
+            if (replaced && splitsCharacter(*replaced)) {
+                ++result.keysSkipped;
+                replaced.reset();
+            }
             newKeys.push_back(std::move(replaced));
         }
-        for (std::size_t i = 0; i < members.size(); ++i) {
-            finalKeys.insert(newKeys[i] ? std::string_view(*newKeys[i])
-                                        : std::string_view(members[i]->key));
+
+        // A skipped rename keeps its old key, which can make another rename
+        // collide in turn: repeat until no rename collides. Each pass skips
+        // every rename colliding at its start, so two keys renamed onto the
+        // same new key are both skipped.
+        std::vector<bool> skipped(members.size(), false);
+        auto finalKey = [&](std::size_t i) -> std::string_view {
+            return newKeys[i] && !skipped[i] ? std::string_view(*newKeys[i])
+                                             : std::string_view(members[i]->key);
+        };
+        for (bool again = true; again;) {
+            std::multiset<std::string_view> finalKeys;
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                finalKeys.insert(finalKey(i));
+            }
+            again = false;
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                if (newKeys[i] && !skipped[i] && finalKeys.count(*newKeys[i]) > 1) {
+                    skipped[i] = true;
+                    ++result.keysSkipped;
+                    again = true;
+                }
+            }
         }
 
         bool changed = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (!newKeys[i]) {
+            if (!newKeys[i] || skipped[i]) {
                 continue;
             }
-            // Collides when another member ends up with the same key.
-            if (finalKeys.count(*newKeys[i]) > 1) {
-                ++result.keysSkipped;
-                continue;
-            }
-            // Copied, not moved: finalKeys still views into newKeys.
             const auto& member = members[i];
             members[i] = std::make_shared<JsonNode>(
-                JsonNode{member->type, *newKeys[i], member->value, member->children});
+                JsonNode{member->type, std::move(*newKeys[i]), member->value, member->children});
             ++result.keysChanged;
             changed = true;
         }

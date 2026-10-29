@@ -29,8 +29,12 @@ struct ReplaceResult {
     std::size_t valuesChanged = 0;
     std::size_t keysChanged = 0;
     // Key renames refused because the new key already exists among the
-    // member's siblings (a JSON object cannot hold it twice).
+    // member's siblings (a JSON object cannot hold it twice), or because a
+    // regex match split a multi-byte character.
     std::size_t keysSkipped = 0;
+    // Value replacements refused because a regex match split a multi-byte
+    // character (the result would not be valid UTF-8).
+    std::size_t valuesSkipped = 0;
     std::optional<std::string> error;  // empty pattern or invalid regex
 };
 

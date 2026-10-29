@@ -82,13 +82,12 @@ auto rebuildWithReplacement(const std::vector<std::shared_ptr<const JsonNode>>& 
     return newNode;
 }
 
-// The node itself when it already carries `key`, otherwise a shallow clone
-// with the new key (type, value and children stay shared).
-auto withKey(std::shared_ptr<const JsonNode> node, std::string key)
+// A shallow clone of `node` with `key` (type, value and children stay
+// shared). Always a new node, even when the key is unchanged: edits find a
+// child by pointer, so one node must never sit in two places (duplicating an
+// array element inserts the element itself).
+auto withKey(const std::shared_ptr<const JsonNode>& node, std::string key)
     -> std::shared_ptr<const JsonNode> {
-    if (node->key == key) {
-        return node;
-    }
     return std::make_shared<JsonNode>(
         JsonNode{node->type, std::move(key), node->value, node->children});
 }
