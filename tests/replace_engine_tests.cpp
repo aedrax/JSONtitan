@@ -155,6 +155,18 @@ TEST(ReplaceEngine, RegexNeverSplitsACharacter) {
     auto dots = replaceAll(cafe, {.pattern = ".", .replacement = "*", .regex = true});
     EXPECT_EQ(compact(dots.root), R"(["café","***"])");
     EXPECT_EQ(dots.valuesSkipped, 1u);
+
+    // The whole match can be whole characters while a capture group splits
+    // one: "(.)(.)" matches both bytes of "é", and "$2$1" swapped them.
+    auto swapped = parse("{\"\\u00e9\": \"\\u00e9\"}");
+    auto groups = replaceAll(swapped, {.pattern = "(.)(.)",
+                                       .replacement = "$2$1",
+                                       .regex = true,
+                                       .inValues = true,
+                                       .inKeys = true});
+    EXPECT_EQ(groups.root.get(), swapped.get());
+    EXPECT_EQ(groups.valuesSkipped, 1u);
+    EXPECT_EQ(groups.keysSkipped, 1u);
 }
 
 // Regression: case folding, XML names and path trimming used <cctype>, which

@@ -26,14 +26,39 @@ public:
     }
 
     // `text` with every match replaced, or std::nullopt when nothing matched.
-    auto apply(std::string_view text) const -> std::optional<std::string> {
+    // `splits` is set when a regex match or capture group starts or ends
+    // inside a multi-byte character: a regex works on bytes ("." matches
+    // each byte of "é", and "$2$1" could swap them), so the result may not
+    // be valid UTF-8. Substring matches cannot split: the pattern is whole
+    // UTF-8 itself, and folding is ASCII-only.
+    auto apply(std::string_view text, bool& splits) const -> std::optional<std::string> {
+        splits = false;
         if (m_regex) {
-            if (!std::regex_search(text.begin(), text.end(), *m_regex)) {
+            const auto insideCharacter = [text](std::ptrdiff_t pos) {
+                return static_cast<std::size_t>(pos) < text.size() &&
+                       (static_cast<unsigned char>(text[static_cast<std::size_t>(pos)]) &
+                        0xC0) == 0x80;
+            };
+            std::string out;
+            bool matched = false;
+            const char* rest = text.data();
+            for (std::cregex_iterator it(text.data(), text.data() + text.size(), *m_regex), end;
+                 it != end; ++it) {
+                const auto& match = *it;
+                for (std::size_t g = 0; g < match.size() && !splits; ++g) {
+                    splits = match[g].matched &&
+                             (insideCharacter(match.position(g)) ||
+                              insideCharacter(match.position(g) + match.length(g)));
+                }
+                matched = true;
+                out.append(match.prefix().first, match.prefix().second);
+                match.format(std::back_inserter(out), m_options.replacement);
+                rest = match[0].second;
+            }
+            if (!matched) {
                 return std::nullopt;
             }
-            std::string out;
-            std::regex_replace(std::back_inserter(out), text.begin(), text.end(), *m_regex,
-                               m_options.replacement);
+            out.append(rest, text.data() + text.size());
             return out;
         }
 
@@ -66,11 +91,12 @@ public:
                 if (!m_options.inValues) {
                     return node;
                 }
-                auto replaced = apply(node->value);
+                bool splits = false;
+                auto replaced = apply(node->value, splits);
                 if (!replaced || *replaced == node->value) {
                     return node;
                 }
-                if (splitsCharacter(node->value)) {
+                if (splits) {
                     ++result.valuesSkipped;
                     return node;
                 }
@@ -108,27 +134,6 @@ private:
     std::optional<std::regex> m_regex;
     std::string m_foldedPattern;
 
-    // A regex works on bytes, so a match can start or end inside a
-    // multi-byte character ("." matches each byte of "é"). Substring matches
-    // cannot: the pattern is whole UTF-8 itself, and folding is ASCII-only.
-    auto splitsCharacter(std::string_view text) const -> bool {
-        if (!m_regex) {
-            return false;
-        }
-        const auto insideCharacter = [text](std::ptrdiff_t pos) {
-            return static_cast<std::size_t>(pos) < text.size() &&
-                   (static_cast<unsigned char>(text[static_cast<std::size_t>(pos)]) & 0xC0) == 0x80;
-        };
-        for (std::cregex_iterator it(text.data(), text.data() + text.size(), *m_regex), end;
-             it != end; ++it) {
-            if (insideCharacter(it->position()) ||
-                insideCharacter(it->position() + it->length())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     auto find(std::string_view text, std::size_t from) const -> std::size_t {
         if (m_options.caseSensitive) {
             return text.find(m_options.pattern, from);
@@ -147,11 +152,12 @@ private:
         std::vector<std::optional<std::string>> newKeys;
         newKeys.reserve(members.size());
         for (const auto& member : members) {
-            auto replaced = apply(member->key);
+            bool splits = false;
+            auto replaced = apply(member->key, splits);
             if (replaced && *replaced == member->key) {
                 replaced.reset();
             }
-            if (replaced && splitsCharacter(member->key)) {
+            if (replaced && splits) {
                 ++result.keysSkipped;
                 replaced.reset();
             }
