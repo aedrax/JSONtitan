@@ -224,7 +224,7 @@ auto resolveAncestorPath(const JsonNode& root,
 // **Validates: Requirements 3.1**
 // ---------------------------------------------------------------------------
 TEST(SearchPreservation, DeterministicResults) {
-    rc::check("filter() is deterministic: same input always produces same output",
+    EXPECT_TRUE(rc::check("filter() is deterministic: same input always produces same output",
         [](void) {
         auto tree = *genTree();
         auto query = *genValidQuery();
@@ -246,7 +246,7 @@ TEST(SearchPreservation, DeterministicResults) {
             RC_ASSERT(result1.matches[i].ancestorIndices == result2.matches[i].ancestorIndices);
             RC_ASSERT(result1.matches[i].node.get() == result2.matches[i].node.get());
         }
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ TEST(SearchPreservation, DeterministicResults) {
 // **Validates: Requirements 3.2**
 // ---------------------------------------------------------------------------
 TEST(SearchPreservation, EmptyPatternReturnsNoMatches) {
-    rc::check("Empty pattern returns zero matches and no error for any tree",
+    EXPECT_TRUE(rc::check("Empty pattern returns zero matches and no error for any tree",
         [](void) {
         auto tree = *genTree();
 
@@ -269,7 +269,7 @@ TEST(SearchPreservation, EmptyPatternReturnsNoMatches) {
 
         RC_ASSERT(result.matches.empty());
         RC_ASSERT(!result.error.has_value());
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +279,7 @@ TEST(SearchPreservation, EmptyPatternReturnsNoMatches) {
 // **Validates: Requirements 3.3**
 // ---------------------------------------------------------------------------
 TEST(SearchPreservation, InvalidRegexReturnsError) {
-    rc::check("Invalid regex pattern returns error with non-empty description",
+    EXPECT_TRUE(rc::check("Invalid regex pattern returns error with non-empty description",
         [](void) {
         auto tree = *genTree();
         auto invalidPattern = *genInvalidRegexPattern();
@@ -294,7 +294,7 @@ TEST(SearchPreservation, InvalidRegexReturnsError) {
         RC_ASSERT(result.error.has_value());
         RC_ASSERT(!result.error->description.empty());
         RC_ASSERT(result.matches.empty());
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ TEST(SearchPreservation, InvalidRegexReturnsError) {
 // **Validates: Requirements 3.4**
 // ---------------------------------------------------------------------------
 TEST(SearchPreservation, SubstringMatchCorrectness) {
-    rc::check("Every substring match node's key or value contains the pattern",
+    EXPECT_TRUE(rc::check("Every substring match node's key or value contains the pattern",
         [](void) {
         auto tree = *genTree();
         auto query = *genSubstringQuery();
@@ -333,7 +333,7 @@ TEST(SearchPreservation, SubstringMatchCorrectness) {
 
             RC_ASSERT(keyMatches || valueMatches);
         }
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ TEST(SearchPreservation, SubstringMatchCorrectness) {
 // **Validates: Requirements 3.5**
 // ---------------------------------------------------------------------------
 TEST(SearchPreservation, AncestorPathCorrectness) {
-    rc::check("ancestorIndices correctly traces path from root to matched node",
+    EXPECT_TRUE(rc::check("ancestorIndices correctly traces path from root to matched node",
         [](void) {
         auto tree = *genTree();
         auto query = *genValidQuery();
@@ -364,5 +364,5 @@ TEST(SearchPreservation, AncestorPathCorrectness) {
             // The resolved node must be the same as the match node
             RC_ASSERT(resolved == match.node.get());
         }
-    });
+    }));
 }

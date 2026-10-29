@@ -363,7 +363,7 @@ static rc::Gen<std::string> genInvalidJson() {
 // ===========================================================================
 
 TEST(SimdjsonGenerators, ValidJsonGeneratorProducesParseableDocuments) {
-    rc::check("Valid JSON generator produces documents that parse successfully",
+    EXPECT_TRUE(rc::check("Valid JSON generator produces documents that parse successfully",
         []() {
             const auto json = *generators::genValidJson();
 
@@ -374,11 +374,11 @@ TEST(SimdjsonGenerators, ValidJsonGeneratorProducesParseableDocuments) {
             RC_ASSERT(result.ok());
             RC_ASSERT(result.root != nullptr);
             RC_ASSERT(!result.error.has_value());
-        });
+        }));
 }
 
 TEST(SimdjsonGenerators, InvalidJsonGeneratorProducesUnparseableDocuments) {
-    rc::check("Invalid JSON generator produces documents that fail to parse",
+    EXPECT_TRUE(rc::check("Invalid JSON generator produces documents that fail to parse",
         []() {
             const auto json = *generators::genInvalidJson();
 
@@ -387,11 +387,11 @@ TEST(SimdjsonGenerators, InvalidJsonGeneratorProducesUnparseableDocuments) {
                 ParseBufferOptions{});
 
             RC_ASSERT(!result.ok() || result.error.has_value());
-        });
+        }));
 }
 
 TEST(SimdjsonGenerators, DuplicateKeyGeneratorProducesParseable) {
-    rc::check("Duplicate key generator produces parseable JSON",
+    EXPECT_TRUE(rc::check("Duplicate key generator produces parseable JSON",
         []() {
             const auto json = *generators::genJsonWithDuplicateKeys();
 
@@ -400,7 +400,7 @@ TEST(SimdjsonGenerators, DuplicateKeyGeneratorProducesParseable) {
 
             RC_ASSERT(result.ok());
             RC_ASSERT(result.root != nullptr);
-        });
+        }));
 }
 
 // ===========================================================================
@@ -512,7 +512,7 @@ static auto oracleParse(const std::string& json) -> ParseResult {
 // ===========================================================================
 
 TEST(SimdjsonProperties, SemanticEquivalence) {
-    rc::check("Feature: simdjson-integration, Property 1: Semantic Equivalence",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 1: Semantic Equivalence",
         []() {
             const auto json = *generators::genValidJson();
 
@@ -536,7 +536,7 @@ TEST(SimdjsonProperties, SemanticEquivalence) {
 
             // Compare the two trees for semantic equivalence
             RC_ASSERT(jsonNodesSemanticEqual(simdjsonTree.root, oracleResult.root));
-        });
+        }));
 }
 
 // ===========================================================================
@@ -547,7 +547,7 @@ TEST(SimdjsonProperties, SemanticEquivalence) {
 // ===========================================================================
 
 TEST(SimdjsonProperties, ParsePrintRoundTrip) {
-    rc::check("Feature: simdjson-integration, Property 2: Parse-Print Round-Trip",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 2: Parse-Print Round-Trip",
         []() {
             const auto json = *generators::genValidJson();
 
@@ -579,7 +579,7 @@ TEST(SimdjsonProperties, ParsePrintRoundTrip) {
 
             // Step 4: Assert structural/semantic equivalence
             RC_ASSERT(jsonNodesSemanticEqual(tree1.root, tree2.root));
-        });
+        }));
 }
 
 // ===========================================================================
@@ -589,7 +589,7 @@ TEST(SimdjsonProperties, ParsePrintRoundTrip) {
 // ===========================================================================
 
 TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
-    rc::check("Feature: simdjson-integration, Property 3: Duplicate Key Order Preservation",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 3: Duplicate Key Order Preservation",
         []() {
             const auto json = *generators::genJsonWithDuplicateKeys();
 
@@ -707,7 +707,7 @@ TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
                         break;
                 }
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -718,7 +718,7 @@ TEST(SimdjsonProperties, DuplicateKeyOrderPreservation) {
 // ===========================================================================
 
 TEST(SimdjsonProperties, ErrorMappingValidity) {
-    rc::check("Feature: simdjson-integration, Property 4: Error Mapping Validity",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 4: Error Mapping Validity",
         []() {
             const auto json = *generators::genInvalidJson();
 
@@ -738,7 +738,7 @@ TEST(SimdjsonProperties, ErrorMappingValidity) {
 
             // The description must be non-empty
             RC_ASSERT(!result.error->description.empty());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -749,7 +749,7 @@ TEST(SimdjsonProperties, ErrorMappingValidity) {
 // ===========================================================================
 
 TEST(SimdjsonProperties, ProgressCallbackBounds) {
-    rc::check("Feature: simdjson-integration, Property 5: Progress Callback Bounds",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 5: Progress Callback Bounds",
         []() {
             const auto json = *generators::genValidJson();
 
@@ -787,7 +787,7 @@ TEST(SimdjsonProperties, ProgressCallbackBounds) {
             for (std::size_t i = 1; i < progressValues.size(); ++i) {
                 RC_ASSERT(progressValues[i] >= progressValues[i - 1]);
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -843,7 +843,7 @@ static bool verifyArenaIntegrity(const ArenaJsonNode* node,
 } // anonymous namespace
 
 TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
-    rc::check("Feature: simdjson-integration, Property 7: Arena Allocation Integrity",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 7: Arena Allocation Integrity",
         []() {
             const auto json = *generators::genValidJson();
 
@@ -881,7 +881,7 @@ TEST(SimdjsonProperties, ArenaAllocationIntegrity) {
             // "false", numbers, empty objects {}, and empty arrays [] may have
             // zero non-empty StringRefs, which is valid.
             // This is a sanity check — the real assertion is allValid above.
-        });
+        }));
 }
 
 // ===========================================================================
@@ -930,7 +930,7 @@ auto refComputeStddev(const std::vector<double>& values) -> double {
 } // anonymous namespace
 
 TEST(SimdjsonProperties, StatisticalComputationCorrectness) {
-    rc::check("Feature: simdjson-integration, Property 6: Statistical Computation Correctness",
+    EXPECT_TRUE(rc::check("Feature: simdjson-integration, Property 6: Statistical Computation Correctness",
         []() {
             // Generate a vector of 1-100 positive doubles in range (0.001, 10000.0)
             // to simulate realistic timing values.
@@ -996,7 +996,7 @@ TEST(SimdjsonProperties, StatisticalComputationCorrectness) {
                     RC_ASSERT(std::abs(stddev - expectedStddev) < 1e-10);
                 }
             }
-        });
+        }));
 }
 
 // ===========================================================================

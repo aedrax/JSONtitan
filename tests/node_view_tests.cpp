@@ -200,7 +200,7 @@ TEST(NodeViewAccessors, ArenaAndJsonNodeBackingsAgree) {
 }
 
 TEST(NodeViewAccessors, PropertyArenaAndOracleAgree) {
-    rc::check("NodeView exposes identical shape/keys/values over both backings",
+    EXPECT_TRUE(rc::check("NodeView exposes identical shape/keys/values over both backings",
         []() {
             const auto json = *genRoundTrippableJson();
 
@@ -211,7 +211,7 @@ TEST(NodeViewAccessors, PropertyArenaAndOracleAgree) {
             RC_PRE(oracleRoot != nullptr);
 
             RC_ASSERT(sameTree(NodeView(*arenaResult.root), NodeView(*oracleRoot)));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ TEST(NodeViewAccessors, PropertyArenaAndOracleAgree) {
 // ---------------------------------------------------------------------------
 
 TEST(NodeViewTokenEmission, ArenaTokensEqualJsonNodeTokens) {
-    rc::check("emitTokens(NodeView-arena) == emitTokens(JsonNode) token-for-token",
+    EXPECT_TRUE(rc::check("emitTokens(NodeView-arena) == emitTokens(JsonNode) token-for-token",
         []() {
             const auto json = *genRoundTrippableJson();
 
@@ -238,7 +238,7 @@ TEST(NodeViewTokenEmission, ArenaTokensEqualJsonNodeTokens) {
             auto jsonTokens = emitTokens(*jsonRoot, opts);
 
             RC_ASSERT(sameTokens(arenaTokens, jsonTokens));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -337,11 +337,11 @@ TEST(ParseNodeCount, MatchesHandCountedWalk) {
 }
 
 TEST(ParseNodeCount, PropertyMatchesTreeWalk) {
-    rc::check("ArenaParseResult::nodeCount equals a full tree walk",
+    EXPECT_TRUE(rc::check("ArenaParseResult::nodeCount equals a full tree walk",
         []() {
             const auto json = *genRoundTrippableJson();
             auto result = parseBuffer(std::string(json), ParseBufferOptions{});
             RC_PRE(result.ok());
             RC_ASSERT(result.nodeCount == countArenaNodes(result.root));
-        });
+        }));
 }

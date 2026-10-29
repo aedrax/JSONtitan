@@ -110,7 +110,7 @@ private slots:
         // For any JsonNode, the display formatting function SHALL produce output
         // containing the node's key (or array index), a type indicator, and for
         // scalar types a preview of the value.
-        rc::check("Feature: json-titan-core, Property 4: Node Display Formatting",
+        QVERIFY(rc::check("Feature: json-titan-core, Property 4: Node Display Formatting",
             [](void) {
                 auto seed = *rc::gen::arbitrary<uint32_t>();
                 auto node = generateRandomNode(seed, 2);
@@ -178,7 +178,7 @@ private slots:
                     QString indexStr = QStringLiteral("[%1]").arg(arrayIdx);
                     RC_ASSERT(display.contains(indexStr));
                 }
-            });
+            }));
     }
 };
 
@@ -2002,7 +2002,7 @@ class DropValidatorExtensionPropertyTest : public QObject {
 
 private slots:
     void property1_extensionBasedAcceptance() {
-        rc::check("Feature: drag-drop-file-open, Property 1: Extension-based acceptance",
+        QVERIFY(rc::check("Feature: drag-drop-file-open, Property 1: Extension-based acceptance",
             [](void) {
                 // Generate a random base filename (1-20 alphanumeric chars)
                 auto nameLen = *rc::gen::inRange(1, 21);
@@ -2021,7 +2021,7 @@ private slots:
                 auto otherExt = *rc::gen::element(
                     std::string(".txt"), std::string(".xml"), std::string(".csv"),
                     std::string(".yaml"), std::string(".html"), std::string(".js"),
-                    std::string(".jsonl"), std::string(".JSON5"), std::string("")
+                    std::string(".jsonx"), std::string(".JSON5"), std::string("")
                 );
 
                 // Test acceptance: filename ending with .json (various cases)
@@ -2062,7 +2062,7 @@ private slots:
                     RC_ASSERT(!result.accepted);
                     RC_ASSERT(!result.rejectReason.isEmpty());
                 }
-            });
+            }));
     }
 };
 
@@ -2079,7 +2079,7 @@ class DropValidatorMultiFilePropertyTest : public QObject {
 
 private slots:
     void property2_multipleFileAcceptance() {
-        rc::check("Feature: drag-drop-file-open, Property 2: Multi-file acceptance",
+        QVERIFY(rc::check("Feature: drag-drop-file-open, Property 2: Multi-file acceptance",
             [](void) {
                 // Generate 2-10 random filenames
                 auto fileCount = *rc::gen::inRange(2, 11);
@@ -2123,7 +2123,7 @@ private slots:
                     RC_ASSERT(result.accepted);
                     RC_ASSERT(result.filePaths == expectedAccepted);
                 }
-            });
+            }));
     }
 };
 
@@ -2497,7 +2497,7 @@ class DropStateResetPropertyTest : public QObject {
 
 private slots:
     void property3_stateResetOnValidDrop() {
-        rc::check("Feature: drag-drop-file-open, Property 3: State reset on valid drop",
+        QVERIFY(rc::check("Feature: drag-drop-file-open, Property 3: State reset on valid drop",
             [](void) {
                 MainWindow window;
                 window.show();
@@ -2558,7 +2558,7 @@ private slots:
 
                 // Verify detail panel is cleared (Requirement 5.2)
                 RC_ASSERT(detailPanel->toPlainText().isEmpty());
-            });
+            }));
     }
 };
 

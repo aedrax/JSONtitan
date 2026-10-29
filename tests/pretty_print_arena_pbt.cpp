@@ -144,7 +144,7 @@ QApplication* QtAppFixture::s_app = nullptr;
 // ===========================================================================
 
 TEST_F(QtAppFixture, BugCondition_ArenaNodeSelectionProducesEmptyDetailPanel) {
-    rc::check("Bug Condition: Arena node selection should produce non-empty detail panel content",
+    EXPECT_TRUE(rc::check("Bug Condition: Arena node selection should produce non-empty detail panel content",
         []() {
             const auto json = *genArenaJson();
 
@@ -233,7 +233,7 @@ TEST_F(QtAppFixture, BugCondition_ArenaNodeSelectionProducesEmptyDetailPanel) {
             // ASSERT: The fixed handler produces non-empty content for arena nodes
             // This confirms the fix works: arena selections now render correctly
             RC_ASSERT(!actualPanel.toPlainText().isEmpty());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -387,7 +387,7 @@ std::shared_ptr<const JsonNode> makeLargeJsonNode() {
 // ===========================================================================
 
 TEST_F(QtAppFixture, Preservation_LegacyJsonNodeSelectionProducesCorrectOutput) {
-    rc::check("Preservation: Legacy JsonNode selection produces correct emitTokens output",
+    EXPECT_TRUE(rc::check("Preservation: Legacy JsonNode selection produces correct emitTokens output",
         []() {
             // Generate a JsonNode tree with children
             auto root = *genJsonNodeWithChildren();
@@ -433,7 +433,7 @@ TEST_F(QtAppFixture, Preservation_LegacyJsonNodeSelectionProducesCorrectOutput) 
                 RC_ASSERT(tokenResult.tokens[i].type == expectedResult.tokens[i].type);
                 RC_ASSERT(tokenResult.tokens[i].text == expectedResult.tokens[i].text);
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -452,7 +452,7 @@ TEST_F(QtAppFixture, Preservation_LegacyJsonNodeSelectionProducesCorrectOutput) 
 // ===========================================================================
 
 TEST_F(QtAppFixture, Preservation_InvalidSelectionClearsDetailPanel) {
-    rc::check("Preservation: Invalid selection on empty model clears detail panel",
+    EXPECT_TRUE(rc::check("Preservation: Invalid selection on empty model clears detail panel",
         []() {
             // Set up TreeModel with NO root (simulates no file loaded)
             TreeModel treeModel;
@@ -485,7 +485,7 @@ TEST_F(QtAppFixture, Preservation_InvalidSelectionClearsDetailPanel) {
             }
 
             RC_ASSERT(detailPanel.toPlainText().isEmpty());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -498,7 +498,7 @@ TEST_F(QtAppFixture, Preservation_InvalidSelectionClearsDetailPanel) {
 // ===========================================================================
 
 TEST_F(QtAppFixture, Preservation_TruncationFlagSetForLargeNodes) {
-    rc::check("Preservation: 64 KB truncation limit sets truncated flag for large nodes",
+    EXPECT_TRUE(rc::check("Preservation: 64 KB truncation limit sets truncated flag for large nodes",
         []() {
             // Generate a large object with many long string values
             // We need total emitted text to exceed 65536 bytes
@@ -524,7 +524,7 @@ TEST_F(QtAppFixture, Preservation_TruncationFlagSetForLargeNodes) {
             // each with 1000-1500 char values = 70000-150000 chars > 64 KB
             RC_ASSERT(tokenResult.truncated == true);
             RC_ASSERT(!tokenResult.tokens.empty());
-        });
+        }));
 }
 
 // ===========================================================================

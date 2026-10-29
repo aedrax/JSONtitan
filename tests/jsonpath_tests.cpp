@@ -420,7 +420,7 @@ rc::Gen<std::shared_ptr<const JsonNode>> genJsonNode(int maxDepth = 3,
 }
 
 TEST(JsonPathPBT, RecursiveWildcardMatchesEveryNodeExactlyOnce) {
-    rc::check(
+    EXPECT_TRUE(rc::check(
         "Feature: jsonpath, Property: $..* matches every non-root node "
         "exactly once (total node count = countDescendants + 1 incl. root)",
         [] {
@@ -430,11 +430,11 @@ TEST(JsonPathPBT, RecursiveWildcardMatchesEveryNodeExactlyOnce) {
             // $..* selects every node except the root itself, so match count
             // is the total node count (countDescendants + 1) minus the root.
             RC_ASSERT(result.matches.size() == countDescendants(NodeView(*root)));
-        });
+        }));
 }
 
 TEST(JsonPathPBT, ResultsNeverContainDuplicatePaths) {
-    rc::check(
+    EXPECT_TRUE(rc::check(
         "Feature: jsonpath, Property: evaluation results are deduplicated",
         [] {
             auto root = *genJsonNode(4, 4);
@@ -446,7 +446,7 @@ TEST(JsonPathPBT, ResultsNeverContainDuplicatePaths) {
                 RC_ASSERT(std::adjacent_find(paths.begin(), paths.end()) ==
                           paths.end());
             }
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------

@@ -422,7 +422,7 @@ void assertOffSpineSharing(const std::shared_ptr<const JsonNode>& oldRoot,
 // For random trees and random scalar-leaf paths: editValue leaves every
 // untouched subtree pointer-identical and gives the edited node the new value.
 TEST(EditEnginePBT, EditValuePreservesUntouchedSubtreesAndSetsValue) {
-    rc::check("editValue: structural sharing off the spine + new value at path",
+    EXPECT_TRUE(rc::check("editValue: structural sharing off the spine + new value at path",
         []() {
             auto root = *genContainerNode(3, 4);
 
@@ -478,12 +478,12 @@ TEST(EditEnginePBT, EditValuePreservesUntouchedSubtreesAndSetsValue) {
 
             // Original tree not mutated.
             RC_ASSERT(exportJson(*root) == beforeJson);
-        });
+        }));
 }
 
 // renameKey then renameKey back yields a tree with identical content.
 TEST(EditEnginePBT, RenameKeyRoundTripRestoresContent) {
-    rc::check("renameKey there-and-back == original tree content",
+    EXPECT_TRUE(rc::check("renameKey there-and-back == original tree content",
         []() {
             auto root = *genContainerNode(3, 4);
 
@@ -515,7 +515,7 @@ TEST(EditEnginePBT, RenameKeyRoundTripRestoresContent) {
             RC_ASSERT(restored.has_value());
 
             RC_ASSERT(exportJson(**restored) == original);
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +687,7 @@ TEST(EditEngineStructure, DeleteNodesHandlesShiftingIndicesAndNesting) {
 
 // insertChild then deleting the inserted node restores the original content.
 TEST(EditEnginePBT, InsertThenDeleteRoundTrips) {
-    rc::check("insertChild + deleteNode == original tree content", []() {
+    EXPECT_TRUE(rc::check("insertChild + deleteNode == original tree content", []() {
         auto root = *genContainerNode(3, 4);
         std::vector<PathEntry> entries;
         collectEntries(root.get(), {}, entries);
@@ -716,12 +716,12 @@ TEST(EditEnginePBT, InsertThenDeleteRoundTrips) {
             insertedPath.emplace_back(position);
         }
         RC_ASSERT(exportJson(*deleteNode(*inserted, insertedPath)) == exportJson(*root));
-    });
+    }));
 }
 
 // Moving a node and moving it back restores the original content.
 TEST(EditEnginePBT, MoveThereAndBackRoundTrips) {
-    rc::check("moveChild there-and-back == original tree content", []() {
+    EXPECT_TRUE(rc::check("moveChild there-and-back == original tree content", []() {
         auto root = *genContainerNode(3, 4);
         std::vector<PathEntry> entries;
         collectEntries(root.get(), {}, entries);
@@ -746,7 +746,7 @@ TEST(EditEnginePBT, MoveThereAndBackRoundTrips) {
         auto back = moveChild(*moved, movedPath, oldPosition);
         RC_ASSERT(back.has_value());
         RC_ASSERT(exportJson(**back) == exportJson(*root));
-    });
+    }));
 }
 
 namespace {
@@ -785,4 +785,34 @@ TEST(EditEngineStructure, DeleteDuplicateKeyRemovesFirstOnly) {
     auto deleted = deleteNode(root, {std::string("a")});
     ASSERT_NE(deleted, nullptr);
     EXPECT_EQ(compactJson(deleted), R"({"a":2,"b":3})");
+}
+
+// deleteNodes rebuilds each parent once; it must match deleting the same
+// nodes one at a time, last and deepest first (indices never shift under a
+// path still to come, and a path inside a deleted one is a no-op).
+TEST(EditEnginePBT, DeleteNodesMatchesOneAtATime) {
+    EXPECT_TRUE(rc::check("deleteNodes == sequential deleteNode in reverse order", []() {
+        auto root = *genContainerNode(3, 5);
+        std::vector<PathEntry> entries;
+        collectEntries(root.get(), {}, entries);
+        RC_PRE(!entries.empty());
+
+        std::vector<NodePath> paths;
+        const auto count = *rc::gen::inRange<std::size_t>(1, entries.size() + 1);
+        for (std::size_t i = 0; i < count; ++i) {
+            paths.push_back(entries[*rc::gen::inRange<std::size_t>(0, entries.size())].path);
+        }
+
+        auto expected = root;
+        auto sorted = paths;
+        std::ranges::sort(sorted, std::greater<>());
+        sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+        for (const auto& path : sorted) {
+            expected = deleteNode(expected, path);
+        }
+
+        auto actual = deleteNodes(root, paths);
+        RC_ASSERT(actual != nullptr);
+        RC_ASSERT(exportJson(*actual) == exportJson(*expected));
+    }));
 }

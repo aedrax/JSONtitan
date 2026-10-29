@@ -311,7 +311,7 @@ bool isOnAncestorPath(const std::shared_ptr<const JsonNode>& root,
 // ===========================================================================
 
 TEST(DeletionEnginePBT, Property1_DeletionRemovesTargetNode) {
-    rc::check("Feature: element-deletion, Property 1: Deletion removes target node",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 1: Deletion removes target node",
         []() {
             auto root = *genContainerNode(3, 4);
             RC_PRE(!root->children.empty());
@@ -373,7 +373,7 @@ TEST(DeletionEnginePBT, Property1_DeletionRemovesTargetNode) {
                 }
             }
             // For array parents: the element count reduction is already verified above
-        });
+        }));
 }
 
 // ===========================================================================
@@ -389,7 +389,7 @@ TEST(DeletionEnginePBT, Property1_DeletionRemovesTargetNode) {
 // ===========================================================================
 
 TEST(DeletionEnginePBT, Property2_ArrayReIndexingAfterDeletion) {
-    rc::check("Feature: element-deletion, Property 2: Array re-indexing after deletion",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 2: Array re-indexing after deletion",
         []() {
             // Generate a root that IS an array with at least 2 elements
             auto arrayNode = *genArrayNode(2, 5);
@@ -425,7 +425,7 @@ TEST(DeletionEnginePBT, Property2_ArrayReIndexingAfterDeletion) {
             for (std::size_t i = 0; i < result->children.size(); ++i) {
                 RC_ASSERT(result->children[i].get() == expectedOrder[i]);
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -441,7 +441,7 @@ TEST(DeletionEnginePBT, Property2_ArrayReIndexingAfterDeletion) {
 // ===========================================================================
 
 TEST(DeletionEnginePBT, Property3_StructuralSharing) {
-    rc::check("Feature: element-deletion, Property 3: Structural sharing",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 3: Structural sharing",
         []() {
             auto root = *genContainerNode(3, 4);
             RC_PRE(!root->children.empty());
@@ -482,7 +482,7 @@ TEST(DeletionEnginePBT, Property3_StructuralSharing) {
                     RC_ASSERT(foundInResult);
                 }
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -497,7 +497,7 @@ TEST(DeletionEnginePBT, Property3_StructuralSharing) {
 // ===========================================================================
 
 TEST(DeletionEnginePBT, Property4_InvalidPathReturnsIdenticalTree) {
-    rc::check("Feature: element-deletion, Property 4: Invalid path returns identical tree",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 4: Invalid path returns identical tree",
         []() {
             auto root = *genContainerNode(3, 4);
 
@@ -511,7 +511,7 @@ TEST(DeletionEnginePBT, Property4_InvalidPathReturnsIdenticalTree) {
 
             // Result should be pointer-identical to the input root
             RC_ASSERT(result.get() == root.get());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -526,7 +526,7 @@ TEST(DeletionEnginePBT, Property4_InvalidPathReturnsIdenticalTree) {
 // ===========================================================================
 
 TEST(DeletionEnginePBT, Property5_OriginalTreeImmutability) {
-    rc::check("Feature: element-deletion, Property 5: Original tree immutability",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 5: Original tree immutability",
         []() {
             auto root = *genContainerNode(3, 4);
             RC_PRE(!root->children.empty());
@@ -546,6 +546,6 @@ TEST(DeletionEnginePBT, Property5_OriginalTreeImmutability) {
 
             // The original tree serialization should be byte-identical
             RC_ASSERT(beforeJson == afterJson);
-        });
+        }));
 }
 

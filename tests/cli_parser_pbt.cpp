@@ -147,7 +147,7 @@ auto genArgsWithVersionNoHelp() -> rc::Gen<std::vector<std::string>> {
 // ---------------------------------------------------------------------------
 
 TEST(CliParserProperty, PositionalArgsBecomeFilePaths) {
-    rc::check("Feature: cli-file-open, Property 1: Positional arguments become file paths",
+    EXPECT_TRUE(rc::check("Feature: cli-file-open, Property 1: Positional arguments become file paths",
         [](void) {
             auto args = *genPositionalArgs();
             auto cwd = *genCwd();
@@ -176,7 +176,7 @@ TEST(CliParserProperty, PositionalArgsBecomeFilePaths) {
             // No error should be set
             RC_ASSERT(!result.error.has_value());
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ TEST(CliParserProperty, PositionalArgsBecomeFilePaths) {
 // ---------------------------------------------------------------------------
 
 TEST(CliParserProperty, HelpFlagAlwaysProducesShowHelp) {
-    rc::check("Feature: cli-file-open, Property 2: Help flag always produces ShowHelp",
+    EXPECT_TRUE(rc::check("Feature: cli-file-open, Property 2: Help flag always produces ShowHelp",
         [](void) {
             auto args = *genArgsWithHelp();
             std::string cwd = "/tmp";
@@ -195,7 +195,7 @@ TEST(CliParserProperty, HelpFlagAlwaysProducesShowHelp) {
             // --help takes priority over everything
             RC_ASSERT(result.action == CliAction::ShowHelp);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ TEST(CliParserProperty, HelpFlagAlwaysProducesShowHelp) {
 // ---------------------------------------------------------------------------
 
 TEST(CliParserProperty, VersionFlagAlwaysProducesShowVersion) {
-    rc::check("Feature: cli-file-open, Property 3: Version flag always produces ShowVersion",
+    EXPECT_TRUE(rc::check("Feature: cli-file-open, Property 3: Version flag always produces ShowVersion",
         [](void) {
             auto args = *genArgsWithVersionNoHelp();
             std::string cwd = "/tmp";
@@ -214,7 +214,7 @@ TEST(CliParserProperty, VersionFlagAlwaysProducesShowVersion) {
             // --version produces ShowVersion when --help is NOT present
             RC_ASSERT(result.action == CliAction::ShowVersion);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ TEST(CliParserProperty, VersionFlagAlwaysProducesShowVersion) {
 // ---------------------------------------------------------------------------
 
 TEST(CliParserProperty, RelativePathResolution) {
-    rc::check("Feature: cli-file-open, Property 4: Relative path resolution",
+    EXPECT_TRUE(rc::check("Feature: cli-file-open, Property 4: Relative path resolution",
         [](void) {
             auto relativePath = *genRelativePath();
             auto cwd = *genCwd();
@@ -250,5 +250,5 @@ TEST(CliParserProperty, RelativePathResolution) {
                 RC_ASSERT(component != "..");
             }
         }
-    );
+    ));
 }

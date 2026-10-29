@@ -157,7 +157,7 @@ struct Arbitrary<PrettyPrintOptions> {
 // ---------------------------------------------------------------------------
 
 TEST(TokenEmitterProperty, RoundTripEquivalence) {
-    rc::check("Feature: syntax-highlighting, Property 1: Round-Trip Equivalence",
+    EXPECT_TRUE(rc::check("Feature: syntax-highlighting, Property 1: Round-Trip Equivalence",
         [](void) {
             // Generate a random JsonNode tree
             auto node = *rc::gen::arbitrary<std::shared_ptr<const JsonNode>>();
@@ -181,7 +181,7 @@ TEST(TokenEmitterProperty, RoundTripEquivalence) {
             // Assert round-trip equivalence
             RC_ASSERT(concatenated == expected);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ TEST(TokenEmitterProperty, RoundTripEquivalence) {
 // ---------------------------------------------------------------------------
 
 TEST(TokenEmitterProperty, DepthAssignmentCorrectness) {
-    rc::check("Feature: syntax-highlighting, Property 2: Depth Assignment Correctness",
+    EXPECT_TRUE(rc::check("Feature: syntax-highlighting, Property 2: Depth Assignment Correctness",
         [](void) {
             // Generate a random JsonNode tree
             auto node = *rc::gen::arbitrary<std::shared_ptr<const JsonNode>>();
@@ -245,7 +245,7 @@ TEST(TokenEmitterProperty, DepthAssignmentCorrectness) {
             // After processing all tokens, depth should return to 0
             RC_ASSERT(currentDepth == 0);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ TEST(TokenEmitterProperty, DepthAssignmentCorrectness) {
 // ---------------------------------------------------------------------------
 
 TEST(TokenEmitterProperty, TruncationCorrectness) {
-    rc::check("Feature: syntax-highlighting, Property 3: Truncation Correctness",
+    EXPECT_TRUE(rc::check("Feature: syntax-highlighting, Property 3: Truncation Correctness",
         [](void) {
             // Generate a random JsonNode tree
             auto node = *rc::gen::arbitrary<std::shared_ptr<const JsonNode>>();
@@ -311,7 +311,7 @@ TEST(TokenEmitterProperty, TruncationCorrectness) {
                 RC_ASSERT(truncatedResult.tokens.size() <= fullResult.tokens.size());
             }
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ void countElements(const JsonNode& node, ElementCounts& counts) {
 } // anonymous namespace
 
 TEST(TokenEmitterProperty, ElementCoverage) {
-    rc::check("Feature: syntax-highlighting, Property 5: Element Coverage",
+    EXPECT_TRUE(rc::check("Feature: syntax-highlighting, Property 5: Element Coverage",
         [](void) {
             // Generate a random JsonNode tree
             auto node = *rc::gen::arbitrary<std::shared_ptr<const JsonNode>>();
@@ -409,7 +409,7 @@ TEST(TokenEmitterProperty, ElementCoverage) {
             RC_ASSERT(tokenKeys >= expected.keys);
             RC_ASSERT(tokenValues >= expected.values);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +608,7 @@ TEST(TokenEmitterUnit, SmallMaxOutputSizeTruncates) {
 // ---------------------------------------------------------------------------
 
 TEST(TokenEmitterProperty, DepthCycledColorAssignment) {
-    rc::check("Feature: syntax-highlighting, Property 4: Depth-Cycled Color Assignment",
+    EXPECT_TRUE(rc::check("Feature: syntax-highlighting, Property 4: Depth-Cycled Color Assignment",
         [](void) {
             // Generate a random non-negative depth value (0 to 200)
             auto depth = *rc::gen::inRange(0, 201);
@@ -641,5 +641,5 @@ TEST(TokenEmitterProperty, DepthCycledColorAssignment) {
             // Verify the index matches the expected formula exactly
             RC_ASSERT(selectedIndex == (static_cast<std::size_t>(depth) % paletteSize));
         }
-    );
+    ));
 }

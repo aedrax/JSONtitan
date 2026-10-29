@@ -94,7 +94,7 @@ TEST(ReplaceEngine, NoMatchOrEmptyPattern) {
 // Replacing a string that cannot occur with anything is the identity, and
 // replacing X by X never changes content.
 TEST(ReplaceEnginePBT, IdentityReplacementsKeepContent) {
-    rc::check("replaceAll is the identity when it cannot change anything", [] {
+    EXPECT_TRUE(rc::check("replaceAll is the identity when it cannot change anything", [] {
         const auto text = *rc::gen::container<std::string>(rc::gen::inRange('a', 'e'));
         auto root = parse(("{\"k\": \"" + text + "\", \"l\": [\"" + text + "x\"]}").c_str());
         RC_ASSERT(root != nullptr);
@@ -107,7 +107,7 @@ TEST(ReplaceEnginePBT, IdentityReplacementsKeepContent) {
 
         auto absent = replaceAll(root, {.pattern = "#", .replacement = "!"});
         RC_ASSERT(absent.root.get() == root.get());
-    });
+    }));
 }
 
 // Regression: a skipped rename keeps its old key, and another member could

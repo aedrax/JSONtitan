@@ -165,7 +165,7 @@ struct CollectingSink {
 // ---------------------------------------------------------------------------
 
 TEST(StreamExportEquivalence, JsonStreamMatchesStringApi) {
-    rc::check("exportJsonStream output equals exportJson for random trees",
+    EXPECT_TRUE(rc::check("exportJsonStream output equals exportJson for random trees",
         []() {
             auto node = *genJsonNode(3);
             JsonExportOptions opts;
@@ -179,11 +179,11 @@ TEST(StreamExportEquivalence, JsonStreamMatchesStringApi) {
 
             RC_ASSERT(result.ok);
             RC_ASSERT(sink.concatenated() == exportJson(*node, opts));
-        });
+        }));
 }
 
 TEST(StreamExportEquivalence, CsvStreamMatchesStringApi) {
-    rc::check("exportCsvStream output equals exportCsv for array-of-objects trees",
+    EXPECT_TRUE(rc::check("exportCsvStream output equals exportCsv for array-of-objects trees",
         []() {
             auto node = *genCsvableTree();
 
@@ -194,11 +194,11 @@ TEST(StreamExportEquivalence, CsvStreamMatchesStringApi) {
             RC_ASSERT(streamResult.ok);
             RC_ASSERT(std::holds_alternative<std::string>(stringResult));
             RC_ASSERT(sink.concatenated() == std::get<std::string>(stringResult));
-        });
+        }));
 }
 
 TEST(StreamExportEquivalence, CsvStreamMatchesStringApiErrors) {
-    rc::check("exportCsvStream rejects the same trees with the same messages as exportCsv",
+    EXPECT_TRUE(rc::check("exportCsvStream rejects the same trees with the same messages as exportCsv",
         []() {
             auto node = *genJsonNode(3);
 
@@ -215,11 +215,11 @@ TEST(StreamExportEquivalence, CsvStreamMatchesStringApiErrors) {
                 RC_ASSERT(streamResult.ok);
                 RC_ASSERT(sink.concatenated() == std::get<std::string>(stringResult));
             }
-        });
+        }));
 }
 
 TEST(StreamExportEquivalence, XmlStreamMatchesStringApi) {
-    rc::check("exportXmlStream output equals exportXml for random trees",
+    EXPECT_TRUE(rc::check("exportXmlStream output equals exportXml for random trees",
         []() {
             auto node = *genJsonNode(3);
 
@@ -228,7 +228,7 @@ TEST(StreamExportEquivalence, XmlStreamMatchesStringApi) {
 
             RC_ASSERT(result.ok);
             RC_ASSERT(sink.concatenated() == exportXml(*node, "root"));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ TEST(StreamExportBackings, ArenaAndJsonNodeStreamIdenticalBytes) {
 }
 
 TEST(StreamExportBackings, PropertyArenaAndJsonNodeStreamIdenticalJson) {
-    rc::check("arena-backed and JsonNode-backed trees stream identical JSON/XML bytes",
+    EXPECT_TRUE(rc::check("arena-backed and JsonNode-backed trees stream identical JSON/XML bytes",
         []() {
             // Serialize a random tree, parse it into the arena, and compare
             // streaming from both backings.
@@ -391,5 +391,5 @@ TEST(StreamExportBackings, PropertyArenaAndJsonNodeStreamIdenticalJson) {
             RC_ASSERT(exportXmlStream(NodeView(*arenaResult.root), c.fn(), "root").ok);
             RC_ASSERT(exportXmlStream(NodeView(*jsonRoot), d.fn(), "root").ok);
             RC_ASSERT(c.concatenated() == d.concatenated());
-        });
+        }));
 }

@@ -105,6 +105,26 @@ std::size_t countNodes(const JsonNode& node) {
 // UI frame budget threshold: 16ms (60 FPS)
 constexpr auto UI_FRAME_BUDGET = std::chrono::milliseconds(16);
 
+// QSignalSpy::wait() only sees emissions made after it starts waiting, and
+// the worker can finish before then: poll the count instead.
+bool waitForSignal(QSignalSpy& spy, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (spy.count() == 0 && std::chrono::steady_clock::now() < deadline) {
+        spy.wait(50);
+    }
+    return spy.count() > 0;
+}
+
+// Stops the worker thread on every exit path. A failed assertion leaves the
+// test early, and destroying a running QThread aborts the whole binary.
+struct ThreadStopper {
+    QThread& thread;
+    ~ThreadStopper() {
+        thread.quit();
+        thread.wait();
+    }
+};
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -125,7 +145,7 @@ TEST(BugConditionExploration, SynchronousFilterBlocksUIThread) {
     // thread, so this is informational — it shows the problem that was solved.
     //
     // We verify that dispatching via SearchWorker keeps the UI thread responsive.
-    rc::check("Property 1: Async dispatch keeps UI thread responsive on large trees",
+    EXPECT_TRUE(rc::check("Property 1: Async dispatch keeps UI thread responsive on large trees",
         [](void) {
     // Generate a tree size between 100K and 200K nodes
     auto nodeCount = *rc::gen::inRange(100000, 200001);
@@ -156,6 +176,7 @@ TEST(BugConditionExploration, SynchronousFilterBlocksUIThread) {
     SearchWorker worker;
     worker.moveToThread(&workerThread);
     workerThread.start();
+    ThreadStopper stopper{workerThread};
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
 
@@ -177,12 +198,10 @@ TEST(BugConditionExploration, SynchronousFilterBlocksUIThread) {
     RC_ASSERT(elapsed <= UI_FRAME_BUDGET);
 
     // Wait for background search to complete (validates it actually works)
-    bool completed = completeSpy.wait(30000);
+    bool completed = waitForSignal(completeSpy, std::chrono::seconds(30));
     RC_ASSERT(completed);
 
-    workerThread.quit();
-    workerThread.wait();
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +224,7 @@ TEST(BugConditionExploration, DeterministicLargeTreeBlocking) {
     SearchWorker worker;
     worker.moveToThread(&workerThread);
     workerThread.start();
+    ThreadStopper stopper{workerThread};
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
 
@@ -244,7 +264,7 @@ TEST(BugConditionExploration, DeterministicLargeTreeBlocking) {
         << elapsed.count() << "ms. The async dispatch should be near-instant.";
 
     // Wait for the background search to actually complete (validates correctness)
-    ASSERT_TRUE(completeSpy.wait(30000))
+    ASSERT_TRUE(waitForSignal(completeSpy, std::chrono::seconds(30)))
         << "SearchWorker did not complete within timeout";
 
     auto args = completeSpy.at(0);
@@ -257,8 +277,6 @@ TEST(BugConditionExploration, DeterministicLargeTreeBlocking) {
               << "  Search completed successfully on background thread.\n"
               << std::endl;
 
-    workerThread.quit();
-    workerThread.wait();
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +299,7 @@ TEST(BugConditionExploration, KeystrokeFloodingNoDebounce) {
     SearchWorker worker;
     worker.moveToThread(&workerThread);
     workerThread.start();
+    ThreadStopper stopper{workerThread};
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
 
@@ -347,7 +366,7 @@ TEST(BugConditionExploration, KeystrokeFloodingNoDebounce) {
 
     // Now wait for the debounce to fire and the single search to complete
     // Debounce is 250ms, search takes ~70ms on 100K nodes
-    ASSERT_TRUE(completeSpy.wait(10000))
+    ASSERT_TRUE(waitForSignal(completeSpy, std::chrono::seconds(10)))
         << "Debounced search did not complete within timeout";
 
     // ASSERTION: Only ONE search was executed (debounce coalesced 4 keystrokes)
@@ -369,8 +388,6 @@ TEST(BugConditionExploration, KeystrokeFloodingNoDebounce) {
               << " keystrokes into 1 search.\n"
               << std::endl;
 
-    workerThread.quit();
-    workerThread.wait();
 }
 // Custom main: GTest needs a QCoreApplication for Qt event loop support
 int main(int argc, char** argv) {

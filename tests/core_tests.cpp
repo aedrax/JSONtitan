@@ -281,9 +281,9 @@ TEST(JsonNodeTree, MixedTypeChildren) {
 // === RapidCheck integration (from task 1) ==================================
 
 TEST(CoreSetup, RapidCheckIntegration) {
-    rc::check("trivial property", [](int x) {
+    EXPECT_TRUE(rc::check("trivial property", [](int x) {
         RC_ASSERT(x + 0 == x);
-    });
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +865,7 @@ static std::string generateJsonValue(int depth, std::mt19937& rng) {
 // ---------------------------------------------------------------------------
 
 TEST(ParserProperty, ChunkInvariantParsing) {
-    rc::check("Property 2: Chunk-Invariant Parsing",
+    EXPECT_TRUE(rc::check("Property 2: Chunk-Invariant Parsing",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -921,7 +921,7 @@ TEST(ParserProperty, ChunkInvariantParsing) {
             // Verify equivalence
             RC_ASSERT(nodesEqual(refResult.root, chunkedResult.root));
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -996,7 +996,7 @@ static std::string mutateJson(const std::string& validJson, std::mt19937& rng) {
 }
 
 TEST(ParserProperty, ParseErrorReporting) {
-    rc::check("Property 3: Parse Error Reporting",
+    EXPECT_TRUE(rc::check("Property 3: Parse Error Reporting",
         [](void) {
             auto seed = *rc::gen::arbitrary<uint32_t>();
             std::mt19937 rng(seed);
@@ -1034,7 +1034,7 @@ TEST(ParserProperty, ParseErrorReporting) {
                 // If no error, the mutation accidentally produced valid JSON — skip
             }
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1385,7 +1385,7 @@ static bool nodesEqualIgnoringRootKey(const std::shared_ptr<const JsonNode>& a,
 }
 
 TEST(PrettyPrinterProperty, ParsePrintRoundTrip) {
-    rc::check("Property 1: Parse-Print Round Trip",
+    EXPECT_TRUE(rc::check("Property 1: Parse-Print Round Trip",
         [](void) {
             // Generate a random seed for our tree generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -1415,7 +1415,7 @@ TEST(PrettyPrinterProperty, ParsePrintRoundTrip) {
             // nodesEqualIgnoringRootKey for safety.
             RC_ASSERT(nodesEqualIgnoringRootKey(originalNode, reparsed.root));
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1987,7 +1987,7 @@ static void collectKeysAndStringValues(const JsonNode& node,
 }
 
 TEST(SearchEngineProperty, SearchCompleteness) {
-    rc::check("Property 5: Search Completeness (Case-Insensitive)",
+    EXPECT_TRUE(rc::check("Property 5: Search Completeness (Case-Insensitive)",
         [](void) {
             auto seed = *rc::gen::arbitrary<uint32_t>();
             std::mt19937 rng(seed);
@@ -2033,7 +2033,7 @@ TEST(SearchEngineProperty, SearchCompleteness) {
             }
             RC_ASSERT(found);
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2057,7 +2057,7 @@ static bool verifyAncestorPath(const JsonNode& root,
 }
 
 TEST(SearchEngineProperty, SearchAncestorPreservation) {
-    rc::check("Property 6: Search Ancestor Preservation",
+    EXPECT_TRUE(rc::check("Property 6: Search Ancestor Preservation",
         [](void) {
             auto seed = *rc::gen::arbitrary<uint32_t>();
             std::mt19937 rng(seed);
@@ -2089,7 +2089,7 @@ TEST(SearchEngineProperty, SearchAncestorPreservation) {
                 RC_ASSERT(verifyAncestorPath(*tree, match.ancestorIndices, *match.node));
             }
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2112,7 +2112,7 @@ static void collectRegexMatches(const JsonNode& node,
 }
 
 TEST(SearchEngineProperty, RegexSearchCorrectness) {
-    rc::check("Property 7: Regex Search Correctness",
+    EXPECT_TRUE(rc::check("Property 7: Regex Search Correctness",
         [](void) {
             auto seed = *rc::gen::arbitrary<uint32_t>();
             std::mt19937 rng(seed);
@@ -2185,7 +2185,7 @@ TEST(SearchEngineProperty, RegexSearchCorrectness) {
             // Verify count matches
             RC_ASSERT(result.matches.size() == expected.size());
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2194,7 +2194,7 @@ TEST(SearchEngineProperty, RegexSearchCorrectness) {
 // ---------------------------------------------------------------------------
 
 TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
-    rc::check("Property 8: Invalid Regex Error Reporting",
+    EXPECT_TRUE(rc::check("Property 8: Invalid Regex Error Reporting",
         [](void) {
             // Generate strings that are not valid regular expressions
             auto invalidPatternIdx = *rc::gen::inRange(0, 8);
@@ -2225,7 +2225,7 @@ TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
             RC_ASSERT(result.error.has_value());
             RC_ASSERT(!result.error->description.empty());
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2234,7 +2234,7 @@ TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
 // ---------------------------------------------------------------------------
 
 TEST(UnionProperty, UnionStructureAndDisambiguation) {
-    rc::check("Feature: json-titan-core, Property 9: Union Structure and Disambiguation",
+    EXPECT_TRUE(rc::check("Feature: json-titan-core, Property 9: Union Structure and Disambiguation",
         [](void) {
             // Generate a random number of file entries (1–10)
             auto numEntries = *rc::gen::inRange(1, 11);
@@ -2302,7 +2302,7 @@ TEST(UnionProperty, UnionStructureAndDisambiguation) {
                 RC_ASSERT(result->children[i]->key == expectedKey);
             }
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2311,7 +2311,7 @@ TEST(UnionProperty, UnionStructureAndDisambiguation) {
 // ---------------------------------------------------------------------------
 
 TEST(UnionProperty, UnionRemoval) {
-    rc::check("Feature: json-titan-core, Property 10: Union Removal",
+    EXPECT_TRUE(rc::check("Feature: json-titan-core, Property 10: Union Removal",
         [](void) {
             // Generate a random number of file entries (2–10, need at least 2
             // so that after removal there is still at least 1 child)
@@ -2386,7 +2386,7 @@ TEST(UnionProperty, UnionRemoval) {
             }
             RC_ASSERT(remIdx == removed->children.size());
         }
-    );
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -3013,7 +3013,7 @@ TEST(CsvExporter, HeaderWithSpecialCharacters) {
 // ---------------------------------------------------------------------------
 
 TEST(CsvExporterProperty, HeaderAndRowInvariant) {
-    rc::check("Property 11: CSV Header and Row Invariant",
+    EXPECT_TRUE(rc::check("Property 11: CSV Header and Row Invariant",
         [](void) {
             // Generate a random array of objects
             auto numObjects = *rc::gen::inRange(1, 8);
@@ -3073,7 +3073,7 @@ TEST(CsvExporterProperty, HeaderAndRowInvariant) {
                 auto row = parseCsvRow(lines[static_cast<std::size_t>(i)]);
                 RC_ASSERT(row.size() == expectedHeaders.size());
             }
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3082,7 +3082,7 @@ TEST(CsvExporterProperty, HeaderAndRowInvariant) {
 // ---------------------------------------------------------------------------
 
 TEST(CsvExporterProperty, RFC4180Escaping) {
-    rc::check("Property 12: CSV RFC 4180 Escaping",
+    EXPECT_TRUE(rc::check("Property 12: CSV RFC 4180 Escaping",
         [](void) {
             // Generate a string that contains at least one special character
             auto baseStr = *rc::gen::arbitrary<std::string>();
@@ -3108,9 +3108,13 @@ TEST(CsvExporterProperty, RFC4180Escaping) {
             RC_ASSERT(lines.size() >= 2u);
 
             // The data row should be parseable and recover the original value
+            // (behind the formula-injection guard when it starts like a formula)
             auto row = parseCsvRow(lines[1]);
             RC_ASSERT(row.size() == 1u);
-            RC_ASSERT(row[0] == baseStr);
+            const bool formulaLike =
+                !baseStr.empty() && std::string_view("=+-@\t\r").find(baseStr[0]) !=
+                                        std::string_view::npos;
+            RC_ASSERT(row[0] == (formulaLike ? "'" + baseStr : baseStr));
 
             // Verify the raw CSV cell is properly quoted:
             // Find the data portion (after first \r\n)
@@ -3121,7 +3125,7 @@ TEST(CsvExporterProperty, RFC4180Escaping) {
             // The cell must start with a double quote (since it contains special chars)
             RC_ASSERT(!dataLine.empty());
             RC_ASSERT(dataLine[0] == '"');
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3130,7 +3134,7 @@ TEST(CsvExporterProperty, RFC4180Escaping) {
 // ---------------------------------------------------------------------------
 
 TEST(CsvExporterProperty, ErrorForNonTabularData) {
-    rc::check("Property 13: CSV Error for Non-Tabular Data",
+    EXPECT_TRUE(rc::check("Property 13: CSV Error for Non-Tabular Data",
         [](void) {
             // Generate a non-tabular JsonNode (not an array of objects)
             auto choice = *rc::gen::inRange(0, 5);
@@ -3173,7 +3177,7 @@ TEST(CsvExporterProperty, ErrorForNonTabularData) {
             auto result = exportCsv(*node);
             RC_ASSERT(std::holds_alternative<CsvError>(result));
             RC_ASSERT(!std::get<CsvError>(result).description.empty());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -3524,7 +3528,7 @@ bool isWellFormedXml(const std::string& xml) {
 } // anonymous namespace
 
 TEST(XmlExporterProperty, WellFormedness) {
-    rc::check("Property 14: XML Well-Formedness",
+    EXPECT_TRUE(rc::check("Property 14: XML Well-Formedness",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -3545,7 +3549,7 @@ TEST(XmlExporterProperty, WellFormedness) {
             RC_ASSERT(!xml.empty());
             RC_ASSERT(xml.find("<?xml version=\"1.0\" encoding=\"UTF-8\"?>") != std::string::npos);
             RC_ASSERT(isWellFormedXml(xml));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3554,7 +3558,7 @@ TEST(XmlExporterProperty, WellFormedness) {
 // ---------------------------------------------------------------------------
 
 TEST(XmlExporterProperty, ElementNameSanitization) {
-    rc::check("Property 15: XML Element Name Sanitization",
+    EXPECT_TRUE(rc::check("Property 15: XML Element Name Sanitization",
         [](void) {
             // Generate strings with potentially invalid XML name characters
             auto rawName = *rc::gen::nonEmpty<std::string>();
@@ -3576,12 +3580,12 @@ TEST(XmlExporterProperty, ElementNameSanitization) {
                 RC_ASSERT(std::isalnum(static_cast<unsigned char>(c)) ||
                           c == '_' || c == '-' || c == '.' || c == ':');
             }
-        });
+        }));
 }
 
 // Additional property: names starting with digits get underscore prepended
 TEST(XmlExporterProperty, DigitPrefixHandling) {
-    rc::check("Property 15b: Digit prefix gets underscore prepended",
+    EXPECT_TRUE(rc::check("Property 15b: Digit prefix gets underscore prepended",
         [](void) {
             // Generate a string starting with a digit
             auto digit = *rc::gen::inRange(0, 10);
@@ -3593,7 +3597,7 @@ TEST(XmlExporterProperty, DigitPrefixHandling) {
             // Must start with underscore followed by the digit
             RC_ASSERT(sanitized[0] == '_');
             RC_ASSERT(sanitized[1] == rawName[0]);
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3602,7 +3606,7 @@ TEST(XmlExporterProperty, DigitPrefixHandling) {
 // ---------------------------------------------------------------------------
 
 TEST(XmlExporterProperty, EntityEscaping) {
-    rc::check("Property 16: XML Entity Escaping",
+    EXPECT_TRUE(rc::check("Property 16: XML Entity Escaping",
         [](void) {
             // Generate strings containing XML-reserved characters
             auto baseStr = *rc::gen::arbitrary<std::string>();
@@ -3638,6 +3642,11 @@ TEST(XmlExporterProperty, EntityEscaping) {
                 } else if (c == '\'') {
                     RC_ASSERT(escaped.substr(dstIdx, 6) == "&apos;");
                     dstIdx += 6;
+                } else if (static_cast<unsigned char>(c) < 0x20 && c != '\t' &&
+                           c != '\n' && c != '\r') {
+                    // Illegal in XML 1.0 even as a reference: U+FFFD instead.
+                    RC_ASSERT(escaped.substr(dstIdx, 3) == "\xEF\xBF\xBD");
+                    dstIdx += 3;
                 } else {
                     RC_ASSERT(escaped[dstIdx] == c);
                     dstIdx += 1;
@@ -3646,7 +3655,7 @@ TEST(XmlExporterProperty, EntityEscaping) {
             }
             RC_ASSERT(srcIdx == baseStr.size());
             RC_ASSERT(dstIdx == escaped.size());
-        });
+        }));
 }
 
 // ===========================================================================
@@ -3905,7 +3914,7 @@ TEST(ArenaAllocator, MoveAssignment) {
 #include "core/arena_json_node.h"
 
 TEST(ArenaAllocatorProperty, AllocationPreservesDataIntegrity) {
-    rc::check("Property 1: Arena allocation preserves data integrity",
+    EXPECT_TRUE(rc::check("Property 1: Arena allocation preserves data integrity",
         [](void) {
             // Use a small block size to force multiple blocks
             auto blockSize = *rc::gen::inRange(64, 512);
@@ -3975,11 +3984,11 @@ TEST(ArenaAllocatorProperty, AllocationPreservesDataIntegrity) {
                 RC_ASSERT(rec.node->children == nullptr);
                 RC_ASSERT(rec.node->childCount == 0);
             }
-        });
+        }));
 }
 
 TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
-    rc::check("Property 1b: Arena allocation preserves child pointers",
+    EXPECT_TRUE(rc::check("Property 1b: Arena allocation preserves child pointers",
         [](void) {
             jsontitan::core::ArenaAllocator arena(256);
 
@@ -4034,7 +4043,7 @@ TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
                 std::string expected = "child" + std::to_string(i);
                 RC_ASSERT(parent->children[idx]->value.view() == expected);
             }
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -4050,7 +4059,7 @@ TEST(ArenaAllocatorProperty, AllocationPreservesChildPointers) {
 #include <cstring>
 
 TEST(ArenaAllocatorProperty, ThreadSafeConcurrentAllocation) {
-    rc::check("Property 2: Thread-safe concurrent arena allocation",
+    EXPECT_TRUE(rc::check("Property 2: Thread-safe concurrent arena allocation",
         [](void) {
             // Generate random thread count (2-8) and allocations per thread
             auto threadCount = *rc::gen::inRange(2, 9);
@@ -4179,7 +4188,7 @@ TEST(ArenaAllocatorProperty, ThreadSafeConcurrentAllocation) {
                     }
                 }
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -4348,7 +4357,7 @@ TEST(SourceBuffer, DataReturnsConstPointer) {
 #include "core/parse_orchestrator.h"
 
 TEST(ParseOrchestratorProperty, SemanticEquivalence) {
-    rc::check("Property 6: Semantic equivalence — parseBuffer vs. current parser",
+    EXPECT_TRUE(rc::check("Property 6: Semantic equivalence — parseBuffer vs. current parser",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -4375,7 +4384,7 @@ TEST(ParseOrchestratorProperty, SemanticEquivalence) {
 
             // Trees must be structurally and value-equivalent
             RC_ASSERT(nodesEqual(refResult.root, optimizedResult.root));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -4384,7 +4393,7 @@ TEST(ParseOrchestratorProperty, SemanticEquivalence) {
 // ---------------------------------------------------------------------------
 
 TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
-    rc::check("Property 7: Parse-print round trip",
+    EXPECT_TRUE(rc::check("Property 7: Parse-print round trip",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -4418,7 +4427,7 @@ TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
 
             // Step 6: Compare the two JsonNode trees for structural and value equivalence
             RC_ASSERT(nodesEqual(firstTree.root, secondTree.root));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -4427,7 +4436,7 @@ TEST(ParseOrchestratorProperty, ParsePrintRoundTrip) {
 // ---------------------------------------------------------------------------
 
 TEST(ParseOrchestratorProperty, ErrorOffsetCorrectness) {
-    rc::check("Property 9: Error offset correctness",
+    EXPECT_TRUE(rc::check("Property 9: Error offset correctness",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -4513,7 +4522,7 @@ TEST(ParseOrchestratorProperty, ErrorOffsetCorrectness) {
             //    the offset must be within the input bounds.
             //    (The offset >= 0 check is implicit since it's size_t)
             RC_ASSERT(result.error->byteOffset <= corrupted.size());
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -4750,7 +4759,7 @@ TEST(ParseOrchestratorUnit, OkReturnsFalseForEmptyInput) {
 // ---------------------------------------------------------------------------
 
 TEST(IncrementalParserProperty, IncrementalEmissionCorrectness) {
-    rc::check("Property 10: Incremental emission correctness",
+    EXPECT_TRUE(rc::check("Property 10: Incremental emission correctness",
         [](void) {
             // Generate a random seed for our JSON generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -4831,7 +4840,7 @@ TEST(IncrementalParserProperty, IncrementalEmissionCorrectness) {
             // equivalent to the reference parse
             RC_ASSERT(allEmitted.size() == 1u);
             RC_ASSERT(nodesEqual(allEmitted[0], refResult.root));
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5364,7 +5373,7 @@ TEST(ParseBufferIntegration, RoundTripMultiElementArray) {
 #include <set>
 
 TEST(RecentFilesProperty, AddToFrontWithDeduplicationAndSizeCap) {
-    rc::check("Property 1: Add-to-front with deduplication and size cap",
+    EXPECT_TRUE(rc::check("Property 1: Add-to-front with deduplication and size cap",
         []() {
             // Generate a random list of 0–15 non-empty path strings
             auto size = *rc::gen::inRange(0, 16);
@@ -5372,8 +5381,9 @@ TEST(RecentFilesProperty, AddToFrontWithDeduplicationAndSizeCap) {
                 static_cast<std::size_t>(size),
                 rc::gen::nonEmpty<std::string>());
 
-            // Generate a random non-empty path string to add
+            // Generate a random path string to add (blank paths are ignored)
             auto path = *rc::gen::nonEmpty<std::string>();
+            RC_PRE(path.find_first_not_of(" \t\n\v\f\r") != std::string::npos);
 
             auto result = addRecentFile(list, path);
 
@@ -5425,7 +5435,7 @@ TEST(RecentFilesProperty, AddToFrontWithDeduplicationAndSizeCap) {
 
             // resultOthers should equal dedupedOriginalOthers (same entries, same order)
             RC_ASSERT(resultOthers == dedupedOriginalOthers);
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5436,7 +5446,7 @@ TEST(RecentFilesProperty, AddToFrontWithDeduplicationAndSizeCap) {
 // ---------------------------------------------------------------------------
 
 TEST(RecentFilesProperty, RemovePreservesOtherEntries) {
-    rc::check("Property 2: Remove preserves other entries",
+    EXPECT_TRUE(rc::check("Property 2: Remove preserves other entries",
         []() {
             // Generate a random list of 0–15 path strings
             auto size = *rc::gen::inRange(0, 16);
@@ -5464,7 +5474,7 @@ TEST(RecentFilesProperty, RemovePreservesOtherEntries) {
             }
 
             RC_ASSERT(result == expected);
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5475,7 +5485,7 @@ TEST(RecentFilesProperty, RemovePreservesOtherEntries) {
 // ---------------------------------------------------------------------------
 
 TEST(RecentFilesProperty, ClearProducesEmptyList) {
-    rc::check("Property 3: Clear produces empty list",
+    EXPECT_TRUE(rc::check("Property 3: Clear produces empty list",
         []() {
             // Generate a random list of 0–15 path strings to show the property
             // holds regardless of what list might exist
@@ -5489,7 +5499,7 @@ TEST(RecentFilesProperty, ClearProducesEmptyList) {
 
             // Assert: result is empty
             RC_ASSERT(result.empty());
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5502,7 +5512,7 @@ TEST(RecentFilesProperty, ClearProducesEmptyList) {
 #include <filesystem>
 
 TEST(RecentFilesProperty, FormatProducesCorrectDisplayText) {
-    rc::check("Property 4: Format function produces correct display text",
+    EXPECT_TRUE(rc::check("Property 4: Format function produces correct display text",
         []() {
             // Generate 1–5 directory components (non-empty alphanumeric strings)
             auto numDirs = *rc::gen::inRange(1, 6);
@@ -5551,7 +5561,7 @@ TEST(RecentFilesProperty, FormatProducesCorrectDisplayText) {
             // Assert: result matches the exact pattern: "filename [directory]"
             std::string expectedResult = expectedFilename + " [" + expectedDirectory + "]";
             RC_ASSERT(result == expectedResult);
-        });
+        }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5629,7 +5639,7 @@ TEST(RecentFilesUnit, FormatEntrySimplePath) {
 // ---------------------------------------------------------------------------
 
 TEST(DetailPanelHangFix, BugConditionUnboundedOutputForLargeNodes) {
-    rc::check("Property 1: Bug Condition — prettyPrintBounded limits output for large nodes",
+    EXPECT_TRUE(rc::check("Property 1: Bug Condition — prettyPrintBounded limits output for large nodes",
         [](void) {
             // Generate a random child count between 5000 and 8000
             const auto childCount = *rc::gen::inRange(5000, 8001);
@@ -5662,7 +5672,7 @@ TEST(DetailPanelHangFix, BugConditionUnboundedOutputForLargeNodes) {
 
             // Assert: truncation is signaled
             RC_ASSERT(result.truncated == true);
-        });
+        }));
 }
 
 
@@ -5739,7 +5749,7 @@ static std::shared_ptr<const JsonNode> generateSmallTree(int maxDepth, int& budg
 }
 
 TEST(DetailPanelHangFix, PreservationSmallNodeOutputIdentical) {
-    rc::check("Property 2: Preservation — small node output is identical with bounded and unbounded",
+    EXPECT_TRUE(rc::check("Property 2: Preservation — small node output is identical with bounded and unbounded",
         [](void) {
             // Generate a random seed for our tree generator
             auto seed = *rc::gen::arbitrary<uint32_t>();
@@ -5766,7 +5776,7 @@ TEST(DetailPanelHangFix, PreservationSmallNodeOutputIdentical) {
 
             // Assert: no truncation occurred
             RC_ASSERT(result.truncated == false);
-        });
+        }));
 }
 
 TEST(DetailPanelHangFix, PreservationEmptyObject) {

@@ -297,7 +297,7 @@ std::shared_ptr<const JsonNode> parseJsonString(const std::string& json) {
 // ===========================================================================
 
 TEST(JsonExporterPBT, Property6_SerializationRoundTrip) {
-    rc::check("Feature: element-deletion, Property 6: Serialization round-trip",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 6: Serialization round-trip",
         []() {
             auto tree = *genJsonNodeTree();
 
@@ -316,7 +316,7 @@ TEST(JsonExporterPBT, Property6_SerializationRoundTrip) {
 
             // Verify structural equivalence
             RC_ASSERT(structurallyEqual(*tree, *parsed));
-        });
+        }));
 }
 
 // ===========================================================================
@@ -331,7 +331,7 @@ TEST(JsonExporterPBT, Property6_SerializationRoundTrip) {
 // ===========================================================================
 
 TEST(JsonExporterPBT, Property7_StringEscapingCorrectness) {
-    rc::check("Feature: element-deletion, Property 7: String escaping correctness",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 7: String escaping correctness",
         []() {
             std::string specialStr = *genStringWithSpecialChars();
 
@@ -356,7 +356,7 @@ TEST(JsonExporterPBT, Property7_StringEscapingCorrectness) {
 
             // The recovered string value must match the original
             RC_ASSERT(parsed->children[0]->value == specialStr);
-        });
+        }));
 }
 
 // ===========================================================================
@@ -370,7 +370,7 @@ TEST(JsonExporterPBT, Property7_StringEscapingCorrectness) {
 // ===========================================================================
 
 TEST(JsonExporterPBT, Property8_SerializationDeterminism) {
-    rc::check("Feature: element-deletion, Property 8: Serialization determinism",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 8: Serialization determinism",
         []() {
             auto tree = *genJsonNodeTree();
             auto opts = *genExportOptions();
@@ -379,7 +379,7 @@ TEST(JsonExporterPBT, Property8_SerializationDeterminism) {
             std::string output2 = exportJson(*tree, opts);
 
             RC_ASSERT(output1 == output2);
-        });
+        }));
 }
 
 // ===========================================================================
@@ -393,7 +393,7 @@ TEST(JsonExporterPBT, Property8_SerializationDeterminism) {
 // ===========================================================================
 
 TEST(JsonExporterPBT, Property9_CompactModeNoExtraneousWhitespace) {
-    rc::check("Feature: element-deletion, Property 9: Compact mode no extraneous whitespace",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 9: Compact mode no extraneous whitespace",
         []() {
             auto tree = *genJsonNodeTree();
 
@@ -429,7 +429,7 @@ TEST(JsonExporterPBT, Property9_CompactModeNoExtraneousWhitespace) {
                     }
                 }
             }
-        });
+        }));
 }
 
 // ===========================================================================
@@ -443,7 +443,7 @@ TEST(JsonExporterPBT, Property9_CompactModeNoExtraneousWhitespace) {
 // ===========================================================================
 
 TEST(JsonExporterPBT, Property10_PrettyPrintIndentationCorrectness) {
-    rc::check("Feature: element-deletion, Property 10: Pretty-print indentation correctness",
+    EXPECT_TRUE(rc::check("Feature: element-deletion, Property 10: Pretty-print indentation correctness",
         []() {
             auto tree = *genJsonNodeTree();
             int indentWidth = *genIndentWidth();
@@ -496,5 +496,5 @@ TEST(JsonExporterPBT, Property10_PrettyPrintIndentationCorrectness) {
 
             // After all lines, depth should return to 0
             RC_ASSERT(depth == 0);
-        });
+        }));
 }

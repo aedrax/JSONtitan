@@ -378,7 +378,7 @@ rc::Gen<std::string> genLargerJson() {
 // ===========================================================================
 
 TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence) {
-    rc::check("Property 2a: ArenaJsonNode and JsonNode produce identical display strings",
+    EXPECT_TRUE(rc::check("Property 2a: ArenaJsonNode and JsonNode produce identical display strings",
         []() {
             const auto json = *genRandomJson();
 
@@ -395,11 +395,11 @@ TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence) {
 
             // Compare display strings at every node in the tree
             RC_ASSERT(compareDisplayStrings(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
 
 TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence_LargerInputs) {
-    rc::check("Property 2a (larger): ArenaJsonNode and JsonNode produce identical display strings",
+    EXPECT_TRUE(rc::check("Property 2a (larger): ArenaJsonNode and JsonNode produce identical display strings",
         []() {
             const auto json = *genLargerJson();
 
@@ -416,7 +416,7 @@ TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence_LargerInput
 
             // Compare display strings at every node in the tree
             RC_ASSERT(compareDisplayStrings(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
 
 // ===========================================================================
@@ -429,7 +429,7 @@ TEST(ParserPerfPreservation, Property2a_FormatNodeDisplayEquivalence_LargerInput
 // ===========================================================================
 
 TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence) {
-    rc::check("Property 2b: Child counts match at every level between ArenaJsonNode and JsonNode",
+    EXPECT_TRUE(rc::check("Property 2b: Child counts match at every level between ArenaJsonNode and JsonNode",
         []() {
             const auto json = *genRandomJson();
 
@@ -446,11 +446,11 @@ TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence) {
 
             // Compare child counts at every level
             RC_ASSERT(compareChildCounts(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
 
 TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence_LargerInputs) {
-    rc::check("Property 2b (larger): Child counts match at every level",
+    EXPECT_TRUE(rc::check("Property 2b (larger): Child counts match at every level",
         []() {
             const auto json = *genLargerJson();
 
@@ -467,7 +467,7 @@ TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence_LargerInputs) {
 
             // Compare child counts at every level
             RC_ASSERT(compareChildCounts(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
 
 // ===========================================================================
@@ -480,7 +480,7 @@ TEST(ParserPerfPreservation, Property2b_ChildCountEquivalence_LargerInputs) {
 // ===========================================================================
 
 TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence) {
-    rc::check("Property 2c: Node types match at every position between ArenaJsonNode and JsonNode",
+    EXPECT_TRUE(rc::check("Property 2c: Node types match at every position between ArenaJsonNode and JsonNode",
         []() {
             const auto json = *genRandomJson();
 
@@ -497,11 +497,11 @@ TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence) {
 
             // Compare node types at every position
             RC_ASSERT(compareNodeTypes(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
 
 TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence_LargerInputs) {
-    rc::check("Property 2c (larger): Node types match at every position",
+    EXPECT_TRUE(rc::check("Property 2c (larger): Node types match at every position",
         []() {
             const auto json = *genLargerJson();
 
@@ -518,5 +518,5 @@ TEST(ParserPerfPreservation, Property2c_NodeTypeEquivalence_LargerInputs) {
 
             // Compare node types at every position
             RC_ASSERT(compareNodeTypes(*arenaResult.root, *jsonNode));
-        });
+        }));
 }
