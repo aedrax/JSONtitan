@@ -634,4 +634,8 @@ TEST(JsonPath, LargeIntegersCompareExactly) {
     EXPECT_EQ(ids("@.id > 9007199254740992"), (Paths{{0}, {2}}));
     EXPECT_EQ(ids("@.id < -11"), (Paths{{1}}));
     EXPECT_EQ(ids("@.id == 123456789012345678901234567890"), (Paths{{2}}));
+    // A decimal with a zero fraction is the same integer.
+    EXPECT_EQ(ids("@.id == 9007199254740992.0"), (Paths{}));
+    EXPECT_EQ(ids("@.id == 9007199254740993.00"), (Paths{{0}}));
+    EXPECT_EQ(ids("@.id == -12.0"), (Paths{{1}}));
 }

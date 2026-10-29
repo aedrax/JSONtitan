@@ -505,8 +505,8 @@ auto toNumber(std::string_view text) -> std::optional<double> {
 }
 
 // Order (<0, 0, >0) of two integers written as decimal digits with an
-// optional '-', compared exactly at any size; nullopt when either text is
-// not such an integer. Doubles lose precision past 2^53, so equal-looking
+// optional '-' (and optionally ".0..."), compared exactly at any size;
+// nullopt when either text is not such an integer. Doubles lose precision past 2^53, so equal-looking
 // IDs would otherwise compare equal.
 auto compareIntegers(std::string_view x, std::string_view y) -> std::optional<int> {
     struct Integer {
@@ -515,6 +515,11 @@ auto compareIntegers(std::string_view x, std::string_view y) -> std::optional<in
     };
     auto split = [](std::string_view text) -> std::optional<Integer> {
         Integer value;
+        // A decimal with only zeros after the point is that integer.
+        if (const auto point = text.find('.'); point != std::string_view::npos &&
+            text.find_first_not_of('0', point + 1) == std::string_view::npos) {
+            text = text.substr(0, point);
+        }
         if (!text.empty() && text.front() == '-') {
             value.negative = true;
             text.remove_prefix(1);
