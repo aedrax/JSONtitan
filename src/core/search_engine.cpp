@@ -43,13 +43,15 @@ struct CompiledQuery {
     bool cancelled = false;
     bool truncated = false;
 
-    // Records a match; at the match limit, stops the walk like a cancel.
+    // Records a match; one past the match limit is dropped and stops the
+    // walk like a cancel, so exactly maxMatches matches is not truncated.
     void add(std::vector<SearchMatch>& matches, SearchMatch match) {
-        matches.push_back(std::move(match));
-        if (query.maxMatches != 0 && matches.size() >= query.maxMatches) {
+        if (query.maxMatches != 0 && matches.size() == query.maxMatches) {
             truncated = true;
             cancelled = true;
+            return;
         }
+        matches.push_back(std::move(match));
     }
 
     // Returns true when the walk should stop.

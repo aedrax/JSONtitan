@@ -1692,6 +1692,16 @@ TEST(SearchEngine, MaxMatchesStopsTheWalk) {
     auto all = filter(*root, SearchQuery{.pattern = "hit"});
     EXPECT_EQ(all.matches.size(), 50u);
     EXPECT_FALSE(all.truncated);
+
+    // Exactly the limit is every match, not "50+".
+    for (auto mode : {SearchMode::Substring, SearchMode::Regex}) {
+        auto exact = filter(*root, SearchQuery{.pattern = "hit", .mode = mode, .maxMatches = 50});
+        EXPECT_EQ(exact.matches.size(), 50u);
+        EXPECT_FALSE(exact.truncated);
+    }
+    auto exactPath = filter(*root, SearchQuery{.pattern = "$[*]", .mode = SearchMode::JsonPath,
+                                               .maxMatches = 50});
+    EXPECT_FALSE(exactPath.truncated);
 }
 
 // === Substring matching on keys ============================================
