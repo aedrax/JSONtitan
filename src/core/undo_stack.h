@@ -4,9 +4,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
-#include <string>
 #include <utility>
-#include <variant>
 
 #include "core/deletion_engine.h"  // NodePath
 #include "core/json_node.h"
@@ -21,10 +19,10 @@ struct UndoEntry {
 };
 
 // Bounded undo/redo stack over immutable tree roots. Structural sharing
-// keeps most of each entry shared with the live document; what an entry
-// holds alone is the copied child-pointer arrays along the edited path,
-// which for a direct child of a 10M-element array is a 160 MB array per
-// entry. So the history is bounded by entry count and by those bytes; the
+// keeps most of each entry shared with the state after it; what an entry
+// holds alone is the containers its mutation replaced, whose child-pointer
+// arrays can be large (a direct child of a 10M-element array: 160 MB per
+// entry). So the history is bounded by entry count and by those bytes; the
 // most recent entry is always kept.
 class UndoStack {
 public:
@@ -76,32 +74,24 @@ public:
         m_undoBytes = 0;
     }
 
-    // Bytes an entry holds alone: the child-pointer arrays of the nodes on
-    // its path (the ones its mutation copied), measured in its own root.
-    [[nodiscard]] static auto estimatedBytes(const UndoEntry& entry) -> std::size_t {
-        std::size_t bytes = 0;
-        const JsonNode* node = entry.root.get();
-        for (const auto& segment : entry.selection) {
-            if (!node) {
-                break;
-            }
-            bytes += node->children.size() * sizeof(node->children[0]);
-            const JsonNode* next = nullptr;
-            if (const auto* key = std::get_if<std::string>(&segment)) {
-                for (const auto& child : node->children) {
-                    if (child->key == *key) {
-                        next = child.get();
-                        break;
-                    }
-                }
-            } else if (const auto index = std::get<std::size_t>(segment);
-                       index < node->children.size()) {
-                next = node->children[index].get();
-            }
-            node = next;
+    // Bytes `before` holds that `after` does not share: the child arrays of
+    // the containers replaced between them. Children are paired by position,
+    // descending only where both sides have as many children (an edit in
+    // place); where the count changed (insert, delete) the old array alone
+    // is counted. Costs about as much as the mutation itself did.
+    [[nodiscard]] static auto unsharedBytes(const JsonNode& before, const JsonNode& after)
+        -> std::size_t {
+        if (&before == &after) {
+            return 0;
         }
-        if (node) {
-            bytes += node->children.size() * sizeof(node->children[0]);
+        std::size_t bytes = before.children.size() * sizeof(std::shared_ptr<const JsonNode>);
+        if (before.children.size() != after.children.size()) {
+            return bytes;
+        }
+        for (std::size_t i = 0; i < before.children.size(); ++i) {
+            if (before.children[i] != after.children[i]) {
+                bytes += unsharedBytes(*before.children[i], *after.children[i]);
+            }
         }
         return bytes;
     }
@@ -113,9 +103,16 @@ private:
     };
 
     void pushUndo(UndoEntry entry) {
-        const std::size_t bytes = estimatedBytes(entry);
-        m_undo.push_back(Stored{std::move(entry), bytes});
-        m_undoBytes += bytes;
+        // An entry's cost depends on the state after it, which is known now
+        // for the previous entry. The newest entry counts as 0 until the
+        // next push; it is always kept anyway.
+        if (!m_undo.empty() && m_undo.back().entry.root && entry.root) {
+            auto& previous = m_undo.back();
+            m_undoBytes -= previous.bytes;
+            previous.bytes = unsharedBytes(*previous.entry.root, *entry.root);
+            m_undoBytes += previous.bytes;
+        }
+        m_undo.push_back(Stored{std::move(entry), 0});
         while (m_undo.size() > 1 &&
                (m_undo.size() > m_capacity || m_undoBytes > m_byteBudget)) {
             m_undoBytes -= m_undo.front().bytes;

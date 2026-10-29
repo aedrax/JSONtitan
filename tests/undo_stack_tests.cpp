@@ -147,28 +147,44 @@ TEST(UndoStack, ClearDropsAllHistory) {
     EXPECT_FALSE(stack.redo(entry(v3)).has_value());
 }
 
-// Regression: entries were bounded by count only, but each one keeps its
-// own copy of the child arrays on the edited path; 50 edits under a
-// 10M-element array held gigabytes.
-TEST(UndoStack, ByteBudgetEvictsOldestButKeepsTheLatest) {
-    std::vector<std::shared_ptr<const JsonNode>> elements(1000, makeLeaf("x"));
-    auto wide = JsonNode::makeArray("", std::move(elements));
-    const NodePath intoWide = {std::size_t{5}};
-    const std::size_t entryBytes = UndoStack::estimatedBytes(entry(wide, intoWide));
-    EXPECT_EQ(entryBytes, 1000 * sizeof(std::shared_ptr<const JsonNode>));
+// Regression: entries were bounded by count only, and then by the child
+// arrays along the selection path, which Replace All (no selection) and
+// multi-delete did not cover. The cost is what each entry's root holds that
+// the next state does not share.
+TEST(UndoStack, ByteBudgetCountsWhatEachEntryHoldsAlone) {
+    // {"data": [1000 strings]}, every string replaced each step (Replace All).
+    auto version = [](int step) {
+        std::vector<std::shared_ptr<const JsonNode>> strings(
+            1000, makeLeaf("v" + std::to_string(step)));
+        return JsonNode::makeObject("", {JsonNode::makeArray("data", std::move(strings))});
+    };
+    const std::size_t perStep = UndoStack::unsharedBytes(*version(0), *version(1));
+    EXPECT_EQ(perStep, 1001 * sizeof(std::shared_ptr<const JsonNode>));
 
-    UndoStack stack(50, 2 * entryBytes);
-    for (int i = 0; i < 5; ++i) {
-        stack.push(entry(wide, intoWide));
+    // Room for two full entries; the newest (cost not yet known) is extra.
+    UndoStack stack(50, 2 * perStep);
+    for (int step = 0; step < 6; ++step) {
+        stack.push(entry(version(step)));
     }
     int undos = 0;
-    while (stack.undo(entry(wide))) {
+    while (stack.undo(entry(version(99)))) {
         ++undos;
     }
-    EXPECT_EQ(undos, 2);
+    EXPECT_EQ(undos, 3);
 
     // One entry over the whole budget still stays undoable.
     UndoStack tiny(50, 1);
-    tiny.push(entry(wide, intoWide));
+    tiny.push(entry(version(0)));
+    tiny.push(entry(version(1)));
     EXPECT_TRUE(tiny.canUndo());
+}
+
+// An unchanged subtree is shared, not counted.
+TEST(UndoStack, UnsharedBytesSkipsSharedSubtrees) {
+    auto shared = JsonNode::makeArray("big", std::vector<std::shared_ptr<const JsonNode>>(
+                                                 500, makeLeaf("x")));
+    auto before = JsonNode::makeObject("", {shared, makeLeaf("old")});
+    auto after = JsonNode::makeObject("", {shared, makeLeaf("new")});
+    EXPECT_EQ(UndoStack::unsharedBytes(*before, *after),
+              2 * sizeof(std::shared_ptr<const JsonNode>));
 }
