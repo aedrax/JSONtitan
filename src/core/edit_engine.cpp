@@ -16,8 +16,9 @@ auto makeError(EditErrorCode code, std::string description) -> std::unexpected<E
 
 // Walk `path` from `root`, collecting every node on the way (ancestors[0] ==
 // root, ancestors.back() == the node at `path`). Segment semantics mirror
-// deleteNode: string segments match object children by key, index segments
-// address array children by position.
+// deleteNode: string segments match object children by key (the first
+// member with it), index segments address children by position (array
+// elements, or a later member of an object with a duplicated key).
 auto collectPathNodes(const std::shared_ptr<const JsonNode>& root,
                       const NodePath& path,
                       std::vector<std::shared_ptr<const JsonNode>>& out) -> bool {
@@ -41,7 +42,7 @@ auto collectPathNodes(const std::shared_ptr<const JsonNode>& root,
             }
         } else {
             auto idx = std::get<std::size_t>(segment);
-            if (current->type != NodeType::Array || idx >= current->children.size()) {
+            if (idx >= current->children.size()) {
                 return false;
             }
             foundChild = current->children[idx];

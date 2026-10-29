@@ -163,6 +163,26 @@ TEST(ModelPathsTest, IndexForPathResolvesEveryNode) {
     }
 }
 
+// Regression: a later member with a duplicated key got the same path as the
+// first ("a"), so Delete and inline edits on it acted on the first member.
+TEST(ModelPathsTest, DuplicateKeyMembersGetDistinctPaths) {
+    auto root = JsonNode::makeObject("", {JsonNode::makeNumber("a", "1"),
+                                          JsonNode::makeNumber("b", "2"),
+                                          JsonNode::makeNumber("a", "3")});
+    TreeModel model;
+    model.setRootNode(root);
+
+    const NodePath first = {std::string("a")};
+    const NodePath later = {std::size_t{2}};
+    auto laterIndex = jsontitan::shell::indexForPath(model, later);
+    ASSERT_TRUE(laterIndex.isValid());
+    EXPECT_EQ(jsontitan::shell::nodePathForIndex(model, laterIndex), later);
+    EXPECT_EQ(model.jsonNodeForIndex(laterIndex)->value, "3");
+    EXPECT_EQ(jsontitan::shell::nodePathForIndex(
+                  model, jsontitan::shell::indexForPath(model, first)),
+              first);
+}
+
 // Regression: indexForPath fetched every row of each level it passed, so
 // one edit in a multi-million-row array inserted every row into the view.
 TEST(ModelPathsTest, IndexForPathFetchesOnlyWhatThePathNeeds) {

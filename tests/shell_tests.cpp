@@ -2934,21 +2934,29 @@ private slots:
     }
 
     void testKeyClipboardText() {
-        using jsontitan::core::NodePath;
         namespace sh = jsontitan::shell;
 
-        // Object member: key of the last segment.
-        NodePath keyed{std::string("outer"), std::string("inner")};
-        auto key = sh::keyClipboardText(keyed);
-        QVERIFY(key.has_value());
-        QCOMPARE(*key, QString("inner"));
+        // {"outer": {"inner": 1, "inner": 2}, "items": [1]}
+        TreeModel model;
+        model.setRootNode(JsonNode::makeObject("", {
+            JsonNode::makeObject("outer", {JsonNode::makeNumber("inner", "1"),
+                                           JsonNode::makeNumber("inner", "2")}),
+            JsonNode::makeArray("items", {JsonNode::makeNumber("", "1")}),
+        }));
+        auto index = [&model](const jsontitan::core::NodePath& path) {
+            return sh::indexForPath(model, path);
+        };
 
-        // Array element: no key.
-        NodePath indexed{std::string("items"), std::size_t(0)};
-        QVERIFY(!sh::keyClipboardText(indexed).has_value());
+        // Object member: its key, also for a later duplicate (whose path
+        // names it by position).
+        QCOMPARE(sh::keyClipboardText(model, index({std::string("outer"), std::string("inner")})),
+                 std::optional<QString>("inner"));
+        QCOMPARE(sh::keyClipboardText(model, index({std::string("outer"), std::size_t(1)})),
+                 std::optional<QString>("inner"));
 
-        // Root: no key.
-        QVERIFY(!sh::keyClipboardText(NodePath{}).has_value());
+        // Array element and root: no key.
+        QVERIFY(!sh::keyClipboardText(model, index({std::string("items"), std::size_t(0)})));
+        QVERIFY(!sh::keyClipboardText(model, QModelIndex()));
     }
 
     void testClipboardRoundTrip() {

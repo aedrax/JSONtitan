@@ -4,10 +4,28 @@
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
 
+#include <optional>
 #include <string>
 #include <variant>
 
 namespace jsontitan::shell {
+
+namespace {
+
+// The node at a source index over either backing; the invalid index is the
+// document root.
+auto viewForIndex(const TreeModel& model, const QModelIndex& index)
+    -> std::optional<jsontitan::core::NodeView> {
+    if (const auto* jn = model.jsonNodeForIndex(index)) {
+        return jsontitan::core::NodeView(*jn);
+    }
+    if (const auto* an = model.arenaNodeForIndex(index)) {
+        return jsontitan::core::NodeView(*an);
+    }
+    return std::nullopt;
+}
+
+}  // namespace
 
 auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
     -> jsontitan::core::NodePath {
@@ -19,25 +37,25 @@ auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
     // segment, truncating every depth>=2 path.)
     while (walkIndex.isValid()) {
         QModelIndex parentIndex = walkIndex.parent();
-        // Determine if the parent is an Object or Array
-        jsontitan::core::NodeType parentType = jsontitan::core::NodeType::Object;
-        if (auto* jn = model.jsonNodeForIndex(parentIndex)) {
-            parentType = jn->type;
-        } else if (auto* an = model.arenaNodeForIndex(parentIndex)) {
-            parentType = an->type;
-        }
-
-        if (parentType == jsontitan::core::NodeType::Array) {
-            path.insert(path.begin(), static_cast<std::size_t>(walkIndex.row()));
+        const auto parent = viewForIndex(model, parentIndex);
+        const auto row = static_cast<std::size_t>(walkIndex.row());
+        if (!parent || parent->type() == jsontitan::core::NodeType::Array) {
+            path.insert(path.begin(), row);
         } else {
-            // Object: get the key from the child node
-            std::string key;
-            if (auto* jn = model.jsonNodeForIndex(walkIndex)) {
-                key = jn->key;
-            } else if (auto* an = model.arenaNodeForIndex(walkIndex)) {
-                key = std::string(an->keyView());
+            // Object: the key, unless an earlier member has the same key.
+            // A key names the first member with it, so a later duplicate is
+            // named by its position instead. shortcut: the check scans the
+            // earlier siblings, a few ms per level for a million-key object.
+            const std::string_view key = parent->child(row).key();
+            bool duplicate = false;
+            for (std::size_t r = 0; r < row && !duplicate; ++r) {
+                duplicate = parent->child(r).key() == key;
             }
-            path.insert(path.begin(), key);
+            if (duplicate) {
+                path.insert(path.begin(), row);
+            } else {
+                path.insert(path.begin(), std::string(key));
+            }
         }
         walkIndex = parentIndex;
     }

@@ -785,6 +785,14 @@ TEST(EditEngineStructure, DeleteDuplicateKeyRemovesFirstOnly) {
     auto deleted = deleteNode(root, {std::string("a")});
     ASSERT_NE(deleted, nullptr);
     EXPECT_EQ(compactJson(deleted), R"({"a":2,"b":3})");
+
+    // A later duplicate is named by position: only it is deleted or edited.
+    auto second = deleteNode(root, {std::size_t{1}});
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(compactJson(second), R"({"a":1,"b":3})");
+    auto edited = editValue(root, {std::size_t{1}}, ScalarValue{NodeType::Number, "5"});
+    ASSERT_TRUE(edited.has_value());
+    EXPECT_EQ(compactJson(*edited), R"({"a":1,"a":5,"b":3})");
 }
 
 // deleteNodes rebuilds each parent once; it must match deleting the same

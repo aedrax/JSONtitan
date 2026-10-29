@@ -39,7 +39,7 @@ auto removeChildren(const std::shared_ptr<const JsonNode>& root,
                 }
             }
         } else if (const auto idx = std::get<std::size_t>(segment);
-                   current->type == NodeType::Array && idx < current->children.size()) {
+                   idx < current->children.size()) {
             found = current->children[idx];
         }
         if (!found) {
@@ -56,7 +56,7 @@ auto removeChildren(const std::shared_ptr<const JsonNode>& root,
             if (parent->type == NodeType::Object) {
                 keys[*key] = 1;
             }
-        } else if (parent->type == NodeType::Array) {
+        } else {
             indices.insert(std::get<std::size_t>(segment));
         }
     }

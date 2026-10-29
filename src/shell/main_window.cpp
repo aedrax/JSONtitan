@@ -765,17 +765,10 @@ void MainWindow::setupCentralWidget() {
 
         auto* copyKeyAction = menu->addAction(tr("Copy Key"));
         // Only object members carry keys; array elements and the root don't.
-        bool clickedHasKey = false;
-        if (clickedIndex.isValid()) {
-            QModelIndex clickedSource = m_filterProxy->mapToSource(clickedIndex);
-            if (clickedSource.isValid()) {
-                auto clickedPath = jsontitan::shell::nodePathForIndex(
-                    *m_treeModel, clickedSource);
-                clickedHasKey =
-                    jsontitan::shell::keyClipboardText(clickedPath).has_value();
-            }
-        }
-        copyKeyAction->setEnabled(clickedHasKey);
+        copyKeyAction->setEnabled(
+            jsontitan::shell::keyClipboardText(*m_treeModel,
+                                               m_filterProxy->mapToSource(clickedIndex))
+                .has_value());
         connect(copyKeyAction, &QAction::triggered,
                 this, &MainWindow::onCopyKey);
 
@@ -1281,7 +1274,8 @@ void MainWindow::onCopyValue() {
 }
 
 void MainWindow::onCopyKey() {
-    auto key = jsontitan::shell::keyClipboardText(m_detailPresenter->currentSelectionPath());
+    auto key = jsontitan::shell::keyClipboardText(
+        *m_treeModel, jsontitan::shell::selectedSourceIndex(*m_treeView, *m_filterProxy));
     if (!key) {
         return;
     }

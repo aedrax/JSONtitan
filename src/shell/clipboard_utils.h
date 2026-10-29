@@ -7,6 +7,7 @@
 
 #include "core/deletion_engine.h"  // NodePath
 #include "core/node_view.h"
+#include "shell/tree_model.h"
 
 namespace jsontitan::shell {
 
@@ -27,9 +28,9 @@ auto valueClipboardText(jsontitan::core::NodeView node,
                         std::size_t maxBytes = kMaxClipboardBytes)
     -> std::optional<QString>;
 
-// Key text for the node `path` resolves to, or nullopt when it has none
-// (empty path = root, or the last segment is an array index).
-auto keyClipboardText(const jsontitan::core::NodePath& path)
+// Key text of the object member at `sourceIndex`, or nullopt for the root
+// and array elements (which have no key).
+auto keyClipboardText(const TreeModel& model, const QModelIndex& sourceIndex)
     -> std::optional<QString>;
 
 }  // namespace jsontitan::shell

@@ -11,8 +11,9 @@
 
 namespace jsontitan::core {
 
-// A path segment is either a string key (for object children)
-// or an integer index (for array children).
+// A path segment is either a string key (an object member; the first one
+// when the key is duplicated) or an index: an array element, or an object
+// member by position (how a later member with a duplicated key is named).
 using PathSegment = std::variant<std::string, std::size_t>;
 using NodePath = std::vector<PathSegment>;
 

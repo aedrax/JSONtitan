@@ -107,16 +107,29 @@ auto valueClipboardText(jsontitan::core::NodeView node, std::size_t maxBytes)
     }
 }
 
-auto keyClipboardText(const jsontitan::core::NodePath& path)
+auto keyClipboardText(const TreeModel& model, const QModelIndex& sourceIndex)
     -> std::optional<QString> {
-    if (path.empty()) {
-        return std::nullopt;
+    if (!sourceIndex.isValid()) {
+        return std::nullopt;  // the root
     }
-    const auto* key = std::get_if<std::string>(&path.back());
-    if (!key) {
-        return std::nullopt;  // array element: no key
+    // Read from the node, not its path: a later member with a duplicated
+    // key is named by position in its path.
+    const QModelIndex parent = sourceIndex.parent();
+    const auto* parentJson = model.jsonNodeForIndex(parent);
+    const auto* parentArena = model.arenaNodeForIndex(parent);
+    const auto parentType = parentJson    ? parentJson->type
+                            : parentArena ? parentArena->type
+                                          : jsontitan::core::NodeType::Array;
+    if (parentType != jsontitan::core::NodeType::Object) {
+        return std::nullopt;  // array element
     }
-    return QString::fromStdString(*key);
+    std::string_view key;
+    if (const auto* node = model.jsonNodeForIndex(sourceIndex)) {
+        key = node->key;
+    } else if (const auto* node = model.arenaNodeForIndex(sourceIndex)) {
+        key = node->keyView();
+    }
+    return QString::fromUtf8(key.data(), static_cast<qsizetype>(key.size()));
 }
 
 }  // namespace jsontitan::shell
