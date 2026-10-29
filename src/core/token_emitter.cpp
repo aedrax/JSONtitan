@@ -51,8 +51,9 @@ namespace {
 // of a 500 MB string.
 auto escapeWithin(std::string_view text, std::size_t maxSize, std::size_t currentSize)
     -> std::string {
-    if (maxSize != 0 && currentSize < maxSize) {
-        text = text.substr(0, maxSize - currentSize + 1);
+    if (maxSize != 0) {
+        const std::size_t room = currentSize < maxSize ? maxSize - currentSize : 0;
+        text = text.substr(0, room + 1);
     }
     return escapeJsonString(text);
 }
