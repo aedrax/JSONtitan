@@ -361,10 +361,17 @@ void EditController::queueInstall(
     std::shared_ptr<const jsontitan::core::JsonNode> root,
     jsontitan::core::NodePath selection,
     std::optional<jsontitan::core::UndoEntry> undoEntry) {
+    // `root` was computed from the document as it is now. If another
+    // document installs first (a load finishing), drop the edit rather than
+    // put the old document back over the new one.
+    const auto revision = m_session->contentRevision();
     QMetaObject::invokeMethod(
         this,
         [this, root = std::move(root), selection = std::move(selection),
-         undoEntry = std::move(undoEntry)]() {
+         undoEntry = std::move(undoEntry), revision]() {
+            if (m_session->contentRevision() != revision) {
+                return;
+            }
             if (undoEntry) {
                 m_session->pushUndo(*undoEntry);
             }
@@ -629,11 +636,13 @@ void EditController::findAndReplace(const QString& initialPattern) {
             if (result.error) {
                 return QString::fromStdString(*result.error);
             }
+            const auto skipped =
+                static_cast<int>(result.keysSkipped + result.valuesSkipped);
             if (result.valuesChanged == 0 && result.keysChanged == 0) {
-                return result.keysSkipped > 0
-                           ? tr("Nothing replaced: %n key(s) would have collided "
-                                "with an existing key.", nullptr,
-                                static_cast<int>(result.keysSkipped))
+                return skipped > 0
+                           ? tr("Nothing replaced: %n match(es) would have "
+                                "duplicated a key or split a character.",
+                                nullptr, skipped)
                            : tr("No matches.");
             }
             QString summary = tr("Replaced in %n value(s)", nullptr,
@@ -643,10 +652,9 @@ void EditController::findAndReplace(const QString& initialPattern) {
                               static_cast<int>(result.keysChanged));
             }
             summary += QStringLiteral(".");
-            if (result.keysSkipped > 0) {
-                summary += tr(" Skipped %n key(s) that would have collided with "
-                              "an existing key.", nullptr,
-                              static_cast<int>(result.keysSkipped));
+            if (skipped > 0) {
+                summary += tr(" Skipped %n match(es) that would have duplicated "
+                              "a key or split a character.", nullptr, skipped);
             }
             return summary;
         },

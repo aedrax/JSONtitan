@@ -47,6 +47,7 @@ void UnionController::loadUnion(const QStringList& filePaths,
     m_fileLoader->cancelParse();
 
     m_recordInRecentFiles = recordInRecentFiles;
+    m_session->beginLoad();
 
     emit loadStarted();
     m_fileLoader->startUnionParse(filePaths);
@@ -57,12 +58,20 @@ void UnionController::onUnionParseComplete(
     const QStringList& filePaths) {
     emit loadFinished();
 
+    // Same guard as single-file loads: edits made while the union parsed
+    // must not be replaced without asking.
+    if (m_session->editedSinceLoadStart() &&
+        !m_editController->confirmDiscardChanges()) {
+        return;
+    }
+
     m_searchController->invalidate();
     // File path deliberately left as-is: union mode never reads it
     // (Save redirects to Save As), matching pre-extraction behavior.
     // setJsonRoot also clears the undo history (new-document install).
     m_session->setJsonRoot(root, m_session->filePath(),
                            tr("Union (%1 files)").arg(filePaths.size()), true);
+    m_session->setModified(false);
     m_filterProxy->clearFilter();
 
     m_ui.welcomeLabel->hide();

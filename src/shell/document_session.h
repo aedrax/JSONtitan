@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -61,6 +62,17 @@ public:
     bool modified() const { return m_modified; }
     void setModified(bool modified);
 
+    // Loads run in the background. Call beginLoad() when one starts;
+    // editedSinceLoadStart() then tells whether the document on screen was
+    // changed meanwhile, so installing the result must ask first.
+    void beginLoad() { m_revisionAtLoadStart = m_contentRevision; }
+    // Changes whenever the document content or the document itself is
+    // replaced.
+    std::uint64_t contentRevision() const { return m_contentRevision; }
+    bool editedSinceLoadStart() const {
+        return m_contentRevision != m_revisionAtLoadStart;
+    }
+
     const QString& filePath() const { return m_filePath; }
     const QString& fileName() const { return m_fileName; }
     bool isUnionMode() const { return m_isUnionMode; }
@@ -118,6 +130,10 @@ private:
     QString m_fileName;
     bool m_isUnionMode = false;
     bool m_modified = false;
+    // Bumped by every edit, undo/redo and union removal (replaceJsonRoot)
+    // and by every new document (setJsonRoot, setArenaRoot).
+    std::uint64_t m_contentRevision = 0;
+    std::uint64_t m_revisionAtLoadStart = 0;
     jsontitan::core::JsonFormat m_format = jsontitan::core::JsonFormat::Json;
     bool m_hadComments = false;
 

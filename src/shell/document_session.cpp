@@ -18,6 +18,7 @@ void DocumentSession::setJsonRoot(
     const QString& filePath, const QString& fileName, bool unionMode) {
     m_currentRoot = std::move(root);
     m_arenaResult.reset();  // Search must target the new tree, not a previously opened file
+    ++m_contentRevision;
     m_filePath = filePath;
     m_fileName = fileName;
     m_isUnionMode = unionMode;
@@ -37,6 +38,8 @@ void DocumentSession::setArenaRoot(
     m_currentRoot.reset();  // Clear legacy root when using arena path
     m_filePath = filePath;
     m_fileName = fileName;
+    m_isUnionMode = false;  // arena results are always single-file loads
+    ++m_contentRevision;
     if (m_arenaResult) {
         setFormat(m_arenaResult->format, m_arenaResult->hadComments);
     } else {
@@ -60,6 +63,7 @@ void DocumentSession::replaceJsonRoot(
     std::shared_ptr<const jsontitan::core::JsonNode> root) {
     m_currentRoot = std::move(root);
     m_arenaResult.reset();  // invariant: only one live backing
+    ++m_contentRevision;
 
     m_model->setRootNode(m_currentRoot);
     emit documentReplaced();

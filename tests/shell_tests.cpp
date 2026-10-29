@@ -1,9 +1,12 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
 #include <QClipboard>
+#include <QMenuBar>
+#include <QMessageBox>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QtTest/QtTest>
 #include <rapidcheck.h>
 
@@ -1793,9 +1796,10 @@ private:
     // the progress UI is up. The path need not exist: the drop handler
     // starts the async parse regardless, and the (queued) error result is
     // only delivered once the event loop runs again.
-    static void startLoadViaDrop(MainWindow& window) {
+    static void startLoadViaDrop(MainWindow& window,
+                                 const QString& path = "/tmp/cancel_load_test.json") {
         QMimeData mimeData;
-        mimeData.setUrls({QUrl::fromLocalFile("/tmp/cancel_load_test.json")});
+        mimeData.setUrls({QUrl::fromLocalFile(path)});
 
         QDragEnterEvent dragEnterEvent(
             QPoint(50, 50), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
@@ -1857,6 +1861,91 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Escape);
         QVERIFY(!progressBar->isVisible());
         QCOMPARE(statusLabel->text(), QString("Load cancelled"));
+    }
+
+    // Regression: the session took the new file's identity when the load
+    // started, so Save after a cancelled load wrote the old tree into it.
+    void testSaveAfterCancelledLoadWritesTheFileOnScreen() {
+        QTemporaryDir dir;
+        const QString pathA = dir.path() + "/a.json";
+        const QString pathB = dir.path() + "/b.json";
+        writeFile(pathA, R"({"b": 1, "a": 2})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({pathA.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        startLoadViaDrop(window, pathB);
+        QTest::keyClick(&window, Qt::Key_Escape);
+
+        menuAction(window, "&Sort Keys")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.windowTitle().startsWith("*"), 5000);
+        menuAction(window, "&Save")->trigger();
+
+        QVERIFY(!QFile::exists(pathB));
+        QFile fileA(pathA);
+        QVERIFY(fileA.open(QIODevice::ReadOnly));
+        const QByteArray saved = fileA.readAll();
+        QVERIFY(saved.indexOf("\"a\"") < saved.indexOf("\"b\""));
+    }
+
+    // Regression: a load that finished after the user edited the document
+    // replaced the edits without asking.
+    void testEditsDuringLoadAskBeforeInstall() {
+        QTemporaryDir dir;
+        const QString pathA = dir.path() + "/a.json";
+        const QString pathB = dir.path() + "/b.json";
+        writeFile(pathA, R"({"x": 1, "y": 2})");
+        writeFile(pathB, R"({"other": true})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({pathA.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        startLoadViaDrop(window, pathB);
+        // Delete is synchronous, so the edit lands before the load result.
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(&window, Qt::Key_Delete);
+        QCOMPARE(treeView->model()->rowCount(), 1);
+
+        // Answer the unsaved-changes prompt with Cancel: keep the edits.
+        bool prompted = false;
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, [&]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                prompted = true;
+                box->button(QMessageBox::Cancel)->click();
+            }
+        });
+        answer.start(20);
+
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QTRY_COMPARE_WITH_TIMEOUT(statusLabel->text(), QString("Load discarded"), 5000);
+        QVERIFY(prompted);
+        QCOMPARE(treeView->model()->rowCount(), 1);
+        QVERIFY(window.windowTitle().startsWith("*"));
+    }
+
+private:
+    static void writeFile(const QString& path, const QByteArray& content) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(content);
+    }
+
+    static QAction* menuAction(MainWindow& window, const QString& text) {
+        for (auto* menu : window.menuBar()->actions()) {
+            for (auto* action : menu->menu()->actions()) {
+                if (action->text() == text) {
+                    return action;
+                }
+            }
+        }
+        return nullptr;
     }
 };
 

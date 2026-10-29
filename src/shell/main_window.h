@@ -118,6 +118,10 @@ private:
     // parse, hides the progress UI, and keeps the previous document (parse
     // results only install on completion).
     void cancelActiveLoad();
+    // Starts parsing one file in the background. The session keeps the
+    // current document's identity until the result installs, so a cancelled
+    // or failed load leaves Save pointing at the file on screen.
+    void beginSingleFileLoad(const QString& filePath);
 
     // NodePath of the tree view's current selection ({} when none).
     jsontitan::core::NodePath currentSelectionPath() const;
@@ -201,6 +205,9 @@ private:
     QFileSystemWatcher* m_fileWatcher = nullptr;
     QTimer* m_fileChangeDebounce = nullptr;
     bool m_suppressWatchNotifications = false;
+
+    // The file the running single-file load will install as.
+    QString m_pendingLoadPath;
 
     // Recent files
     RecentFilesManager* m_recentFilesManager = nullptr;

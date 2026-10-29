@@ -294,11 +294,7 @@ void MainWindow::openFromCliArgs(const std::vector<std::string>& filePaths) {
 
     if (filePaths.size() == 1) {
         // Single file: use the same mechanism as File > Open
-        QString qPath = QString::fromStdString(filePaths[0]);
-        m_session->setFileIdentity(qPath, QFileInfo(qPath).fileName(), false);
-        showLoadProgress();
-        m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-        m_fileLoader->startParse(qPath);
+        beginSingleFileLoad(QString::fromStdString(filePaths[0]));
     } else {
         // Multiple files: use the same union logic as File > Union Files
         QStringList qPaths;
@@ -909,6 +905,14 @@ void MainWindow::cancelActiveLoad() {
     m_statusLabel->setText(tr("Load cancelled"));
 }
 
+void MainWindow::beginSingleFileLoad(const QString& filePath) {
+    m_pendingLoadPath = filePath;
+    m_session->beginLoad();
+    showLoadProgress();
+    m_statusLabel->setText(tr("Parsing %1...").arg(QFileInfo(filePath).fileName()));
+    m_fileLoader->startParse(filePath);
+}
+
 void MainWindow::setupDropOverlay() {
     m_dropOverlay = new QLabel(this);
     m_dropOverlay->setObjectName("dropOverlay");
@@ -975,16 +979,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
         return;
     }
 
-    const QString& filePath = result.filePaths.first();
-
-    // Set current file name from the dropped file path and exit union mode
-    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
-
-    // Show progress bar and start parsing
-    showLoadProgress();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-
-    m_fileLoader->startParse(filePath);
+    beginSingleFileLoad(result.filePaths.first());
 }
 
 void MainWindow::showWelcomeMessage() {
@@ -1084,11 +1079,7 @@ void MainWindow::onOpenFile() {
         return;
     }
 
-    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
-    showLoadProgress();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-
-    m_fileLoader->startParse(filePath);
+    beginSingleFileLoad(filePath);
 }
 
 void MainWindow::onProgressUpdated(int percentage) {
@@ -1098,9 +1089,17 @@ void MainWindow::onProgressUpdated(int percentage) {
 void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
     hideLoadProgress();
 
+    // The document stays editable while a load runs; installing would
+    // replace those edits without the prompt the load started with.
+    if (m_session->editedSinceLoadStart() &&
+        !m_editController->confirmDiscardChanges()) {
+        m_statusLabel->setText(tr("Load discarded"));
+        return;
+    }
+
     m_searchController->invalidate();
-    // File identity was already recorded at parse start; keep it.
-    m_session->setArenaRoot(result, m_session->filePath(), m_session->fileName());
+    m_session->setArenaRoot(result, m_pendingLoadPath,
+                            QFileInfo(m_pendingLoadPath).fileName());
     m_filterProxy->clearFilter();
 
     // Show tree, hide welcome
@@ -1148,10 +1147,7 @@ void MainWindow::restoreLastSession() {
         return;
     }
 
-    m_session->setFileIdentity(lastFile, QFileInfo(lastFile).fileName(), false);
-    showLoadProgress();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-    m_fileLoader->startParse(lastFile);
+    beginSingleFileLoad(lastFile);
 }
 
 void MainWindow::onParseError(QString errorMessage) {
@@ -1160,7 +1156,8 @@ void MainWindow::onParseError(QString errorMessage) {
 
     QMessageBox::critical(this, tr("Parse Error"),
                           tr("Failed to parse %1:\n\n%2")
-                              .arg(m_session->fileName(), errorMessage));
+                              .arg(QFileInfo(m_pendingLoadPath).fileName(),
+                                   errorMessage));
 }
 
 void MainWindow::onRecentFileSelected(const QString& filePath) {
@@ -1176,10 +1173,7 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
         return;
     }
 
-    m_session->setFileIdentity(filePath, QFileInfo(filePath).fileName(), false);
-    showLoadProgress();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-    m_fileLoader->startParse(filePath);
+    beginSingleFileLoad(filePath);
 }
 
 // --- Task 16.5: Export actions and detail panel ---
@@ -1508,9 +1502,7 @@ void MainWindow::onReload() {
         return;
     }
     hideFileChangedBar();
-    showLoadProgress();
-    m_statusLabel->setText(tr("Parsing %1...").arg(m_session->fileName()));
-    m_fileLoader->startParse(filePath);
+    beginSingleFileLoad(filePath);
 }
 
 // --- Task 7.1: Modified flag and title management ---
