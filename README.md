@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%"
-       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 563 tests.">
+       alt="JSONTitan open gigabyte JSON as a live tree: search it, query it, while the UI never freezes. C++23, Qt 6 Widgets, simdjson, 566 tests.">
 </p>
 
 <p align="center">
@@ -67,7 +67,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 Without a build type, CMake compiles without optimization, which slows parsing a lot.
 
-Run the test suite (563 tests: GoogleTest, RapidCheck property tests, Qt Test):
+Run the test suite (566 tests: GoogleTest, RapidCheck property tests, Qt Test):
 
 ```bash
 ctest --test-dir build
