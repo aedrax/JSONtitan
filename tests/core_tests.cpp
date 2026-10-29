@@ -1670,6 +1670,30 @@ TEST(SearchEngine, EmptyQueryReturnsNoMatches) {
     EXPECT_FALSE(result.error.has_value());
 }
 
+// Regression: searches had no limit, so a common letter in a huge document
+// built a path per matching node, then the UI thread processed them all.
+TEST(SearchEngine, MaxMatchesStopsTheWalk) {
+    std::vector<std::shared_ptr<const JsonNode>> elements;
+    for (int i = 0; i < 50; ++i) {
+        elements.push_back(JsonNode::makeString("", "hit"));
+    }
+    auto root = JsonNode::makeArray("", std::move(elements));
+
+    for (auto mode : {SearchMode::Substring, SearchMode::Regex}) {
+        auto result = filter(*root, SearchQuery{.pattern = "hit", .mode = mode, .maxMatches = 10});
+        EXPECT_EQ(result.matches.size(), 10u);
+        EXPECT_TRUE(result.truncated);
+    }
+    auto byPath = filter(*root, SearchQuery{.pattern = "$[*]", .mode = SearchMode::JsonPath,
+                                            .maxMatches = 10});
+    EXPECT_EQ(byPath.matches.size(), 10u);
+    EXPECT_TRUE(byPath.truncated);
+
+    auto all = filter(*root, SearchQuery{.pattern = "hit"});
+    EXPECT_EQ(all.matches.size(), 50u);
+    EXPECT_FALSE(all.truncated);
+}
+
 // === Substring matching on keys ============================================
 
 TEST(SearchEngine, SubstringMatchesKey) {

@@ -16,6 +16,10 @@ namespace {
 constexpr std::size_t kMaxExpandMatches = 500;
 constexpr int kMaxExpandAllRootRows = 100;
 
+// Searches stop here: every match keeps a path, and the filter keeps every
+// prefix of it and loads every matched row, all on the UI thread.
+constexpr std::size_t kMaxMatches = 100000;
+
 }  // namespace
 
 SearchController::SearchController(Ui ui, TreeModel* treeModel,
@@ -215,6 +219,7 @@ void SearchController::executeSearch() {
     // Build SearchQuery from current UI state
     jsontitan::core::SearchQuery query;
     query.caseSensitive = m_ui.caseToggle->isChecked();
+    query.maxMatches = kMaxMatches;
 
     if (m_ui.jsonPathToggle && m_ui.jsonPathToggle->isChecked()) {
         // JSONPath toggle is ON: evaluate the text as a JSONPath expression
@@ -283,7 +288,9 @@ void SearchController::onSearchComplete(jsontitan::core::FilterResult result,
     const std::size_t matchCount = result.matches.size();
     if (m_ui.matchCountLabel) {
         m_ui.matchCountLabel->setText(
-            matchCount == 0
+            result.truncated
+                ? tr("%1+ matches").arg(matchCount)
+                : matchCount == 0
                 ? tr("No matches")
                 : (matchCount == 1 ? tr("1 match")
                                    : tr("%1 matches").arg(matchCount)));

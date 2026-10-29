@@ -41,6 +41,16 @@ struct CompiledQuery {
     const std::function<bool()>* shouldCancel = nullptr;
     std::size_t visited = 0;
     bool cancelled = false;
+    bool truncated = false;
+
+    // Records a match; at the match limit, stops the walk like a cancel.
+    void add(std::vector<SearchMatch>& matches, SearchMatch match) {
+        matches.push_back(std::move(match));
+        if (query.maxMatches != 0 && matches.size() >= query.maxMatches) {
+            truncated = true;
+            cancelled = true;
+        }
+    }
 
     // Returns true when the walk should stop.
     auto pollCancel() -> bool {
@@ -83,10 +93,7 @@ void searchRecursive(const std::shared_ptr<const JsonNode>& node,
     }
 
     if (cq.matches(node->key, node->value, node->type)) {
-        matches.push_back(SearchMatch{
-            .ancestorIndices = currentPath,
-            .node = node
-        });
+        cq.add(matches, SearchMatch{.ancestorIndices = currentPath, .node = node});
     }
 
     for (std::size_t i = 0; i < node->children.size(); ++i) {
@@ -108,10 +115,7 @@ void arenaSearchRecursive(const ArenaJsonNode& node,
     }
 
     if (cq.matches(node.keyView(), node.valueView(), node.type)) {
-        matches.push_back(SearchMatch{
-            .ancestorIndices = currentPath,
-            .node = nullptr
-        });
+        cq.add(matches, SearchMatch{.ancestorIndices = currentPath, .node = nullptr});
     }
 
     for (std::size_t i = 0; i < node.childCount; ++i) {
@@ -150,6 +154,16 @@ auto prepare(const SearchQuery& query,
     return std::nullopt;
 }
 
+// JSONPath results are collected whole (the evaluation deduplicates at the
+// end); the limit applies to what is handed on.
+auto capped(FilterResult result, std::size_t maxMatches) -> FilterResult {
+    if (maxMatches != 0 && result.matches.size() > maxMatches) {
+        result.matches.resize(maxMatches);
+        result.truncated = true;
+    }
+    return result;
+}
+
 } // anonymous namespace
 
 auto filter(const JsonNode& root, const SearchQuery& query,
@@ -162,7 +176,8 @@ auto filter(const JsonNode& root, const SearchQuery& query,
     // JSONPath mode is a structural query, not a text scan: delegate to the
     // JSONPath engine (caseSensitive is ignored — member names are exact).
     if (query.mode == SearchMode::JsonPath) {
-        return queryJsonPath(NodeView(root), query.pattern, shouldCancel);
+        return capped(queryJsonPath(NodeView(root), query.pattern, shouldCancel),
+                      query.maxMatches);
     }
 
     std::regex regexStorage;
@@ -181,10 +196,7 @@ auto filter(const JsonNode& root, const SearchQuery& query,
         // The caller keeps the tree alive for the duration of any use of the
         // result; a non-owning pointer preserves node identity across calls.
         auto rootPtr = std::shared_ptr<const JsonNode>(&root, [](const JsonNode*) {});
-        matches.push_back(SearchMatch{
-            .ancestorIndices = currentPath,
-            .node = rootPtr
-        });
+        cq.add(matches, SearchMatch{.ancestorIndices = currentPath, .node = rootPtr});
     }
 
     // Recurse into children
@@ -195,7 +207,8 @@ auto filter(const JsonNode& root, const SearchQuery& query,
         if (cq.cancelled) break;
     }
 
-    return FilterResult{.matches = std::move(matches), .error = std::nullopt};
+    return FilterResult{
+        .matches = std::move(matches), .error = std::nullopt, .truncated = cq.truncated};
 }
 
 auto filter(const ArenaJsonNode& root, const SearchQuery& query,
@@ -208,7 +221,8 @@ auto filter(const ArenaJsonNode& root, const SearchQuery& query,
     // JSONPath mode: same structural evaluation as the JsonNode overload —
     // NodeView abstracts the backing, so matches carry identical index paths.
     if (query.mode == SearchMode::JsonPath) {
-        return queryJsonPath(NodeView(root), query.pattern, shouldCancel);
+        return capped(queryJsonPath(NodeView(root), query.pattern, shouldCancel),
+                      query.maxMatches);
     }
 
     std::regex regexStorage;
@@ -224,10 +238,7 @@ auto filter(const ArenaJsonNode& root, const SearchQuery& query,
 
     // Check root node
     if (cq.matches(root.keyView(), root.valueView(), root.type)) {
-        matches.push_back(SearchMatch{
-            .ancestorIndices = currentPath,
-            .node = nullptr
-        });
+        cq.add(matches, SearchMatch{.ancestorIndices = currentPath, .node = nullptr});
     }
 
     // Recurse into children
@@ -238,7 +249,8 @@ auto filter(const ArenaJsonNode& root, const SearchQuery& query,
         if (cq.cancelled) break;
     }
 
-    return FilterResult{.matches = std::move(matches), .error = std::nullopt};
+    return FilterResult{
+        .matches = std::move(matches), .error = std::nullopt, .truncated = cq.truncated};
 }
 
 } // namespace jsontitan::core

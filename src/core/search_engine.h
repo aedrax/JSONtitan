@@ -16,6 +16,10 @@ struct SearchQuery {
     std::string pattern;
     SearchMode mode = SearchMode::Substring;
     bool caseSensitive = false;
+    // Stop after this many matches (0 = no limit). Each match carries its
+    // path, so an unlimited search of a common letter in a huge document
+    // costs memory per node.
+    std::size_t maxMatches = 0;
 };
 
 struct SearchError {
@@ -34,6 +38,7 @@ struct SearchMatch {
 struct FilterResult {
     std::vector<SearchMatch> matches;
     std::optional<SearchError> error = std::nullopt;
+    bool truncated = false;  // stopped at SearchQuery::maxMatches
 };
 
 // shouldCancel (optional) is polled every few thousand nodes; returning true
