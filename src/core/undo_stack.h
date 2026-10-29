@@ -4,7 +4,9 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "core/deletion_engine.h"  // NodePath
 #include "core/json_node.h"
@@ -75,23 +77,42 @@ public:
     }
 
     // Bytes `before` holds that `after` does not share: the child arrays of
-    // the containers replaced between them. Children are paired by position,
-    // descending only where both sides have as many children (an edit in
-    // place); where the count changed (insert, delete) the old array alone
-    // is counted. Costs about as much as the mutation itself did.
+    // the containers replaced between them. Where both sides have as many
+    // children, the changed ones are paired by position and descended
+    // (an edit in place); a child that only changed position (Move, Sort
+    // Keys) is still shared and skipped. Where the count changed (insert,
+    // delete) the old array alone is counted. Costs about as much as the
+    // mutation itself did.
     [[nodiscard]] static auto unsharedBytes(const JsonNode& before, const JsonNode& after)
         -> std::size_t {
         if (&before == &after) {
             return 0;
         }
-        std::size_t bytes = before.children.size() * sizeof(std::shared_ptr<const JsonNode>);
-        if (before.children.size() != after.children.size()) {
+        const auto& old = before.children;
+        const auto& now = after.children;
+        std::size_t bytes = old.size() * sizeof(std::shared_ptr<const JsonNode>);
+        if (old.size() != now.size()) {
             return bytes;
         }
-        for (std::size_t i = 0; i < before.children.size(); ++i) {
-            if (before.children[i] != after.children[i]) {
-                bytes += unsharedBytes(*before.children[i], *after.children[i]);
+        // A move swaps neighbors, which the neighbor check finds cheaply; a
+        // sort leaves many children elsewhere, found through a set of `now`.
+        std::vector<std::size_t> changed;
+        for (std::size_t i = 0; i < old.size(); ++i) {
+            if (old[i] != now[i] && !(i > 0 && old[i] == now[i - 1]) &&
+                !(i + 1 < now.size() && old[i] == now[i + 1])) {
+                changed.push_back(i);
             }
+        }
+        if (changed.size() > 1) {
+            std::unordered_set<const JsonNode*> kept;
+            kept.reserve(now.size());
+            for (const auto& child : now) {
+                kept.insert(child.get());
+            }
+            std::erase_if(changed, [&](std::size_t i) { return kept.contains(old[i].get()); });
+        }
+        for (std::size_t i : changed) {
+            bytes += unsharedBytes(*old[i], *now[i]);
         }
         return bytes;
     }

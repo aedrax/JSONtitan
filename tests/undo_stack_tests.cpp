@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -187,4 +188,27 @@ TEST(UndoStack, UnsharedBytesSkipsSharedSubtrees) {
     auto after = JsonNode::makeObject("", {shared, makeLeaf("new")});
     EXPECT_EQ(UndoStack::unsharedBytes(*before, *after),
               2 * sizeof(std::shared_ptr<const JsonNode>));
+}
+
+// Regression: children were paired by position, so after a move or sort
+// each was compared with an unrelated sibling and its whole subtree counted,
+// although it is still shared. One Move Up in a large array could then
+// exceed the budget and evict the whole history.
+TEST(UndoStack, UnsharedBytesSkipsMovedChildren) {
+    std::vector<std::shared_ptr<const JsonNode>> members;
+    for (int i = 0; i < 100; ++i) {
+        members.push_back(JsonNode::makeArray(
+            "m" + std::to_string(i),
+            std::vector<std::shared_ptr<const JsonNode>>(50, makeLeaf("x"))));
+    }
+    auto before = JsonNode::makeObject("", members);
+    const std::size_t oneArray = 100 * sizeof(std::shared_ptr<const JsonNode>);
+
+    auto swapped = members;
+    std::swap(swapped[3], swapped[4]);
+    EXPECT_EQ(UndoStack::unsharedBytes(*before, *JsonNode::makeObject("", swapped)), oneArray);
+
+    auto reversed = members;
+    std::reverse(reversed.begin(), reversed.end());
+    EXPECT_EQ(UndoStack::unsharedBytes(*before, *JsonNode::makeObject("", reversed)), oneArray);
 }
