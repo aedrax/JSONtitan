@@ -63,6 +63,9 @@ void UnionController::onUnionParseComplete(
     // must not be replaced without asking.
     if (m_session->editedSinceLoadStart() &&
         !m_editController->confirmDiscardChanges()) {
+        // Put the status back on the document that stays.
+        emit statusUpdated(m_session->fileName(),
+                           static_cast<int>(m_session->nodeCount()));
         return;
     }
 

@@ -1092,10 +1092,18 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
 
     // The document stays editable while a load runs; installing would
     // replace those edits without the prompt the load started with.
-    if (m_session->editedSinceLoadStart() &&
-        !m_editController->confirmDiscardChanges()) {
-        m_statusLabel->setText(tr("Load discarded"));
-        return;
+    if (m_session->editedSinceLoadStart()) {
+        if (!m_editController->confirmDiscardChanges()) {
+            m_statusLabel->setText(tr("Load discarded"));
+            return;
+        }
+        // A save during the load (or from the prompt just now) wrote the
+        // document on screen to the very file being loaded. The result was
+        // read before that save, so it is older than what is on screen.
+        if (!m_session->modified() && m_pendingLoadPath == m_session->filePath()) {
+            m_statusLabel->setText(tr("Saved; reload skipped"));
+            return;
+        }
     }
 
     m_searchController->invalidate();

@@ -1972,6 +1972,50 @@ private slots:
         QVERIFY(window.windowTitle().startsWith("*"));
     }
 
+    // Edits made while the same file reloads, saved from the prompt: the
+    // reload result predates that save and must not replace the screen.
+    void testSaveDuringReloadKeepsTheSavedDocument() {
+        QTemporaryDir dir;
+        const QString path = dir.path() + "/a.json";
+        writeFile(path, R"({"x": 1, "y": 2})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({path.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+
+        QAction* reload = nullptr;
+        for (auto* menu : window.menuBar()->actions()) {
+            for (auto* action : menu->menu()->actions()) {
+                if (action->text().contains("from Disk")) {
+                    reload = action;
+                }
+            }
+        }
+        QVERIFY(reload != nullptr);
+        reload->trigger();
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(&window, Qt::Key_Delete);
+        QCOMPARE(treeView->model()->rowCount(), 1);
+
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, []() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                box->button(QMessageBox::Save)->click();
+            }
+        });
+        answer.start(20);
+
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QTRY_COMPARE_WITH_TIMEOUT(statusLabel->text(), QString("Saved; reload skipped"), 5000);
+        QCOMPARE(treeView->model()->rowCount(), 1);
+        QVERIFY(!window.windowTitle().startsWith("*"));
+        QFile saved(path);
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QVERIFY(!saved.readAll().contains("\"x\""));
+    }
+
 private:
     static void writeFile(const QString& path, const QByteArray& content) {
         QFile file(path);
