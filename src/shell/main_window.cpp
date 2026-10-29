@@ -1183,95 +1183,55 @@ void MainWindow::onRecentFileSelected(const QString& filePath) {
 // --- Task 16.5: Export actions and detail panel ---
 
 void MainWindow::onExportJson() {
-    // Export the selection if one resolves, otherwise the live root —
-    // uniformly over both backings via NodeView (no deep copies).
-    auto node = m_detailPresenter->selectedNodeView();
-    if (!node) {
-        node = m_session->rootView();
-    }
-    if (!node) {
-        QMessageBox::information(this, tr("Export JSON"),
-                                 tr("No data to export. Please open a file first."));
-        return;
-    }
-
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Export JSON"), QString(),
-        tr("JSON Files (*.json);;All Files (*)"));
-
-    if (filePath.isEmpty()) {
-        return;
-    }
-
-    jsontitan::shell::WaitCursorGuard waitCursor;
-    QString error = ExportHandler::exportJsonToFile(*node, filePath);
-    waitCursor.restore();
-    if (!error.isEmpty()) {
-        QMessageBox::critical(this, tr("Export Error"), error);
-    } else {
-        m_statusLabel->setText(tr("Exported JSON to %1").arg(QFileInfo(filePath).fileName()));
-    }
+    exportSelection(tr("JSON"), tr("JSON Files (*.json);;All Files (*)"),
+                    [](jsontitan::core::NodeView node, const QString& path) {
+                        return ExportHandler::exportJsonToFile(node, path);
+                    });
 }
 
 void MainWindow::onExportCsv() {
-    // Export the selection if one resolves, otherwise the live root —
-    // uniformly over both backings via NodeView (no deep copies).
-    auto node = m_detailPresenter->selectedNodeView();
-    if (!node) {
-        node = m_session->rootView();
-    }
-    if (!node) {
-        QMessageBox::information(this, tr("Export CSV"),
-                                 tr("No data to export. Please open a file first."));
-        return;
-    }
-
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Export CSV"), QString(),
-        tr("CSV Files (*.csv);;All Files (*)"));
-
-    if (filePath.isEmpty()) {
-        return;
-    }
-
-    jsontitan::shell::WaitCursorGuard waitCursor;
-    QString error = ExportHandler::exportCsvToFile(*node, filePath);
-    waitCursor.restore();
-    if (!error.isEmpty()) {
-        QMessageBox::critical(this, tr("Export Error"), error);
-    } else {
-        m_statusLabel->setText(tr("Exported CSV to %1").arg(QFileInfo(filePath).fileName()));
-    }
+    exportSelection(tr("CSV"), tr("CSV Files (*.csv);;All Files (*)"),
+                    [](jsontitan::core::NodeView node, const QString& path) {
+                        return ExportHandler::exportCsvToFile(node, path);
+                    });
 }
 
 void MainWindow::onExportXml() {
+    exportSelection(tr("XML"), tr("XML Files (*.xml);;All Files (*)"),
+                    [](jsontitan::core::NodeView node, const QString& path) {
+                        return ExportHandler::exportXmlToFile(node, path);
+                    });
+}
+
+void MainWindow::exportSelection(
+    const QString& formatName, const QString& fileFilter,
+    const std::function<QString(jsontitan::core::NodeView, const QString&)>& write) {
     // Export the selection if one resolves, otherwise the live root —
     // uniformly over both backings via NodeView (no deep copies).
     auto node = m_detailPresenter->selectedNodeView();
     if (!node) {
         node = m_session->rootView();
     }
+    const QString title = tr("Export %1").arg(formatName);
     if (!node) {
-        QMessageBox::information(this, tr("Export XML"),
+        QMessageBox::information(this, title,
                                  tr("No data to export. Please open a file first."));
         return;
     }
 
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Export XML"), QString(),
-        tr("XML Files (*.xml);;All Files (*)"));
-
+    const QString filePath = QFileDialog::getSaveFileName(this, title, QString(), fileFilter);
     if (filePath.isEmpty()) {
         return;
     }
 
     jsontitan::shell::WaitCursorGuard waitCursor;
-    QString error = ExportHandler::exportXmlToFile(*node, filePath);
+    const QString error = write(*node, filePath);
     waitCursor.restore();
     if (!error.isEmpty()) {
         QMessageBox::critical(this, tr("Export Error"), error);
     } else {
-        m_statusLabel->setText(tr("Exported XML to %1").arg(QFileInfo(filePath).fileName()));
+        m_statusLabel->setText(
+            tr("Exported %1 to %2").arg(formatName, QFileInfo(filePath).fileName()));
     }
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QCloseEvent>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
@@ -124,6 +126,11 @@ private:
     void beginSingleFileLoad(const QString& filePath);
     // Adds the current single file to the recent files and session restore.
     void rememberCurrentFile();
+    // Shared Export flow: the selection (or the whole document) written by
+    // `write` to a file the user picks.
+    void exportSelection(
+        const QString& formatName, const QString& fileFilter,
+        const std::function<QString(jsontitan::core::NodeView, const QString&)>& write);
 
     // Enable/disable the structural edit actions for the current row (or
     // the root when no row is selected).

@@ -4,10 +4,22 @@
 
 #include <string>
 
+#include <functional>
+
 #include "core/node_view.h"
+#include "core/stream_export.h"
 
 class ExportHandler {
 public:
+    // Streams the given export function's output to filePath via QSaveFile:
+    // the target is only replaced after the full write succeeds, so a
+    // failure never destroys an existing file. A non-write failure (e.g. a
+    // CSV validation error) is returned verbatim. Empty on success.
+    static auto streamAtomically(
+        const std::function<jsontitan::core::StreamExportResult(
+            const jsontitan::core::ByteSink&)>& doExport,
+        const QString& filePath) -> QString;
+
     // Export the given subtree (either backing, via NodeView) as
     // pretty-printed JSON (2-space indent, trailing newline) and stream it
     // to filePath through an atomic QSaveFile write.

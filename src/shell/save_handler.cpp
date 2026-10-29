@@ -1,8 +1,8 @@
 #include "shell/save_handler.h"
 
 #include "core/stream_export.h"
+#include "shell/export_handler.h"
 
-#include <QSaveFile>
 #include <QSettings>
 
 namespace {
@@ -55,41 +55,19 @@ auto SaveHandler::saveToFile(jsontitan::core::NodeView tree,
     options.indentWidth = style == Style::Indent4 ? 4 : 2;
     options.trailingNewline = !jsonLines;
 
-    // Atomic write: QSaveFile writes to a temp file and atomically replaces the
-    // target on commit(), preserving the original file (and its permissions) if
-    // anything fails before then.
-    QSaveFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        return QStringLiteral("Failed to open %1 for writing: %2")
-            .arg(filePath, file.errorString());
-    }
-
-    jsontitan::core::ByteSink sink = [&file](std::string_view chunk) {
-        auto written = file.write(chunk.data(), static_cast<qint64>(chunk.size()));
-        return written == static_cast<qint64>(chunk.size())
-            && file.error() == QFileDevice::NoError;
-    };
-
-    jsontitan::core::StreamExportResult result;
-    if (jsonLines) {
-        for (std::size_t i = 0; i < tree.childCount() && result.ok; ++i) {
-            result = jsontitan::core::exportJsonStream(tree.child(i), sink, options);
-            if (result.ok && !sink("\n")) {
-                result.ok = false;
+    return ExportHandler::streamAtomically(
+        [&](const jsontitan::core::ByteSink& sink) {
+            if (!jsonLines) {
+                return jsontitan::core::exportJsonStream(tree, sink, options);
             }
-        }
-    } else {
-        result = jsontitan::core::exportJsonStream(tree, sink, options);
-    }
-    if (!result.ok || file.error() != QFileDevice::NoError) {
-        return QStringLiteral("Failed to write %1: %2")
-            .arg(filePath, file.errorString());
-    }
-
-    if (!file.commit()) {
-        return QStringLiteral("Failed to save %1: %2")
-            .arg(filePath, file.errorString());
-    }
-
-    return {};
+            jsontitan::core::StreamExportResult result;
+            for (std::size_t i = 0; i < tree.childCount() && result.ok; ++i) {
+                result = jsontitan::core::exportJsonStream(tree.child(i), sink, options);
+                if (result.ok && !sink("\n")) {
+                    result.ok = false;
+                }
+            }
+            return result;
+        },
+        filePath);
 }

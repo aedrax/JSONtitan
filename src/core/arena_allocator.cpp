@@ -72,16 +72,6 @@ void ArenaAllocator::reset() noexcept {
     m_blocks.clear();
 }
 
-void ArenaAllocator::absorb(ArenaAllocator&& other) {
-    // Reserve up front so the element transfer itself cannot throw
-    // mid-way; only this single reserve can fail (strong guarantee).
-    m_blocks.reserve(m_blocks.size() + other.m_blocks.size());
-    m_blocks.insert(m_blocks.end(),
-                    std::make_move_iterator(other.m_blocks.begin()),
-                    std::make_move_iterator(other.m_blocks.end()));
-    other.m_blocks.clear();
-}
-
 auto ArenaAllocator::totalAllocated() const noexcept -> std::size_t {
     std::size_t total = 0;
     for (const auto& block : m_blocks) {
@@ -111,35 +101,6 @@ void ArenaAllocator::allocateNewBlock(std::size_t minSize) {
         .capacity = capacity,
         .used = 0,
     });
-}
-
-// --- ThreadLocalArena ---
-
-ThreadLocalArena::ThreadLocalArena(std::size_t blockSize)
-    : m_blockSize(blockSize) {}
-
-auto ThreadLocalArena::get() -> ArenaAllocator& {
-    auto id = std::this_thread::get_id();
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = m_arenas.find(id);
-    if (it == m_arenas.end()) {
-        auto [inserted, _] = m_arenas.emplace(
-            id, std::make_unique<ArenaAllocator>(m_blockSize));
-        return *inserted->second;
-    }
-    return *it->second;
-}
-
-auto ThreadLocalArena::mergeAll() -> ArenaAllocator {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    ArenaAllocator merged(m_blockSize);
-    // const auto&: the map entries are not mutated; unique_ptr's const
-    // operator* still yields a mutable ArenaAllocator& to move from.
-    for (const auto& [id, arena] : m_arenas) {
-        merged.absorb(std::move(*arena));
-    }
-    m_arenas.clear();
-    return merged;
 }
 
 } // namespace jsontitan::core

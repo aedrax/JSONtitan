@@ -6,13 +6,7 @@
 
 #include <functional>
 
-namespace {
-
-// Streams the given export function's output to filePath via QSaveFile: the
-// target is only replaced after the full write succeeds, so a failure never
-// destroys an existing file. A non-write failure (e.g. CSV validation error)
-// is returned verbatim.
-auto streamAtomically(
+auto ExportHandler::streamAtomically(
     const std::function<jsontitan::core::StreamExportResult(
         const jsontitan::core::ByteSink&)>& doExport,
     const QString& filePath) -> QString {
@@ -35,7 +29,10 @@ auto streamAtomically(
                 .arg(filePath, file.errorString());
         }
         // Validation failure (e.g. CSV shape error): report the core message.
-        return QString::fromStdString(result.error);
+        // Never an empty string, which callers read as success.
+        return result.error.empty()
+                   ? QStringLiteral("Failed to write to file: %1").arg(filePath)
+                   : QString::fromStdString(result.error);
     }
 
     if (!file.commit()) {
@@ -45,8 +42,6 @@ auto streamAtomically(
 
     return {};
 }
-
-} // namespace
 
 auto ExportHandler::exportJsonToFile(jsontitan::core::NodeView node,
                                      const QString& filePath) -> QString {

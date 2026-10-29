@@ -173,7 +173,6 @@ void EditController::deleteSelectedNode() {
 
     // Remember the current position for selection restoration
     int deletedRow = sourceIndex.row();
-    QModelIndex parentSourceIndex = sourceIndex.parent();
 
     // Convert arena tree to editable JsonNode tree if needed
     if (!m_session->ensureEditable()) {
