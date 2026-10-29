@@ -636,6 +636,28 @@ TEST(EditControllerStructure, MoveDuplicateAndSort) {
               R"({"z":[2,1,3],"a":{"d":0,"c":0}})");
 }
 
+// Regression: a moved object member was reselected by its key, which names
+// the first member with it, so moving a later duplicate selected another
+// row; and renaming a later duplicate (named by position) was refused.
+TEST(EditControllerStructure, MoveAndRenameALaterDuplicateKey) {
+    Harness h;
+    auto arena = parseBuffer(R"({"a": 1, "b": 2, "a": 3})");
+    ASSERT_TRUE(arena.ok());
+    h.session.setArenaRoot(std::make_shared<ArenaParseResult>(std::move(arena)),
+                           QStringLiteral("/tmp/t.json"), QStringLiteral("t.json"));
+    fetchAll(h.model);
+
+    EXPECT_FALSE(h.edit->applyMove({std::size_t{2}}, -1).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()), R"({"a":1,"a":3,"b":2})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::size_t{1}}));
+
+    EXPECT_FALSE(h.edit->applyRename({std::size_t{1}}, QStringLiteral("c")).has_value());
+    pumpEvents();
+    EXPECT_EQ(compactJson(h.session.currentRoot()), R"({"a":1,"c":3,"b":2})");
+    EXPECT_EQ(h.currentSelection(), (NodePath{std::string("c")}));
+}
+
 TEST(EditControllerStructure, MultiSelectionDeleteIsOneUndoStep) {
     Harness h;
     h.tree.setSelectionMode(QAbstractItemView::ExtendedSelection);

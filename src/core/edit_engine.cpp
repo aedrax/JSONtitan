@@ -229,14 +229,15 @@ auto renameKey(std::shared_ptr<const JsonNode> root, const NodePath& path,
     if (path.empty()) {
         return makeError(EditErrorCode::InvalidPath, "The root node has no key to rename");
     }
-    // Only object members carry keys; an array element path ends in an index.
-    if (!std::holds_alternative<std::string>(path.back())) {
-        return makeError(EditErrorCode::InvalidPath, "Array elements have no key");
-    }
-
     std::vector<std::shared_ptr<const JsonNode>> nodes;
     if (!collectPathNodes(root, path, nodes)) {
         return makeError(EditErrorCode::InvalidPath, "Path does not resolve to a node");
+    }
+    // Only object members carry keys. A member may be named by position
+    // (a later duplicate key), so the parent decides, not the segment.
+    const auto& parent = nodes[nodes.size() - 2];
+    if (parent->type != NodeType::Object) {
+        return makeError(EditErrorCode::InvalidPath, "Array elements have no key");
     }
 
     const auto& target = nodes.back();
@@ -244,7 +245,6 @@ auto renameKey(std::shared_ptr<const JsonNode> root, const NodePath& path,
         return root;  // no-op rename
     }
 
-    const auto& parent = nodes[nodes.size() - 2];
     for (const auto& sibling : parent->children) {
         if (sibling.get() != target.get() && sibling->key == newKey) {
             return makeError(EditErrorCode::DuplicateKey,

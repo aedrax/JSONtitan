@@ -793,6 +793,14 @@ TEST(EditEngineStructure, DeleteDuplicateKeyRemovesFirstOnly) {
     auto edited = editValue(root, {std::size_t{1}}, ScalarValue{NodeType::Number, "5"});
     ASSERT_TRUE(edited.has_value());
     EXPECT_EQ(compactJson(*edited), R"({"a":1,"a":5,"b":3})");
+
+    // Renaming the later duplicate is how a user fixes it.
+    auto renamed = renameKey(root, {std::size_t{1}}, "c");
+    ASSERT_TRUE(renamed.has_value());
+    EXPECT_EQ(compactJson(*renamed), R"({"a":1,"c":2,"b":3})");
+    auto clash = renameKey(root, {std::size_t{1}}, "b");
+    ASSERT_FALSE(clash.has_value());
+    EXPECT_EQ(clash.error().code, EditErrorCode::DuplicateKey);
 }
 
 // deleteNodes rebuilds each parent once; it must match deleting the same

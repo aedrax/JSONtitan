@@ -1052,9 +1052,13 @@ void MainWindow::updateEditActions() {
     bool canRename = false;
     bool canMoveDown = false;
     if (hasRow) {
-        const auto path = jsontitan::shell::nodePathForIndex(*m_treeModel, sourceIndex);
-        canRename = !path.empty() && std::holds_alternative<std::string>(path.back());
+        // Object members carry keys (a later duplicate key's path ends in
+        // its position, so the parent decides).
         const QModelIndex parent = sourceIndex.parent();
+        const auto* jsonParent = m_treeModel->jsonNodeForIndex(parent);
+        const auto* arenaParent = m_treeModel->arenaNodeForIndex(parent);
+        canRename = (jsonParent && jsonParent->type == NodeType::Object) ||
+                    (arenaParent && arenaParent->type == NodeType::Object);
         canMoveDown = sourceIndex.row() + 1 < m_treeModel->rowCount(parent) ||
                       m_treeModel->canFetchMore(parent);
     }

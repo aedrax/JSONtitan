@@ -390,11 +390,18 @@ void EditController::renameSelectedKey() {
     // deliver a model reset (e.g. a background parse completing) that would
     // invalidate any held QModelIndex.
     auto path = currentSelectionPath();
-    if (path.empty() || !std::holds_alternative<std::string>(path.back())) {
-        return;  // only object members carry keys
+    if (path.empty()) {
+        return;
     }
-    const QString currentKey =
-        QString::fromStdString(std::get<std::string>(path.back()));
+    // Only object members carry keys; a later duplicate key's path ends in
+    // its position, so the parent decides.
+    const auto parent = viewAt(NodePath(path.begin(), path.end() - 1));
+    const std::size_t position = parent ? positionOf(*parent, path.back()) : SIZE_MAX;
+    if (!parent || parent->type() != NodeType::Object || position >= parent->childCount()) {
+        return;
+    }
+    const std::string_view key = parent->child(position).key();
+    const QString currentKey = QString::fromUtf8(key.data(), static_cast<qsizetype>(key.size()));
 
     bool ok = false;
     QString newKey = QInputDialog::getText(
@@ -475,10 +482,10 @@ EditController::applyMove(const NodePath& path, int delta) {
     if (!result) {
         return result.error();
     }
+    // By position: a key would name the first member with it, which is
+    // another row when keys repeat.
     NodePath selection = path;
-    if (parent->type == NodeType::Array) {
-        selection.back() = static_cast<std::size_t>(to);
-    }
+    selection.back() = static_cast<std::size_t>(to);
     queueInstall(*result, std::move(selection),
                  jsontitan::core::UndoEntry{std::move(preRoot), path});
     return std::nullopt;
