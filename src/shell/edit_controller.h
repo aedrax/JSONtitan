@@ -1,11 +1,13 @@
 #pragma once
 
+#include <QMessageBox>
 #include <QObject>
 #include <QString>
 #include <QTreeView>
 #include <QWidget>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -29,6 +31,20 @@ public:
                    DocumentSession* session,
                    SearchController* searchController,
                    QObject* parent = nullptr);
+
+    // The questions this controller asks, the Save As file chooser and the
+    // save error. Each defaults to its Qt dialog; tests set answers instead,
+    // so no dialog waits for a click.
+    struct Prompts {
+        std::function<QMessageBox::StandardButton(
+            const QString& title, const QString& text,
+            QMessageBox::StandardButtons buttons,
+            QMessageBox::StandardButton defaultButton)> question;
+        std::function<QString(const QString& caption, const QString& filter,
+                              QString* selectedFilter)> saveFileName;
+        std::function<void(const QString& title, const QString& text)> error;
+    };
+    void setPrompts(Prompts prompts) { m_prompts = std::move(prompts); }
 
     // Returns true when it is safe to discard the current document: either
     // there are no unsaved changes, or the user chose Save (and it
@@ -163,4 +179,5 @@ private:
     FilterProxyModel* m_filterProxy = nullptr;
     DocumentSession* m_session = nullptr;
     SearchController* m_searchController = nullptr;
+    Prompts m_prompts;
 };

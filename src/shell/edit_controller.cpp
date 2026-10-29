@@ -98,7 +98,22 @@ EditController::EditController(QWidget* dialogParent, QTreeView* treeView,
       m_treeModel(treeModel),
       m_filterProxy(filterProxy),
       m_session(session),
-      m_searchController(searchController) {}
+      m_searchController(searchController),
+      m_prompts{
+          [dialogParent](const QString& title, const QString& text,
+                         QMessageBox::StandardButtons buttons,
+                         QMessageBox::StandardButton defaultButton) {
+              return QMessageBox::question(dialogParent, title, text, buttons,
+                                           defaultButton);
+          },
+          [dialogParent](const QString& caption, const QString& filter,
+                         QString* selectedFilter) {
+              return QFileDialog::getSaveFileName(dialogParent, caption, QString(),
+                                                  filter, selectedFilter);
+          },
+          [dialogParent](const QString& title, const QString& text) {
+              QMessageBox::critical(dialogParent, title, text);
+          }} {}
 
 // --- Task 6.2: Delete node implementation ---
 
@@ -110,8 +125,8 @@ void EditController::deleteSelectedNode() {
 
     // Several rows selected: one confirmation, one undoable step.
     if (auto paths = selectedPaths(); paths.size() > 1) {
-        auto reply = QMessageBox::question(
-            m_dialogParent, tr("Confirm Deletion"),
+        auto reply = m_prompts.question(
+            tr("Confirm Deletion"),
             tr("Delete the %1 selected nodes?").arg(paths.size()),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (reply == QMessageBox::Yes) {
@@ -160,8 +175,8 @@ void EditController::deleteSelectedNode() {
 
     // Confirmation dialog if node has >10 direct children
     if (directChildCount > 10) {
-        auto reply = QMessageBox::question(
-            m_dialogParent, tr("Confirm Deletion"),
+        auto reply = m_prompts.question(
+            tr("Confirm Deletion"),
             tr("This node has %1 descendants. Are you sure you want to delete it?")
                 .arg(descendantCount),
             QMessageBox::Yes | QMessageBox::No,
@@ -858,8 +873,8 @@ bool EditController::confirmDiscardChanges() {
         return true;
     }
 
-    auto reply = QMessageBox::question(
-        m_dialogParent, tr("Unsaved Changes"),
+    auto reply = m_prompts.question(
+        tr("Unsaved Changes"),
         tr("The document has been modified.\nDo you want to save your changes?"),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
         QMessageBox::Save);
@@ -892,8 +907,8 @@ void EditController::save() {
     // Comments cannot be carried through the tree, so overwriting a JSONC
     // file that had them is lossy: ask first.
     if (m_session->hadComments()) {
-        auto reply = QMessageBox::question(
-            m_dialogParent, tr("Remove Comments"),
+        auto reply = m_prompts.question(
+            tr("Remove Comments"),
             tr("\"%1\" contains comments, which JSONTitan cannot keep.\n"
                "Saving will remove them. Save anyway?")
                 .arg(m_session->fileName()),
@@ -916,7 +931,7 @@ void EditController::save() {
     }
     emit saved(error.isEmpty());
     if (!error.isEmpty()) {
-        QMessageBox::critical(m_dialogParent, tr("Save Error"),
+        m_prompts.error(tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
                 .arg(m_session->filePath(), error));
     }
@@ -938,9 +953,9 @@ void EditController::saveAs() {
     QString selectedFilter = m_session->format() == JsonFormat::JsonLines
                                  ? linesFilter
                                  : jsonFilter;
-    QString chosenPath = QFileDialog::getSaveFileName(
-        m_dialogParent, tr("Save As"), QString(),
-        jsonFilter + QStringLiteral(";;") + linesFilter, &selectedFilter);
+    QString chosenPath = m_prompts.saveFileName(
+        tr("Save As"), jsonFilter + QStringLiteral(";;") + linesFilter,
+        &selectedFilter);
 
     if (chosenPath.isEmpty()) {
         return;
@@ -955,8 +970,8 @@ void EditController::saveAs() {
 
     // If file exists, prompt for overwrite confirmation
     if (QFile::exists(chosenPath)) {
-        auto reply = QMessageBox::question(
-            m_dialogParent, tr("Overwrite File"),
+        auto reply = m_prompts.question(
+            tr("Overwrite File"),
             tr("The file \"%1\" already exists.\nDo you want to overwrite it?")
                 .arg(QFileInfo(chosenPath).fileName()),
             QMessageBox::Yes | QMessageBox::No,
@@ -984,7 +999,7 @@ void EditController::saveAs() {
     // session now points at.
     emit saved(error.isEmpty());
     if (!error.isEmpty()) {
-        QMessageBox::critical(m_dialogParent, tr("Save Error"),
+        m_prompts.error(tr("Save Error"),
             tr("Failed to save to %1:\n\n%2")
                 .arg(chosenPath, error));
     }

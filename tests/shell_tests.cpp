@@ -1,14 +1,11 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
 #include <QClipboard>
-#include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
-#include <QTimer>
 #include <QtTest/QtTest>
 #include <rapidcheck.h>
 
@@ -21,6 +18,7 @@
 #include "shell/document_session.h"
 #include "shell/model_paths.h"
 #include "shell/drop_validator.h"
+#include "shell/edit_controller.h"
 #include "shell/export_handler.h"
 #include "shell/filter_proxy_model.h"
 #include "shell/main_window.h"
@@ -92,6 +90,32 @@ std::shared_ptr<const JsonNode> generateRandomNode(uint32_t seed, int maxDepth =
 
     return generate(0);
 }
+
+// Answers the edit controller's dialogs without showing them, so no test
+// waits for a click: every question gets `answer(title)`, Save As picks
+// `saveAsPath`, and `asked` lists each title in order.
+struct ScriptedPrompts {
+    std::function<QMessageBox::StandardButton(const QString& title)> answer;
+    QString saveAsPath;
+    QStringList asked;
+
+    void install(MainWindow& window) {
+        auto* edit = window.findChild<EditController*>();
+        QVERIFY(edit != nullptr);
+        edit->setPrompts({
+            [this](const QString& title, const QString&, QMessageBox::StandardButtons,
+                   QMessageBox::StandardButton) {
+                asked << title;
+                return answer ? answer(title) : QMessageBox::Cancel;
+            },
+            [this](const QString& caption, const QString&, QString*) {
+                asked << caption;
+                return saveAsPath;
+            },
+            [this](const QString& title, const QString&) { asked << title; },
+        });
+    }
+};
 
 } // anonymous namespace
 
@@ -1682,8 +1706,11 @@ private slots:
     void testSaveAsBecomesTheFileToRestore() {
         QTemporaryDir dir;
         const QString path = dir.path() + "/saved-as.json";
+        ScriptedPrompts prompts;
+        prompts.saveAsPath = path;
         MainWindow window;
         window.show();
+        prompts.install(window);
 
         auto fileAction = [&window](const QString& text) -> QAction* {
             for (auto* menu : window.menuBar()->actions()) {
@@ -1696,21 +1723,6 @@ private slots:
             return nullptr;
         };
         fileAction("&New")->trigger();
-
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, [&path]() {
-            auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* nameEdit = dialog->findChild<QLineEdit*>("fileNameEdit");
-            auto* buttons = dialog->findChild<QDialogButtonBox*>();
-            if (nameEdit && buttons) {
-                nameEdit->setText(path);
-                buttons->button(QDialogButtonBox::Save)->click();
-            }
-        });
-        answer.start(20);
         fileAction("Save &As...")->trigger();
 
         QVERIFY(QFile::exists(path));
@@ -1942,8 +1954,10 @@ private slots:
         writeFile(pathA, R"({"x": 1, "y": 2})");
         writeFile(pathB, R"({"other": true})");
 
+        ScriptedPrompts prompts;  // Cancel: keep the edits
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({pathA.toStdString()});
         auto* treeView = window.findChild<QTreeView*>();
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
@@ -1954,20 +1968,9 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Delete);
         QCOMPARE(treeView->model()->rowCount(), 1);
 
-        // Answer the unsaved-changes prompt with Cancel: keep the edits.
-        bool prompted = false;
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, [&]() {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                prompted = true;
-                box->button(QMessageBox::Cancel)->click();
-            }
-        });
-        answer.start(20);
-
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QTRY_COMPARE_WITH_TIMEOUT(statusLabel->text(), QString("Load discarded"), 5000);
-        QVERIFY(prompted);
+        QCOMPARE(prompts.asked, QStringList{"Unsaved Changes"});
         QCOMPARE(treeView->model()->rowCount(), 1);
         QVERIFY(window.windowTitle().startsWith("*"));
     }
@@ -1979,8 +1982,11 @@ private slots:
         const QString path = dir.path() + "/a.json";
         writeFile(path, R"({"x": 1, "y": 2})");
 
+        ScriptedPrompts prompts;
+        prompts.answer = [](const QString&) { return QMessageBox::Save; };
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({path.toStdString()});
         auto* treeView = window.findChild<QTreeView*>();
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
@@ -1999,14 +2005,6 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Delete);
         QCOMPARE(treeView->model()->rowCount(), 1);
 
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, []() {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                box->button(QMessageBox::Save)->click();
-            }
-        });
-        answer.start(20);
-
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QTRY_COMPARE_WITH_TIMEOUT(statusLabel->text(), QString("Saved; reload skipped"), 5000);
         QCOMPARE(treeView->model()->rowCount(), 1);
@@ -2023,25 +2021,21 @@ private slots:
         const QString path = dir.path() + "/a.json";
         writeFile(path, R"({"x": 1, "y": 2})");
 
+        // Reload asks first; Discard keeps the edit on screen while it loads.
+        ScriptedPrompts prompts;
+        prompts.answer = [](const QString&) { return QMessageBox::Discard; };
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({path.toStdString()});
         auto* treeView = window.findChild<QTreeView*>();
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
         treeView->setCurrentIndex(treeView->model()->index(0, 0));
         QTest::keyClick(&window, Qt::Key_Delete);  // modified: {"y": 2}
 
-        // Reload asks first; Discard keeps the edit on screen while it loads.
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, []() {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                box->button(QMessageBox::Discard)->click();
-            }
-        });
-        answer.start(20);
         menuAction(window, "Re&load from Disk")->trigger();
-        answer.stop();
         menuAction(window, "&Save")->trigger();
+        QCOMPARE(prompts.asked, QStringList{"Unsaved Changes"});
 
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QCOMPARE(statusLabel->text(), QString("Saved; reload skipped"));
@@ -2059,8 +2053,10 @@ private slots:
         writeFile(pathA, R"({"x": 1, "y": 2})");
         writeFile(pathB, R"({"z": 3})");
 
+        ScriptedPrompts prompts;  // Cancel: keep the edits
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({pathA.toStdString()});
         auto* treeView = window.findChild<QTreeView*>();
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
@@ -2071,16 +2067,7 @@ private slots:
         treeView->setCurrentIndex(treeView->model()->index(0, 0));
         QTest::keyClick(&window, Qt::Key_Delete);
 
-        bool prompted = false;
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, [&prompted]() {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                prompted = true;
-                box->button(QMessageBox::Cancel)->click();
-            }
-        });
-        answer.start(20);
-        QTRY_VERIFY_WITH_TIMEOUT(prompted, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(prompts.asked, QStringList{"Unsaved Changes"}, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(reload->isEnabled(), 5000);
         QCOMPARE(treeView->model()->rowCount(), 1);
         QVERIFY(window.windowTitle().startsWith("*"));
@@ -2093,8 +2080,10 @@ private slots:
         const QString path = dir.path() + "/a.json";
         writeFile(path, R"({"x": 1, "y": 2})");
 
+        ScriptedPrompts prompts;
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({path.toStdString()});
         auto* treeView = window.findChild<QTreeView*>();
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
@@ -2103,17 +2092,11 @@ private slots:
         // into a directory that refuses the save's temporary file.
         writeFile(path, R"({"x": 1, "y": 2, "z": 3})");
         menuAction(window, "Re&load from Disk")->trigger();
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, []() {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                box->button(QMessageBox::Ok)->click();  // the save error
-            }
-        });
-        answer.start(20);
         QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
         menuAction(window, "&Save")->trigger();
         QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                               QFileDevice::ExeOwner);
+        QCOMPARE(prompts.asked, QStringList{"Save Error"});
 
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QVERIFY(statusLabel->text() != QString("Saved; reload skipped"));
@@ -2130,8 +2113,15 @@ private slots:
         writeFile(pathA, R"({"x": 1, "y": 2})");
         writeFile(pathB, R"({"z": 3})");
 
+        // The load's prompt saves the union; Save As picks A, replacing it.
+        ScriptedPrompts prompts;
+        prompts.answer = [](const QString& title) {
+            return title == "Overwrite File" ? QMessageBox::Yes : QMessageBox::Save;
+        };
+        prompts.saveAsPath = pathA;
         MainWindow window;
         window.show();
+        prompts.install(window);
         window.openFromCliArgs({pathA.toStdString(), pathB.toStdString()});
         auto* statusLabel = window.findChild<QLabel*>("statusLabel");
         QTRY_VERIFY_WITH_TIMEOUT(statusLabel->text().contains("Union (2 files)"), 5000);
@@ -2145,30 +2135,9 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Delete);
         const int unionRows = treeView->model()->rowCount();
 
-        QTimer answer;
-        connect(&answer, &QTimer::timeout, [&pathA]() {
-            QWidget* modal = QApplication::activeModalWidget();
-            if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
-                auto* nameEdit = dialog->findChild<QLineEdit*>("fileNameEdit");
-                auto* buttons = dialog->findChild<QDialogButtonBox*>();
-                if (nameEdit && buttons) {
-                    nameEdit->setText(pathA);
-                    // Queued: the dialog's own "replace?" box then opens
-                    // outside this slot, where this timer can answer it.
-                    QTimer::singleShot(0, buttons->button(QDialogButtonBox::Save),
-                                       &QAbstractButton::click);
-                }
-            } else if (auto* box = qobject_cast<QMessageBox*>(modal)) {
-                if (auto* save = box->button(QMessageBox::Save)) {
-                    save->click();
-                } else if (auto* yes = box->button(QMessageBox::Yes)) {
-                    yes->click();  // replace a.json
-                }
-            }
-        });
-        answer.start(20);
-
         QTRY_VERIFY_WITH_TIMEOUT(reload->isEnabled(), 5000);
+        QCOMPARE(prompts.asked,
+                 (QStringList{"Unsaved Changes", "Save As", "Overwrite File"}));
         QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), unionRows, 5000);
         QVERIFY(!window.windowTitle().startsWith("*"));
         QVERIFY(!statusLabel->text().contains("Union"));
