@@ -705,7 +705,13 @@ void applyBase(const JsonPathStep& step, const WorkItem& item, NodeView document
         }
         case JsonPathStep::Kind::Index:
         case JsonPathStep::Kind::RecursiveIndex: {
-            if (item.node.type() != NodeType::Array || step.index >= count) {
+            // Non-standard: a direct [n] also selects an object's nth member.
+            // That is how Copy Path names a later duplicate key, which no key
+            // can name. Recursive descent keeps the standard meaning.
+            const bool positional =
+                item.node.type() == NodeType::Array ||
+                (step.kind == JsonPathStep::Kind::Index && item.node.type() == NodeType::Object);
+            if (!positional || step.index >= count) {
                 return;
             }
             WorkItem next{item.node.child(step.index), item.path};

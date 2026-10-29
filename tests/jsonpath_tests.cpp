@@ -259,9 +259,24 @@ TEST_F(JsonPathFixtureTest, ArrayIndices) {
     EXPECT_EQ(queryPaths("$.list[0]"), (Paths{{2, 0}}));
     EXPECT_EQ(queryPaths("$.list[0][1]"), (Paths{{2, 0, 1}}));
     EXPECT_EQ(queryPaths("$.store.book[1].title"), (Paths{{0, 0, 1, 1}}));
-    // Out-of-range index and index applied to an object both match nothing.
+    // Out-of-range index matches nothing.
     EXPECT_EQ(queryPaths("$.list[7]"), Paths{});
-    EXPECT_EQ(queryPaths("$[0]"), Paths{});
+    // Non-standard: [n] on an object selects its nth member, as Copy Path
+    // writes a later duplicate key ({"a": 1, "a": 2} -> $[1]); recursive
+    // descent ($..[0]) still selects array elements only.
+    EXPECT_EQ(queryPaths("$[0]"), (Paths{{0}}));
+    EXPECT_EQ(queryPaths("$.store[2]"), (Paths{{0, 2}}));
+    EXPECT_EQ(queryPaths("$[3]"), Paths{});
+}
+
+// Copy Path names a later duplicate key by position; the same text must
+// find it in a JSONPath search, as it does in Go to Path.
+TEST(JsonPath, LaterDuplicateKeyIsFoundByItsCopiedPath) {
+    auto parsed = parseOracle(R"({"outer": {"inner": 1, "inner": 2}})");
+    ASSERT_NE(parsed.root, nullptr);
+    auto result = queryJsonPath(NodeView(*parsed.root), "$.outer[1]");
+    ASSERT_FALSE(result.error.has_value());
+    EXPECT_EQ(sortedPaths(result), (Paths{{0, 1}}));
 }
 
 TEST_F(JsonPathFixtureTest, Wildcards) {

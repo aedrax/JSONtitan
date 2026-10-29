@@ -102,7 +102,7 @@ Everything in the core is exercised by property-based tests; the shell is tested
 ## Limits worth knowing
 
 - Peak memory **during** parsing is a multiple of file size (input + simdjson DOM + arena coexist briefly). Steady-state drops to the arena alone once loading finishes.
-- JSONPath covers names, indices, wildcards, `..` and filters; slices (`[1:5]`), unions (`[0,2]`) and function extensions (`length()`) aren't supported, and filter paths take names and indices only.
+- JSONPath covers names, indices, wildcards, `..` and filters; slices (`[1:5]`), unions (`[0,2]`) and function extensions (`length()`) aren't supported, and filter paths take names and indices only. One extension: `[n]` also selects an object's nth member, which is how Copy Path names a later duplicate key (`$.outer[1]`).
 - Find and Replace and the structural edits work on an in-memory copy of the tree, so the first edit of a multi-gigabyte arena-backed document takes a moment.
 - A decimal beyond a double's range (about 1.8e308, such as `1e400`) can't be loaded; the file fails with an error naming the problem.
 - Decimal numbers are kept as values, not as the text they were written in: saving writes the shortest form (`1.0` becomes `1`, `1E+2` becomes `100`), so even an unedited file can change when saved. Integers keep every digit, at any size.
