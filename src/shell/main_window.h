@@ -212,7 +212,8 @@ private:
     QTimer* m_fileChangeDebounce = nullptr;
     bool m_suppressWatchNotifications = false;
 
-    // The file the running single-file load will install as.
+    // The file the running single-file load will install as; empty when no
+    // single-file load is running.
     QString m_pendingLoadPath;
 
     // Recent files

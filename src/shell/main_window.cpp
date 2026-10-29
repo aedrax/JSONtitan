@@ -23,6 +23,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include "core/jsonpath.h"
@@ -173,6 +174,7 @@ MainWindow::MainWindow(QWidget* parent)
     // load-progress UI (progress bar + cancel button).
     connect(m_unionController, &UnionController::loadStarted,
             this, [this]() {
+                m_pendingLoadPath.clear();  // supersedes a single-file load
                 showLoadProgress();
                 m_statusLabel->setText(tr("Parsing union..."));
             });
@@ -212,10 +214,21 @@ MainWindow::MainWindow(QWidget* parent)
         if (!m_session->modified()) {
             rememberCurrentFile();
         }
+        // A save to the file still loading makes that load's result older
+        // than what is on screen (and now on disk): drop the load.
+        if (!m_pendingLoadPath.isEmpty() && !m_session->modified() &&
+            m_session->filePath() == m_pendingLoadPath) {
+            m_fileLoader->cancelParse();
+            m_pendingLoadPath.clear();
+            hideLoadProgress();
+            m_statusLabel->setText(tr("Saved; reload skipped"));
+        }
     });
-    // Union documents have no single backing file to watch.
-    connect(m_unionController, &UnionController::loadStarted,
-            this, &MainWindow::stopWatchingFile);
+    // The union controller emits statusUpdated whenever it settles the
+    // document (union installed, load discarded, file removed): watch
+    // whatever is on screen now. Unions have no single file to watch.
+    connect(m_unionController, &UnionController::statusUpdated,
+            this, &MainWindow::startWatchingCurrentFile);
 
     // Detail panel rendering for the current tree selection
     m_detailPresenter = new DetailPanelPresenter(
@@ -905,6 +918,7 @@ void MainWindow::cancelActiveLoad() {
     // onArenaParseComplete, and cancelParse() invalidates the request id so
     // any in-flight result is dropped instead of forwarded.
     m_fileLoader->cancelParse();
+    m_pendingLoadPath.clear();
     hideLoadProgress();
     m_statusLabel->setText(tr("Load cancelled"));
 }
@@ -1003,6 +1017,7 @@ void MainWindow::onNewDocument() {
     }
     // Drop any in-flight load so its result cannot replace the new document.
     m_fileLoader->cancelParse();
+    m_pendingLoadPath.clear();
     hideLoadProgress();
     stopWatchingFile();
 
@@ -1088,6 +1103,8 @@ void MainWindow::onProgressUpdated(int percentage) {
 }
 
 void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaParseResult> result) {
+    // Taken now: the prompt below can save, and a save consults it.
+    const QString loadPath = std::exchange(m_pendingLoadPath, QString());
     hideLoadProgress();
 
     // The document stays editable while a load runs; installing would
@@ -1100,15 +1117,14 @@ void MainWindow::onArenaParseComplete(std::shared_ptr<jsontitan::core::ArenaPars
         // A save during the load (or from the prompt just now) wrote the
         // document on screen to the very file being loaded. The result was
         // read before that save, so it is older than what is on screen.
-        if (!m_session->modified() && m_pendingLoadPath == m_session->filePath()) {
+        if (!m_session->modified() && loadPath == m_session->filePath()) {
             m_statusLabel->setText(tr("Saved; reload skipped"));
             return;
         }
     }
 
     m_searchController->invalidate();
-    m_session->setArenaRoot(result, m_pendingLoadPath,
-                            QFileInfo(m_pendingLoadPath).fileName());
+    m_session->setArenaRoot(result, loadPath, QFileInfo(loadPath).fileName());
     m_filterProxy->clearFilter();
 
     // Show tree, hide welcome
@@ -1168,7 +1184,8 @@ void MainWindow::onParseError(QString errorMessage) {
 
     QMessageBox::critical(this, tr("Parse Error"),
                           tr("Failed to parse %1:\n\n%2")
-                              .arg(QFileInfo(m_pendingLoadPath).fileName(),
+                              .arg(QFileInfo(std::exchange(m_pendingLoadPath, QString()))
+                                       .fileName(),
                                    errorMessage));
 }
 

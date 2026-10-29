@@ -689,3 +689,47 @@ TEST(EditControllerStructure, ReplaceAllIsOneUndoStep) {
               R"({"greeting":"hello world","nested":{"hello_key":"hello"}})");
     EXPECT_FALSE(h.session.canUndo());
 }
+
+// Regression: a queued edit install that ran after another document had
+// installed put the old document back over the new one.
+TEST(EditControllerEditing, QueuedEditIsDroppedWhenTheDocumentIsReplaced) {
+    Harness h;
+    h.session.setJsonRoot(makeJsonFixture(), QStringLiteral("/tmp/t.json"),
+                          QStringLiteral("t.json"), false);
+    fetchAll(h.model);
+    QModelIndex a = jsontitan::shell::indexForPath(h.model, {std::string("a")});
+    ASSERT_TRUE(a.isValid());
+    EXPECT_TRUE(h.edit->applyEdit(a, QStringLiteral("2")));  // queued
+
+    auto other = JsonNode::makeObject("", {JsonNode::makeNull("other")});
+    h.session.setJsonRoot(other, QStringLiteral("/tmp/o.json"),
+                          QStringLiteral("o.json"), false);
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), other.get());
+    EXPECT_FALSE(h.session.canUndo());
+}
+
+// Regression: undo was queued, so two undos handled in one event-loop turn
+// dropped the second install after its entry had already left the stack.
+TEST(EditControllerEditing, TwoUndosInOneTurnBothApply) {
+    Harness h;
+    auto original = makeJsonFixture();
+    h.session.setJsonRoot(original, QStringLiteral("/tmp/t.json"),
+                          QStringLiteral("t.json"), false);
+    fetchAll(h.model);
+    for (const char* value : {"2", "3"}) {
+        QModelIndex a = jsontitan::shell::indexForPath(h.model, {std::string("a")});
+        ASSERT_TRUE(h.edit->applyEdit(a, QString::fromLatin1(value)));
+        pumpEvents();
+    }
+
+    h.edit->undo();
+    h.edit->undo();
+    pumpEvents();
+    EXPECT_EQ(h.session.currentRoot().get(), original.get());
+    EXPECT_FALSE(h.session.canUndo());
+
+    h.edit->redo();
+    h.edit->redo();
+    EXPECT_EQ(findNode(h.session.currentRoot(), {std::string("a")})->value, "3");
+}

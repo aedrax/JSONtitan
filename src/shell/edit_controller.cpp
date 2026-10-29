@@ -825,12 +825,15 @@ void EditController::sortSelectedKeys() {
     warnIfError(tr("Sort Keys"), applySortKeys(currentSelectionPath()));
 }
 
+// Undo and redo install at once: the stack has already moved, so a queued
+// install that got dropped (another install landing first) would lose the
+// step. Only inline edits must queue (they run inside the editor's commit).
 void EditController::undo() {
     auto restored = m_session->undo(currentSelectionPath());
     if (!restored) {
         return;
     }
-    queueInstall(restored->root, restored->selection, std::nullopt);
+    installRoot(restored->root, restored->selection);
 }
 
 void EditController::redo() {
@@ -838,7 +841,7 @@ void EditController::redo() {
     if (!restored) {
         return;
     }
-    queueInstall(restored->root, restored->selection, std::nullopt);
+    installRoot(restored->root, restored->selection);
 }
 
 // --- Task 7.2: Unsaved-changes prompt ---

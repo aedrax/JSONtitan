@@ -2016,6 +2016,76 @@ private slots:
         QVERIFY(!saved.readAll().contains("\"x\""));
     }
 
+    // A save (no edit) while the same file loads: the load result predates
+    // the save and must be dropped, not installed as a clean document.
+    void testSaveWhileReloadingDropsTheReload() {
+        QTemporaryDir dir;
+        const QString path = dir.path() + "/a.json";
+        writeFile(path, R"({"x": 1, "y": 2})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({path.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(&window, Qt::Key_Delete);  // modified: {"y": 2}
+
+        // Reload asks first; Discard keeps the edit on screen while it loads.
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, []() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                box->button(QMessageBox::Discard)->click();
+            }
+        });
+        answer.start(20);
+        menuAction(window, "Re&load from Disk")->trigger();
+        answer.stop();
+        menuAction(window, "&Save")->trigger();
+
+        auto* statusLabel = window.findChild<QLabel*>("statusLabel");
+        QCOMPARE(statusLabel->text(), QString("Saved; reload skipped"));
+        QTest::qWait(300);  // a stale result would install now
+        QCOMPARE(treeView->model()->rowCount(), 1);
+        QVERIFY(!window.windowTitle().startsWith("*"));
+    }
+
+    // A union load whose result is discarded leaves the single file on
+    // screen still watched (Reload enabled), and edits made meanwhile intact.
+    void testDiscardedUnionLoadKeepsWatchingTheFile() {
+        QTemporaryDir dir;
+        const QString pathA = dir.path() + "/a.json";
+        const QString pathB = dir.path() + "/b.json";
+        writeFile(pathA, R"({"x": 1, "y": 2})");
+        writeFile(pathB, R"({"z": 3})");
+
+        MainWindow window;
+        window.show();
+        window.openFromCliArgs({pathA.toStdString()});
+        auto* treeView = window.findChild<QTreeView*>();
+        QTRY_COMPARE_WITH_TIMEOUT(treeView->model()->rowCount(), 2, 5000);
+        QAction* reload = menuAction(window, "Re&load from Disk");
+        QVERIFY(reload->isEnabled());
+
+        window.openFromCliArgs({pathA.toStdString(), pathB.toStdString()});
+        treeView->setCurrentIndex(treeView->model()->index(0, 0));
+        QTest::keyClick(&window, Qt::Key_Delete);
+
+        bool prompted = false;
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, [&prompted]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                prompted = true;
+                box->button(QMessageBox::Cancel)->click();
+            }
+        });
+        answer.start(20);
+        QTRY_VERIFY_WITH_TIMEOUT(prompted, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(reload->isEnabled(), 5000);
+        QCOMPARE(treeView->model()->rowCount(), 1);
+        QVERIFY(window.windowTitle().startsWith("*"));
+    }
+
 private:
     static void writeFile(const QString& path, const QByteArray& content) {
         QFile file(path);
