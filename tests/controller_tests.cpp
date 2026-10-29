@@ -163,6 +163,38 @@ TEST(ModelPathsTest, IndexForPathResolvesEveryNode) {
     }
 }
 
+// Regression: indexForPath fetched every row of each level it passed, so
+// one edit in a multi-million-row array inserted every row into the view.
+TEST(ModelPathsTest, IndexForPathFetchesOnlyWhatThePathNeeds) {
+    std::vector<std::shared_ptr<const JsonNode>> elements;
+    std::vector<std::shared_ptr<const JsonNode>> members;
+    for (int i = 0; i < 1000; ++i) {
+        elements.push_back(JsonNode::makeNumber("", std::to_string(i)));
+        members.push_back(JsonNode::makeNumber("k" + std::to_string(i), "0"));
+    }
+    std::vector<std::shared_ptr<const JsonNode>> rootChildren;
+    rootChildren.push_back(JsonNode::makeArray("list", std::move(elements)));
+    rootChildren.push_back(JsonNode::makeObject("map", std::move(members)));
+    auto root = JsonNode::makeObject("", std::move(rootChildren));
+
+    TreeModel model;
+    model.setRootNode(root);
+
+    auto byIndex = jsontitan::shell::indexForPath(model, {std::string("list"), std::size_t{150}});
+    ASSERT_TRUE(byIndex.isValid());
+    EXPECT_EQ(model.jsonNodeForIndex(byIndex)->value, "150");
+    EXPECT_EQ(model.rowCount(byIndex.parent()), 200);  // two batches of 100
+
+    auto byKey = jsontitan::shell::indexForPath(model, {std::string("map"), std::string("k5")});
+    ASSERT_TRUE(byKey.isValid());
+    EXPECT_EQ(model.rowCount(byKey.parent()), 100);  // found in the first batch
+
+    // A key that does not exist still searches every batch.
+    EXPECT_FALSE(jsontitan::shell::indexForPath(model, {std::string("map"), std::string("nope")})
+                     .isValid());
+    EXPECT_EQ(model.rowCount(byKey.parent()), 1000);
+}
+
 // Round-trip property as it actually holds today: the walk drops the
 // top-level segment (see note above), so
 //   nodePathForIndex(indexForPath(path)) == path minus its first segment.

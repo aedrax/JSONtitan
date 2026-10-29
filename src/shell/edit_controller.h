@@ -136,6 +136,9 @@ private:
     // anything (the root for an empty path); std::nullopt when absent.
     std::optional<jsontitan::core::NodeView>
     viewAt(const jsontitan::core::NodePath& path) const;
+    // View of the node at a source-model index; std::nullopt when invalid.
+    std::optional<jsontitan::core::NodeView>
+    viewForIndex(const QModelIndex& sourceIndex) const;
     // Clipboard text parsed as a value, or nullptr after warning the user.
     std::shared_ptr<const jsontitan::core::JsonNode> clipboardValue();
     void warnIfError(const QString& title,

@@ -46,36 +46,35 @@ auto nodePathForIndex(const TreeModel& model, const QModelIndex& sourceIndex)
 
 auto indexForPath(TreeModel& model, const jsontitan::core::NodePath& path)
     -> QModelIndex {
+    // The model may have just been reset, so nothing is fetched yet. Rows
+    // are fetched in batches only as far as the segment needs: up to the
+    // index, or until the key is found. (Fetching whole levels made every
+    // edit in a multi-million-row array insert every row into the view.)
     QModelIndex current;  // starts as invalid (root)
-    for (std::size_t i = 0; i < path.size(); ++i) {
-        // The model may have just been reset, so nothing is fetched yet:
-        // rows must be fetched BEFORE the by-key scan below, or rowCount is
-        // 0, the key is never found, and the walk silently stops at the
-        // wrong level.
-        while (model.canFetchMore(current)) {
-            model.fetchMore(current);
-        }
-
+    for (const auto& segment : path) {
         int row = -1;
-        if (auto* idx = std::get_if<std::size_t>(&path[i])) {
-            row = static_cast<int>(*idx);
+        if (const auto* index = std::get_if<std::size_t>(&segment)) {
+            row = static_cast<int>(*index);
+            while (model.rowCount(current) <= row && model.canFetchMore(current)) {
+                model.fetchMore(current);
+            }
         } else {
-            // Find the row by key
-            auto* keyStr = std::get_if<std::string>(&path[i]);
-            int rowCount = model.rowCount(current);
-            for (int r = 0; r < rowCount; ++r) {
-                QModelIndex childIdx = model.index(r, 0, current);
-                if (auto* jn = model.jsonNodeForIndex(childIdx)) {
-                    if (jn->key == *keyStr) {
-                        row = r;
+            const auto& key = std::get<std::string>(segment);
+            for (int r = 0; row < 0;) {
+                if (r == model.rowCount(current)) {
+                    if (!model.canFetchMore(current)) {
                         break;
                     }
-                } else if (auto* an = model.arenaNodeForIndex(childIdx)) {
-                    if (an->keyView() == *keyStr) {
-                        row = r;
-                        break;
-                    }
+                    model.fetchMore(current);
+                    continue;
                 }
+                const QModelIndex childIdx = model.index(r, 0, current);
+                if (const auto* jn = model.jsonNodeForIndex(childIdx)) {
+                    row = jn->key == key ? r : -1;
+                } else if (const auto* an = model.arenaNodeForIndex(childIdx)) {
+                    row = an->keyView() == key ? r : -1;
+                }
+                ++r;
             }
         }
         if (row < 0) {

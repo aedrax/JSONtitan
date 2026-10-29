@@ -66,23 +66,31 @@ auto jsonPathText(const jsontitan::core::NodePath& path) -> QString {
     return text;
 }
 
-auto valueClipboardText(jsontitan::core::NodeView node) -> QString {
+auto valueClipboardText(jsontitan::core::NodeView node, std::size_t maxBytes)
+    -> std::optional<QString> {
     using jsontitan::core::NodeType;
     switch (node.type()) {
     case NodeType::Object:
     case NodeType::Array: {
-        // Compact JSON of the whole subtree, streamed into a string.
+        // Compact JSON of the whole subtree, streamed into a string that
+        // stops growing at the limit.
         std::string out;
         jsontitan::core::JsonExportOptions opts;
         opts.mode = jsontitan::core::IndentMode::Compact;
         opts.trailingNewline = false;
-        jsontitan::core::exportJsonStream(
+        const auto result = jsontitan::core::exportJsonStream(
             node,
-            [&out](std::string_view chunk) {
+            [&out, maxBytes](std::string_view chunk) {
+                if (out.size() + chunk.size() > maxBytes) {
+                    return false;
+                }
                 out.append(chunk);
                 return true;
             },
             opts);
+        if (!result.ok) {
+            return std::nullopt;
+        }
         return QString::fromUtf8(out.data(),
                                  static_cast<qsizetype>(out.size()));
     }
@@ -90,6 +98,9 @@ auto valueClipboardText(jsontitan::core::NodeView node) -> QString {
         return QStringLiteral("null");
     default: {
         std::string_view value = node.value();
+        if (value.size() > maxBytes) {
+            return std::nullopt;
+        }
         return QString::fromUtf8(value.data(),
                                  static_cast<qsizetype>(value.size()));
     }

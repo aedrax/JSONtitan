@@ -1282,8 +1282,16 @@ void MainWindow::onCopyValue() {
     if (!node) {
         return;
     }
-    QGuiApplication::clipboard()->setText(
-        jsontitan::shell::valueClipboardText(*node));
+    const auto text = jsontitan::shell::valueClipboardText(*node);
+    if (!text) {
+        QMessageBox::information(
+            this, tr("Copy Value"),
+            tr("This value is larger than %1 MB as text, which is too big for "
+               "the clipboard. Export it instead.")
+                .arg(jsontitan::shell::kMaxClipboardBytes / (1024 * 1024)));
+        return;
+    }
+    QGuiApplication::clipboard()->setText(*text);
     statusBar()->showMessage(tr("Value copied"), 2000);
 }
 

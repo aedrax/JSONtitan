@@ -2790,16 +2790,16 @@ private slots:
         namespace sh = jsontitan::shell;
 
         auto str = JsonNode::makeString("k", "hello");
-        QCOMPARE(sh::valueClipboardText(*str), QString("hello"));
+        QCOMPARE(sh::valueClipboardText(*str).value(), QString("hello"));
 
         auto num = JsonNode::makeNumber("k", "-3.5");
-        QCOMPARE(sh::valueClipboardText(*num), QString("-3.5"));
+        QCOMPARE(sh::valueClipboardText(*num).value(), QString("-3.5"));
 
         auto boolean = JsonNode::makeBool("k", true);
-        QCOMPARE(sh::valueClipboardText(*boolean), QString("true"));
+        QCOMPARE(sh::valueClipboardText(*boolean).value(), QString("true"));
 
         auto null = JsonNode::makeNull("k");
-        QCOMPARE(sh::valueClipboardText(*null), QString("null"));
+        QCOMPARE(sh::valueClipboardText(*null).value(), QString("null"));
 
         // Containers: compact JSON of the subtree, no trailing newline.
         auto container = JsonNode::makeObject("", {
@@ -2809,8 +2809,14 @@ private slots:
                 JsonNode::makeNull("")
             })
         });
-        QCOMPARE(sh::valueClipboardText(*container),
+        QCOMPARE(sh::valueClipboardText(*container).value(),
                  QString("{\"a\":[1,true,null]}"));
+
+        // Over the limit: nothing is built (a multi-GB copy ran out of memory
+        // on the UI thread).
+        QVERIFY(!sh::valueClipboardText(*container, 18).has_value());
+        QVERIFY(sh::valueClipboardText(*container, 19).has_value());
+        QVERIFY(!sh::valueClipboardText(*str, 4).has_value());
     }
 
     void testKeyClipboardText() {

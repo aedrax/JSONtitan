@@ -25,35 +25,6 @@
 
 namespace {
 
-// Resolve `path` over a JsonNode tree; nullptr when it does not resolve.
-const jsontitan::core::JsonNode* resolvePath(
-    const jsontitan::core::JsonNode* node,
-    const jsontitan::core::NodePath& path) {
-    using jsontitan::core::NodeType;
-    for (const auto& segment : path) {
-        if (!node) {
-            return nullptr;
-        }
-        if (const auto* keyPtr = std::get_if<std::string>(&segment)) {
-            const jsontitan::core::JsonNode* found = nullptr;
-            for (const auto& child : node->children) {
-                if (child->key == *keyPtr) {
-                    found = child.get();
-                    break;
-                }
-            }
-            node = found;
-        } else {
-            auto idx = std::get<std::size_t>(segment);
-            if (node->type != NodeType::Array || idx >= node->children.size()) {
-                return nullptr;
-            }
-            node = node->children[idx].get();
-        }
-    }
-    return node;
-}
-
 using jsontitan::core::NodePath;
 using jsontitan::core::NodeType;
 using jsontitan::core::NodeView;
@@ -64,20 +35,6 @@ bool isContainer(NodeType type) {
 
 // Position of the child `segment` names within `parent` (index segments are
 // positions already; key segments are looked up). SIZE_MAX when absent.
-std::size_t positionOf(const jsontitan::core::JsonNode& parent,
-                       const jsontitan::core::PathSegment& segment) {
-    if (const auto* index = std::get_if<std::size_t>(&segment)) {
-        return *index;
-    }
-    const auto& key = std::get<std::string>(segment);
-    for (std::size_t i = 0; i < parent.children.size(); ++i) {
-        if (parent.children[i]->key == key) {
-            return i;
-        }
-    }
-    return SIZE_MAX;
-}
-
 std::size_t positionOf(NodeView parent, const jsontitan::core::PathSegment& segment) {
     if (const auto* index = std::get_if<std::size_t>(&segment)) {
         return *index;
@@ -255,8 +212,9 @@ void EditController::deleteSelectedNode() {
         }
     }
 
-    // Ensure parent's children are fetched
-    while (m_treeModel->canFetchMore(newParentIndex)) {
+    // Fetch just far enough to see the row now at the deleted position.
+    while (m_treeModel->rowCount(newParentIndex) <= deletedRow &&
+           m_treeModel->canFetchMore(newParentIndex)) {
         m_treeModel->fetchMore(newParentIndex);
     }
 
@@ -373,23 +331,24 @@ bool EditController::applyEdit(const QModelIndex& sourceIndex,
         return false;
     }
 
-    auto preRoot = editableRootSnapshot();
-    if (!preRoot) {
-        return false;
-    }
-
     auto value = jsontitan::core::classifyScalarInput(newText.toStdString());
 
     // No-op commit (delegates commit on focus-out even when unchanged):
-    // accept it without mutating or polluting the undo history.
-    if (const auto* target = resolvePath(preRoot.get(), path)) {
+    // accept it without mutating or polluting the undo history. Checked
+    // before the snapshot, which deep-copies an arena-backed document.
+    if (const auto target = viewForIndex(sourceIndex)) {
         const bool sameValue =
             value.type == jsontitan::core::NodeType::Null
                 ? true  // Null carries no value text
-                : target->value == value.text;
-        if (target->type == value.type && sameValue) {
+                : target->value() == value.text;
+        if (target->type() == value.type && sameValue) {
             return true;
         }
+    }
+
+    auto preRoot = editableRootSnapshot();
+    if (!preRoot) {
+        return false;
     }
 
     auto result = jsontitan::core::editValue(preRoot, path, value);
@@ -657,7 +616,10 @@ std::optional<NodeView> EditController::viewAt(const NodePath& path) const {
     if (path.empty()) {
         return m_session->rootView();
     }
-    QModelIndex sourceIndex = jsontitan::shell::indexForPath(*m_treeModel, path);
+    return viewForIndex(jsontitan::shell::indexForPath(*m_treeModel, path));
+}
+
+std::optional<NodeView> EditController::viewForIndex(const QModelIndex& sourceIndex) const {
     if (!sourceIndex.isValid()) {
         return std::nullopt;
     }
