@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/json_node.h"
 #include "core/undo_stack.h"
@@ -144,4 +145,30 @@ TEST(UndoStack, ClearDropsAllHistory) {
     EXPECT_FALSE(stack.canRedo());
     EXPECT_FALSE(stack.undo(entry(v3)).has_value());
     EXPECT_FALSE(stack.redo(entry(v3)).has_value());
+}
+
+// Regression: entries were bounded by count only, but each one keeps its
+// own copy of the child arrays on the edited path; 50 edits under a
+// 10M-element array held gigabytes.
+TEST(UndoStack, ByteBudgetEvictsOldestButKeepsTheLatest) {
+    std::vector<std::shared_ptr<const JsonNode>> elements(1000, makeLeaf("x"));
+    auto wide = JsonNode::makeArray("", std::move(elements));
+    const NodePath intoWide = {std::size_t{5}};
+    const std::size_t entryBytes = UndoStack::estimatedBytes(entry(wide, intoWide));
+    EXPECT_EQ(entryBytes, 1000 * sizeof(std::shared_ptr<const JsonNode>));
+
+    UndoStack stack(50, 2 * entryBytes);
+    for (int i = 0; i < 5; ++i) {
+        stack.push(entry(wide, intoWide));
+    }
+    int undos = 0;
+    while (stack.undo(entry(wide))) {
+        ++undos;
+    }
+    EXPECT_EQ(undos, 2);
+
+    // One entry over the whole budget still stays undoable.
+    UndoStack tiny(50, 1);
+    tiny.push(entry(wide, intoWide));
+    EXPECT_TRUE(tiny.canUndo());
 }

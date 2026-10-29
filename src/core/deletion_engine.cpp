@@ -2,112 +2,85 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
+#include <set>
+#include <span>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace jsontitan::core {
 
-auto deleteNode(std::shared_ptr<const JsonNode> root, const NodePath& targetPath)
+namespace {
+
+// `root` rebuilt with the children `segments` name removed from the node at
+// `parentPath`, in one copy of that node and its ancestors. Segments that do
+// not resolve are ignored; `root` itself is returned when nothing resolves.
+// A key removes only the first member with it: paths resolve a duplicated
+// key to its first occurrence everywhere else, so deleting must too.
+auto removeChildren(const std::shared_ptr<const JsonNode>& root,
+                    const NodePath& parentPath,
+                    std::span<const PathSegment> segments)
     -> std::shared_ptr<const JsonNode> {
-    // Empty path = root node itself -> return nullptr
-    if (targetPath.empty()) {
-        return nullptr;
-    }
-
-    if (!root) {
-        return root;
-    }
-
-    // Walk the path, collecting ancestor nodes for path-copying.
     // ancestors[i] is the node at depth i (ancestors[0] = root).
-    std::vector<std::shared_ptr<const JsonNode>> ancestors;
-    ancestors.reserve(targetPath.size());
-    ancestors.push_back(root);
-
-    for (std::size_t i = 0; i + 1 < targetPath.size(); ++i) {
+    std::vector<std::shared_ptr<const JsonNode>> ancestors{root};
+    ancestors.reserve(parentPath.size() + 1);
+    for (const auto& segment : parentPath) {
         const auto& current = ancestors.back();
-        const auto& segment = targetPath[i];
-
-        // Find the child matching this segment
-        std::shared_ptr<const JsonNode> foundChild;
-        if (auto* keyPtr = std::get_if<std::string>(&segment)) {
-            // Object child: match by key
-            if (current->type != NodeType::Object) {
-                return root; // invalid path
-            }
-            for (const auto& child : current->children) {
-                if (child->key == *keyPtr) {
-                    foundChild = child;
-                    break;
+        std::shared_ptr<const JsonNode> found;
+        if (const auto* key = std::get_if<std::string>(&segment)) {
+            if (current->type == NodeType::Object) {
+                auto it = std::ranges::find_if(current->children, [key](const auto& child) {
+                    return child->key == *key;
+                });
+                if (it != current->children.end()) {
+                    found = *it;
                 }
             }
-        } else {
-            // Array child: match by index
-            auto idx = std::get<std::size_t>(segment);
-            if (current->type != NodeType::Array) {
-                return root; // invalid path
-            }
-            if (idx >= current->children.size()) {
-                return root; // invalid path
-            }
-            foundChild = current->children[idx];
-        }
-
-        if (!foundChild) {
-            return root; // invalid path
-        }
-
-        ancestors.push_back(foundChild);
-    }
-
-    // ancestors.back() is the parent of the target node.
-    // The last segment tells us which child to remove.
-    const auto& parent = ancestors.back();
-    const auto& lastSegment = targetPath.back();
-
-    // Build new children for the parent with the target removed
-    std::vector<std::shared_ptr<const JsonNode>> newChildren;
-
-    if (auto* keyPtr = std::get_if<std::string>(&lastSegment)) {
-        // Object parent: remove child with matching key
-        if (parent->type != NodeType::Object) {
-            return root; // invalid path
-        }
-        // Only the first member with the key: paths resolve a duplicated
-        // key to its first occurrence everywhere else, so deleting must too.
-        bool found = false;
-        for (const auto& child : parent->children) {
-            if (!found && child->key == *keyPtr) {
-                found = true;
-            } else {
-                newChildren.push_back(child); // structural sharing
-            }
+        } else if (const auto idx = std::get<std::size_t>(segment);
+                   current->type == NodeType::Array && idx < current->children.size()) {
+            found = current->children[idx];
         }
         if (!found) {
-            return root; // invalid path - key doesn't exist
+            return root;  // invalid path
         }
-    } else {
-        // Array parent: remove child at index
-        auto idx = std::get<std::size_t>(lastSegment);
-        if (parent->type != NodeType::Array) {
-            return root; // invalid path
-        }
-        if (idx >= parent->children.size()) {
-            return root; // invalid path - index out of bounds
-        }
-        for (std::size_t i = 0; i < parent->children.size(); ++i) {
-            if (i != idx) {
-                newChildren.push_back(parent->children[i]); // structural sharing
+        ancestors.push_back(std::move(found));
+    }
+
+    const auto& parent = ancestors.back();
+    std::unordered_set<std::size_t> indices;
+    std::unordered_map<std::string_view, std::size_t> keys;  // key -> members to drop
+    for (const auto& segment : segments) {
+        if (const auto* key = std::get_if<std::string>(&segment)) {
+            if (parent->type == NodeType::Object) {
+                keys[*key] = 1;
             }
+        } else if (parent->type == NodeType::Array) {
+            indices.insert(std::get<std::size_t>(segment));
         }
     }
 
-    // Clone the parent with the new children
-    std::shared_ptr<const JsonNode> newNode;
-    if (parent->type == NodeType::Object) {
-        newNode = JsonNode::makeObject(parent->key, std::move(newChildren));
-    } else {
-        newNode = JsonNode::makeArray(parent->key, std::move(newChildren));
+    std::vector<std::shared_ptr<const JsonNode>> newChildren;
+    newChildren.reserve(parent->children.size());
+    for (std::size_t i = 0; i < parent->children.size(); ++i) {
+        const auto& child = parent->children[i];
+        if (indices.contains(i)) {
+            continue;
+        }
+        if (auto it = keys.find(child->key); it != keys.end() && it->second > 0) {
+            --it->second;
+            continue;
+        }
+        newChildren.push_back(child);  // structural sharing
     }
+    if (newChildren.size() == parent->children.size()) {
+        return root;  // nothing resolved
+    }
+
+    auto newNode = parent->type == NodeType::Object
+                       ? JsonNode::makeObject(parent->key, std::move(newChildren))
+                       : JsonNode::makeArray(parent->key, std::move(newChildren));
 
     // Walk back up the ancestor chain, cloning each ancestor with the
     // updated child replacing the old one.
@@ -117,85 +90,29 @@ auto deleteNode(std::shared_ptr<const JsonNode> root, const NodePath& targetPath
 
         std::vector<std::shared_ptr<const JsonNode>> updatedChildren;
         updatedChildren.reserve(ancestor->children.size());
-
         for (const auto& child : ancestor->children) {
-            if (child.get() == oldChild.get()) {
-                updatedChildren.push_back(newNode);
-            } else {
-                updatedChildren.push_back(child); // structural sharing
-            }
+            updatedChildren.push_back(child.get() == oldChild.get() ? newNode : child);
         }
-
-        if (ancestor->type == NodeType::Object) {
-            newNode = JsonNode::makeObject(ancestor->key, std::move(updatedChildren));
-        } else {
-            newNode = JsonNode::makeArray(ancestor->key, std::move(updatedChildren));
-        }
+        newNode = ancestor->type == NodeType::Object
+                      ? JsonNode::makeObject(ancestor->key, std::move(updatedChildren))
+                      : JsonNode::makeArray(ancestor->key, std::move(updatedChildren));
     }
-
     return newNode;
 }
 
-auto computePath(const std::shared_ptr<const JsonNode>& root,
-                 const JsonNode* target)
-    -> std::optional<NodePath> {
-    if (!root || !target) {
-        return std::nullopt;
+}  // namespace
+
+auto deleteNode(std::shared_ptr<const JsonNode> root, const NodePath& targetPath)
+    -> std::shared_ptr<const JsonNode> {
+    // Empty path = root node itself -> return nullptr
+    if (targetPath.empty()) {
+        return nullptr;
     }
-
-    // If target is the root itself, return empty path
-    if (root.get() == target) {
-        return NodePath{};
+    if (!root) {
+        return root;
     }
-
-    // DFS to find the target, building the path as we go
-    struct Frame {
-        const JsonNode* node;
-        std::size_t childIdx;
-    };
-
-    std::vector<Frame> stack;
-    stack.push_back({root.get(), 0});
-
-    NodePath currentPath;
-
-    while (!stack.empty()) {
-        auto& frame = stack.back();
-
-        if (frame.childIdx >= frame.node->children.size()) {
-            // Exhausted all children at this level, backtrack
-            stack.pop_back();
-            if (!currentPath.empty()) {
-                currentPath.pop_back();
-            }
-            continue;
-        }
-
-        const auto& child = frame.node->children[frame.childIdx];
-        frame.childIdx++;
-
-        // Build the path segment for this child
-        if (frame.node->type == NodeType::Object) {
-            currentPath.push_back(child->key);
-        } else {
-            // Array: the index is (childIdx - 1) since we already incremented
-            currentPath.push_back(frame.childIdx - 1);
-        }
-
-        if (child.get() == target) {
-            return currentPath;
-        }
-
-        // If this child has children, descend into it
-        if (!child->children.empty()) {
-            stack.push_back({child.get(), 0});
-        } else {
-            // Leaf node, not the target, pop the segment
-            currentPath.pop_back();
-        }
-    }
-
-    return std::nullopt;
+    const NodePath parentPath(targetPath.begin(), targetPath.end() - 1);
+    return removeChildren(root, parentPath, std::span(&targetPath.back(), 1));
 }
 
 auto countDescendants(NodeView node) -> std::size_t {
@@ -213,16 +130,40 @@ auto countDescendants(const JsonNode& node) -> std::size_t {
 
 auto deleteNodes(std::shared_ptr<const JsonNode> root, std::vector<NodePath> paths)
     -> std::shared_ptr<const JsonNode> {
-    // Reverse lexicographic order: within one array the higher index goes
-    // first, and a descendant (which sorts after its ancestor) goes before
-    // the ancestor, so no deletion invalidates a path still to come.
-    std::ranges::sort(paths, std::greater<>());
+    if (!root) {
+        return root;
+    }
+    std::ranges::sort(paths);
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
-    for (const auto& path : paths) {
-        if (!root) {
-            break;
+    if (!paths.empty() && paths.front().empty()) {
+        return nullptr;  // the root itself
+    }
+
+    // A path inside another deleted path goes with it. Sorted, an ancestor
+    // comes before its descendants. The rest are grouped by parent so each
+    // parent is rebuilt once (deleting rows one by one copied the parent's
+    // child list per row).
+    std::set<NodePath> deleted;
+    std::map<NodePath, std::vector<PathSegment>, std::greater<>> byParent;
+    for (auto& path : paths) {
+        bool insideDeleted = false;
+        for (std::size_t length = 1; length < path.size() && !insideDeleted; ++length) {
+            insideDeleted = deleted.contains(NodePath(path.begin(), path.begin() + length));
         }
-        root = deleteNode(std::move(root), path);
+        if (insideDeleted) {
+            continue;
+        }
+        deleted.insert(path);
+        PathSegment last = path.back();
+        path.pop_back();
+        byParent[std::move(path)].push_back(std::move(last));
+    }
+
+    // Parents in reverse order: removing children of a parent only shifts
+    // the indices of later siblings' subtrees, whose paths sort after it
+    // and so were already handled.
+    for (const auto& [parentPath, segments] : byParent) {
+        root = removeChildren(root, parentPath, segments);
     }
     return root;
 }
