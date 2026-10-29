@@ -36,6 +36,11 @@ auto mapSimdjsonError(simdjson::error_code error) -> ParseError {
             return ParseError{0, "Invalid UTF-8 encoding (location unavailable)"};
         case simdjson::TRAILING_CONTENT:
             return ParseError{0, "Unexpected trailing content after JSON value"};
+        case simdjson::NUMBER_ERROR:
+            // Valid JSON such as 1e400 lands here too: simdjson stores
+            // decimals as doubles and rejects ones beyond their range.
+            return ParseError{0, "A number is malformed or too large for a double "
+                                 "(beyond about 1.8e308) (location unavailable)"};
         default:
             return ParseError{0, std::string("Parse error: ") + simdjson::error_message(error)};
     }

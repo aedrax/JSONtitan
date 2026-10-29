@@ -1042,3 +1042,14 @@ TEST(SimdjsonRegression, IntegerBeyond64BitsKeepsItsDigits) {
     ASSERT_EQ(linesResult.root->childCount, 2U);
     EXPECT_EQ(linesResult.root->childAt(1)->valueView(), "123456789012345678901234567890");
 }
+
+// A decimal beyond a double's range fails the document; the error must say
+// so instead of a generic "Problem while parsing a number".
+TEST(SimdjsonRegression, OutOfRangeDecimalNamesTheProblem) {
+    ArenaAllocator arena;
+    SourceBuffer source(std::string("[1e400]"));
+    auto result = simdjsonParse(source, arena);
+    ASSERT_TRUE(result.error.has_value());
+    EXPECT_NE(result.error->description.find("too large for a double"), std::string::npos)
+        << result.error->description;
+}
