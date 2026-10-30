@@ -160,13 +160,14 @@ auto genValidQuery() -> rc::Gen<SearchQuery> {
 // Generate known-invalid regex patterns
 auto genInvalidRegexPattern() -> rc::Gen<std::string> {
     return rc::gen::exec([]() -> std::string {
+        // No reversed range ("[z-a]"): whether std::regex rejects one
+        // depends on the libc++ version (the macOS CI runner accepts it).
         std::vector<std::string> patterns = {
             "[unclosed",
             "(unmatched",
             "*invalid",
             "+invalid",
             "?invalid",
-            "[z-a]",
             "(?P<bad",
             "\\"
         };

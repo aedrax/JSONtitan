@@ -252,24 +252,30 @@ TEST(BugConditionExploration, KeystrokeFloodingNoDebounce) {
     // Simulate typing "name" — 4 keystrokes, each restarting the debounce timer
     std::vector<QString> keystrokes = {"n", "na", "nam", "name"};
 
-    // Measure UI thread time during the keystroke simulation
-    auto uiStart = std::chrono::steady_clock::now();
+    // Measure UI thread time during the keystroke simulation: the timer
+    // restarts and event processing, not the sleeps between keystrokes
+    // (those overshoot on a loaded CI machine and say nothing about blocking).
+    std::chrono::milliseconds uiElapsed{0};
+    auto timed = [&uiElapsed](const auto& work) {
+        const auto start = std::chrono::steady_clock::now();
+        work();
+        uiElapsed += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start);
+    };
 
     for (const auto& text : keystrokes) {
-        currentText = text;
-        debounceTimer.start(); // Restart debounce on each keystroke
-        QCoreApplication::processEvents();
+        timed([&] {
+            currentText = text;
+            debounceTimer.start(); // Restart debounce on each keystroke
+            QCoreApplication::processEvents();
+        });
         // Small delay between keystrokes (simulates typing speed)
         QThread::msleep(20);
-        QCoreApplication::processEvents();
+        timed([] { QCoreApplication::processEvents(); });
     }
 
-    auto uiEnd = std::chrono::steady_clock::now();
-    auto uiElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(uiEnd - uiStart);
-
-    // UI thread should only be blocked for the typing simulation time (~80ms)
-    // NOT for 4 full filter() executions (~280ms+)
-    // The typing itself takes ~80ms (4 * 20ms sleep), so threshold is generous
+    // Restarting the timer and processing events is near-instant; running
+    // filter() for each keystroke on this thread would take ~280ms+.
     auto typingThreshold = std::chrono::milliseconds(200);
 
     std::cout << "\n[FIX VALIDATION - DEBOUNCE COALESCING]\n"

@@ -1,6 +1,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QLineEdit>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QThread>
 #include <QTimer>
@@ -89,6 +90,12 @@ void IntegrationSearchTest::testFullAsyncSearchFlow() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     uint64_t searchGeneration = 0;
@@ -152,10 +159,6 @@ void IntegrationSearchTest::testFullAsyncSearchFlow() {
     auto result = args.at(0).value<FilterResult>();
     QVERIFY(!result.error.has_value());
     QVERIFY(!result.matches.empty());
-
-    // Clean up
-    workerThread.quit();
-    workerThread.wait();
 }
 
 void IntegrationSearchTest::testUIThreadNotBlockedDuringSearch() {
@@ -173,6 +176,12 @@ void IntegrationSearchTest::testUIThreadNotBlockedDuringSearch() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     // Dispatch search to background worker
@@ -187,23 +196,22 @@ void IntegrationSearchTest::testUIThreadNotBlockedDuringSearch() {
                               Q_ARG(std::shared_ptr<const jsontitan::core::JsonNode>, root),
                               Q_ARG(uint64_t, uint64_t(1)));
 
-    // Immediately after dispatching, measure how long processEvents takes.
-    // If the UI thread were blocked (synchronous search), this would take
-    // as long as the search itself. With async search, it should return quickly.
-    QElapsedTimer uiTimer;
-    uiTimer.start();
-
-    // Process events multiple times to simulate a responsive UI loop
+    // Immediately after dispatching, time the event processing. If the
+    // search ran on this thread (synchronous), processEvents would take as
+    // long as the search itself. Only processEvents is timed: the waits
+    // between calls overshoot on a loaded CI machine and say nothing about
+    // blocking.
+    qint64 uiElapsed = 0;
     for (int i = 0; i < 10; ++i) {
+        QElapsedTimer uiTimer;
+        uiTimer.start();
         QCoreApplication::processEvents();
+        uiElapsed += uiTimer.elapsed();
         QTest::qWait(5);
     }
 
-    qint64 uiElapsed = uiTimer.elapsed();
-
-    // The UI thread should regain control almost immediately (well under 100ms)
-    // even though the background search on 100K nodes takes longer.
-    // We use a generous threshold of 200ms to avoid flakiness.
+    // The UI thread should regain control almost immediately, even though
+    // the background search on 100K nodes takes longer.
     QVERIFY2(uiElapsed < 200,
              qPrintable(QString("UI thread was blocked for %1ms during search dispatch")
                             .arg(uiElapsed)));
@@ -221,10 +229,6 @@ void IntegrationSearchTest::testUIThreadNotBlockedDuringSearch() {
     auto result = args.at(0).value<FilterResult>();
     QVERIFY(!result.error.has_value());
     QVERIFY(!result.matches.empty());
-
-    // Clean up
-    workerThread.quit();
-    workerThread.wait();
 }
 
 void IntegrationSearchTest::testDebounceCoalescesRapidInput() {
@@ -253,6 +257,12 @@ void IntegrationSearchTest::testDebounceCoalescesRapidInput() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     uint64_t generation = 0;
@@ -296,9 +306,6 @@ void IntegrationSearchTest::testDebounceCoalescesRapidInput() {
     QVERIFY(!result.error.has_value());
     // "hel" matches "hello" and "Helsinki" (case-insensitive substring)
     QCOMPARE(result.matches.size(), std::size_t(2));
-
-    workerThread.quit();
-    workerThread.wait();
 }
 
 void IntegrationSearchTest::testResultsAppearInFilterProxyModel() {
@@ -337,6 +344,12 @@ void IntegrationSearchTest::testResultsAppearInFilterProxyModel() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     // Dispatch search for "Alice"
@@ -376,9 +389,6 @@ void IntegrationSearchTest::testResultsAppearInFilterProxyModel() {
     filterProxy.clearFilter();
     QVERIFY(!filterProxy.isFiltered());
     QCOMPARE(filterProxy.rowCount(QModelIndex()), sourceRows);
-
-    workerThread.quit();
-    workerThread.wait();
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +416,12 @@ void IntegrationSearchTest::testCancellationDiscardsStaleResults() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     // Mimic MainWindow's generation counter logic
@@ -481,9 +497,6 @@ void IntegrationSearchTest::testCancellationDiscardsStaleResults() {
 
     // Verify: FilterProxyModel is filtered with the second result
     QVERIFY(filterProxy.isFiltered());
-
-    workerThread.quit();
-    workerThread.wait();
 }
 
 void IntegrationSearchTest::testOnlyLatestGenerationApplied() {
@@ -520,6 +533,12 @@ void IntegrationSearchTest::testOnlyLatestGenerationApplied() {
     workerThread.start();
 
     QSignalSpy completeSpy(&worker, &SearchWorker::searchComplete);
+    // After the spy, so it runs first: a failed check leaves early, and a
+    // running QThread destroyed on the way out aborts the whole binary.
+    const auto stopWorker = qScopeGuard([&workerThread] {
+        workerThread.quit();
+        workerThread.wait();
+    });
     QVERIFY(completeSpy.isValid());
 
     uint64_t currentGeneration = 0;
@@ -625,9 +644,6 @@ void IntegrationSearchTest::testOnlyLatestGenerationApplied() {
 
     // Verify: FilterProxyModel reflects the gamma search results
     QVERIFY(filterProxy.isFiltered());
-
-    workerThread.quit();
-    workerThread.wait();
 }
 
 QTEST_MAIN(IntegrationSearchTest)

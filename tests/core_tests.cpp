@@ -2231,17 +2231,18 @@ TEST(SearchEngineProperty, InvalidRegexErrorReporting) {
     EXPECT_TRUE(rc::check("Property 8: Invalid Regex Error Reporting",
         [](void) {
             // Generate strings that are not valid regular expressions
-            auto invalidPatternIdx = *rc::gen::inRange(0, 8);
+            // No reversed range ("[z-a]"): whether std::regex rejects one
+            // depends on the libc++ version (the macOS CI runner accepts it).
+            auto invalidPatternIdx = *rc::gen::inRange(0, 7);
             std::string invalidPattern;
             switch (invalidPatternIdx) {
                 case 0: invalidPattern = "[unclosed"; break;
                 case 1: invalidPattern = "(unclosed"; break;
                 case 2: invalidPattern = "invalid\\"; break;
-                case 3: invalidPattern = "[z-a]"; break;
-                case 4: invalidPattern = "(?P<bad"; break;
-                case 5: invalidPattern = "*leading_quantifier"; break;
-                case 6: invalidPattern = "+leading_quantifier"; break;
-                case 7: invalidPattern = "?leading_quantifier"; break;
+                case 3: invalidPattern = "(?P<bad"; break;
+                case 4: invalidPattern = "*leading_quantifier"; break;
+                case 5: invalidPattern = "+leading_quantifier"; break;
+                case 6: invalidPattern = "?leading_quantifier"; break;
             }
 
             // Create a minimal tree to search
