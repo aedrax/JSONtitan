@@ -598,7 +598,7 @@ void MainWindow::onAbout() {
            "editing with undo, multi-file union, and JSON/CSV/XML "
            "export.</p>"
            "<p>Built with Qt %2.</p>")
-            .arg(QStringLiteral("0.1.0"),
+            .arg(QStringLiteral(JSONTITAN_VERSION),
                  QString::fromLatin1(qVersion())));
 }
 

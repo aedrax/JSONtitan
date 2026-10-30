@@ -28,6 +28,11 @@ target_include_directories(jsontitan_shell_lib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
+# The version is set once, in the top-level project() call.
+target_compile_definitions(jsontitan_shell_lib
+    PUBLIC JSONTITAN_VERSION="${PROJECT_VERSION}"
+)
+
 target_link_libraries(jsontitan_shell_lib
     PUBLIC
         jsontitan_core

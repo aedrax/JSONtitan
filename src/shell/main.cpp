@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
 
     // 3.4: Handle ShowVersion — print versionText() to stdout, return 0 (before QApplication)
     if (cliResult.action == jsontitan::core::CliAction::ShowVersion) {
-        std::cout << jsontitan::core::versionText("0.1.0");
+        std::cout << jsontitan::core::versionText(JSONTITAN_VERSION);
         return 0;
     }
 
@@ -98,7 +98,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setOrganizationName("JSONTitan");
     app.setApplicationName("JSONTitan");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion(QStringLiteral(JSONTITAN_VERSION));
 
     // The application stylesheet is owned by ThemeManager, constructed in
     // the MainWindow constructor (it applies the persisted theme there).
